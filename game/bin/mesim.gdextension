@@ -1,0 +1,12 @@
+[configuration]
+
+entry_symbol = "mesim_library_init"
+compatibility_minimum = "4.7"
+reloadable = false
+
+[libraries]
+
+macos.debug = "res://bin/libmesim.macos.template_debug.framework"
+macos.release = "res://bin/libmesim.macos.template_release.framework"
+windows.debug.x86_64 = "res://bin/libmesim.windows.template_debug.x86_64.dll"
+windows.release.x86_64 = "res://bin/libmesim.windows.template_release.x86_64.dll"
