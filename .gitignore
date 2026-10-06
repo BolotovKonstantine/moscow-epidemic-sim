@@ -1,0 +1,36 @@
+# macOS
+.DS_Store
+
+# Godot cache and generated exports
+.godot/
+exports/
+build/
+dist/
+
+# Python tooling
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.local
+
+# Large city datasets are distributed separately from the source repository
+data/raw/
+data/processed/
+data/packages/
+
+# Compiled native artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
