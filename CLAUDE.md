@@ -46,9 +46,9 @@ Moscow Epidemic Sim — хобби-игра на Godot: вымышленная �
 | `clang++` | Command Line Tools | Компилятор C++ |
 | `osmium` (osmium-tool) | 1.19.1 | Вырезка региона из OSM PBF |
 | `gdal` / `ogr2ogr` | 3.13.3 | Проекции, буферы, конвертация GIS-форматов |
-| `python3.12` | 3.12.4 | Пайплайн данных |
+| `python3.14` | 3.14.8 | Пайплайн данных |
 
-- Для `tools/city_pipeline/` используй собственное окружение проекта: `/opt/homebrew/bin/python3.12 -m venv .venv` в корне репозитория (каталог в `.gitignore`). Не используй `python3` из `PATH` — он может указывать на окружение другого проекта.
+- Для `tools/city_pipeline/` используй собственное окружение проекта на Python 3.14: `/opt/homebrew/bin/python3.14 -m venv .venv` в корне репозитория (каталог в `.gitignore`). Не используй `python3` из `PATH` — он может указывать на окружение другого проекта.
 - Версию godot-cpp выбирай под установленный Godot 4.7; зафиксированную версию Godot записывай в decisions.md.
 - **Полный Xcode не установлен** (только Command Line Tools). Для экспорта на iOS и `xcodebuild` автору нужно поставить Xcode из App Store и выполнить `sudo xcode-select -s /Applications/Xcode.app`.
 
