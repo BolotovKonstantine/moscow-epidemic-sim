@@ -8,7 +8,7 @@ Moscow Epidemic Sim — хобби-игра на Godot: вымышленная �
 
 ## Текущий статус
 
-Идёт этап 0. Есть пустое Godot-приложение (`game/`) и нативный мост GDExtension (`native/`), который пока только сообщает версию ядра; дымовой тест — `tests/integration/smoke_native.gd`. Есть паспорт городского пакета версии 1 и его валидатор (`tools/city_pipeline/`), проверенные на синтетическом примере. Команды сборки и тестов — в [game/AGENTS.md](game/AGENTS.md), [native/AGENTS.md](native/AGENTS.md) и [tools/city_pipeline/AGENTS.md](tools/city_pipeline/AGENTS.md). Реальных городских данных и модели пока нет. Новые команды не выдумывай, а добавляй в AGENTS.md модуля вместе с кодом, который их требует.
+Этап 0 завершён на Mac (см. docs/roadmap.md), следующий — этап 1 «Городские данные». Есть пустое Godot-приложение (`game/`) и нативный мост GDExtension (`native/`), который пока только сообщает версию ядра; дымовой тест — `tests/integration/smoke_native.gd`. Есть паспорт городского пакета версии 1 и его валидатор (`tools/city_pipeline/`), проверенные на синтетическом примере. Команды сборки и тестов — в [game/AGENTS.md](game/AGENTS.md), [native/AGENTS.md](native/AGENTS.md) и [tools/city_pipeline/AGENTS.md](tools/city_pipeline/AGENTS.md). Реальных городских данных и модели пока нет. Новые команды не выдумывай, а добавляй в AGENTS.md модуля вместе с кодом, который их требует.
 
 Перед работой над задачей читай профильный документ — он источник истины, а этот файл только выжимка:
 
