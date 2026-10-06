@@ -12,3 +12,4 @@ func _ready() -> void:
 		return
 	var core: RefCounted = ClassDB.instantiate("SimCore")
 	_status.text = "Moscow Epidemic Sim · ядро %s" % core.get_core_version()
+	print(_status.text)
