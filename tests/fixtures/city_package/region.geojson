@@ -1,0 +1,11 @@
+{
+  "type": "FeatureCollection",
+  "features": [{
+    "type": "Feature",
+    "properties": {"synthetic": true, "description": "Тестовый квадрат, не граница Москвы"},
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [[[37.6, 55.7], [37.61, 55.7], [37.61, 55.71], [37.6, 55.71], [37.6, 55.7]]]
+    }
+  }]
+}
