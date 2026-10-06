@@ -2,6 +2,11 @@
 # Сборка расчётного ядра и моста GDExtension.
 # Целевой API Godot зафиксирован в docs/decisions.md.
 
+# Минимальная macOS для экспорта Godot 4.7 — 11 (Intel) и 13 (Apple Silicon).
+# Universal-библиотека собирается одним флагом, поэтому берём меньшее: 11.0.
+# Без этого clang ставит версию текущего SDK, и ядро не грузится на старых macOS.
+ARGUMENTS.setdefault("macos_deployment_target", "11.0")
+
 env = SConscript("thirdparty/godot-cpp/SConstruct", {"api_version": "4.7"})
 
 env.Append(CPPPATH=["include/", "godot_bridge/"])
