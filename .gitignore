@@ -28,9 +28,14 @@ data/packages/
 
 # Compiled native artifacts
 *.o
+*.os
 *.obj
 *.a
 *.lib
 *.so
 *.dylib
 *.dll
+
+# SCons state and GDExtension builds (macOS frameworks, iOS static libs)
+.sconsign*.dblite
+game/bin/*.framework/
