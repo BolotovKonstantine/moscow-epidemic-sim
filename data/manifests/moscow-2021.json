@@ -1,0 +1,109 @@
+{
+  "config_version": 1,
+  "package_id": "moscow-2021",
+  "package_version": "0.1.0",
+  "description": "Москва и пояс 30 км от внешнего края МКАД: здания, функции, население по зданиям и зонам, дорожный и транспортный граф. Срез данных около 2020–2021 годов (OSM на 1 января 2021, сетка населения GHS-POP эпохи 2020).",
+  "sources": {
+    "osm": "osm-geofabrik-cfd-20210101",
+    "population": "ghs-pop-e2020-r2023a-r4c22"
+  },
+  "metric_crs": "EPSG:32637",
+  "boundary": {
+    "moscow_admin": {"boundary": "administrative", "admin_level": "4", "name": "Москва"},
+    "mkad": {"match": {"ref": ["МКАД"], "loc_ref": ["МКАД"]}, "highways": ["motorway", "trunk"]},
+    "mkad_edge_offset_m": 15,
+    "buffer_meters": 30000,
+    "mkad_area_km2_range": [850, 900]
+  },
+  "zones": {
+    "cell_size_m": 1000
+  },
+  "roads": {
+    "highways": [
+      "motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link",
+      "secondary", "secondary_link", "tertiary", "tertiary_link", "unclassified",
+      "residential", "living_street", "service", "pedestrian", "road"
+    ]
+  },
+  "buildings": {
+    "ignore_values": ["no", "construction", "proposed", "demolished", "destroyed", "ruins", "abandoned"],
+    "tag_functions": {
+      "residential": ["apartments", "residential", "house", "detached", "semidetached_house", "terrace", "dormitory", "bungalow", "cabin", "farm"],
+      "work": ["office", "commercial", "industrial", "warehouse", "manufacture", "service", "garages", "hangar", "data_center", "transformer_tower"],
+      "retail": ["retail", "supermarket", "kiosk", "mall"],
+      "education": ["school", "kindergarten", "university", "college"],
+      "medical": ["hospital", "clinic"],
+      "transport": ["train_station", "transportation", "parking"],
+      "control": ["police", "fire_station", "government", "public"],
+      "other": ["garage", "shed", "hut", "roof", "greenhouse", "church", "chapel", "mosque", "temple", "cathedral", "religious", "sports_hall", "stadium", "grandstand", "barn", "stable", "cowshed", "toilets", "bunker", "container", "construction_trailer", "allotment_house", "static_caravan", "outbuilding"]
+    },
+    "poi_functions": {
+      "amenity": {
+        "hospital": "medical", "clinic": "medical", "doctors": "medical", "dentist": "medical", "pharmacy": "retail",
+        "school": "education", "kindergarten": "education", "college": "education", "university": "education",
+        "police": "control", "fire_station": "control", "townhall": "control",
+        "cafe": "retail", "restaurant": "retail", "fast_food": "retail", "bank": "work", "post_office": "work",
+        "marketplace": "retail", "cinema": "retail", "theatre": "retail", "bar": "retail", "pub": "retail"
+      },
+      "healthcare": {"hospital": "medical", "clinic": "medical", "centre": "medical", "doctor": "medical", "laboratory": "medical"},
+      "shop": {"*": "retail"},
+      "office": {"*": "work"},
+      "craft": {"*": "work"}
+    },
+    "site_functions": {
+      "landuse": {"residential": "residential", "commercial": "work", "industrial": "work", "retail": "retail", "railway": "transport", "military": "control"},
+      "amenity": {"hospital": "medical", "clinic": "medical", "school": "education", "kindergarten": "education", "college": "education", "university": "education", "police": "control"}
+    },
+    "poi_secondary_weight": 0.15,
+    "site_min_residential_footprint_m2": 30,
+    "meters_per_level": 3.0,
+    "default_levels": {
+      "apartments": 9, "residential": 5, "dormitory": 5, "house": 2, "detached": 2, "semidetached_house": 2, "terrace": 2,
+      "office": 6, "commercial": 3, "retail": 2, "industrial": 1, "warehouse": 1, "school": 3, "kindergarten": 2,
+      "hospital": 5, "clinic": 3, "university": 4, "college": 4, "garage": 1, "garages": 1, "shed": 1, "hut": 1,
+      "*": 2
+    },
+    "max_levels": 100
+  },
+  "population": {
+    "zone_pool_fallback": true,
+    "max_residents_per_m2_floor": 0.1,
+    "block_zones": 5,
+    "unknown_building_min_footprint_m2": 30
+  },
+  "facilities": {
+    "kinds": {
+      "amenity": {"hospital": "hospital", "clinic": "clinic", "doctors": "doctors", "school": "school", "kindergarten": "kindergarten", "college": "college", "university": "university", "police": "police"},
+      "healthcare": {"hospital": "hospital", "clinic": "clinic", "centre": "clinic", "doctor": "doctors"}
+    }
+  },
+  "transit": {
+    "route_modes": ["subway", "monorail", "light_rail", "train", "tram", "trolleybus", "bus", "share_taxi"],
+    "stop_roles": ["stop", "stop_entry_only", "stop_exit_only"],
+    "platform_roles": ["platform", "platform_entry_only", "platform_exit_only"]
+  },
+  "model_assumptions": {
+    "note": "Модельные параметры, не наблюдаемые данные. Их можно менять: значения попадают в transit_service.json пакета с видом game_setting.",
+    "transfer_walk_speed_mps": 1.2,
+    "transfer_overhead_s": 60,
+    "headway_minutes": {
+      "periods": {"morning_peak": ["07:00", "10:00"], "day": ["10:00", "17:00"], "evening_peak": ["17:00", "20:00"], "evening": ["20:00", "01:00"], "night": ["01:00", "05:30"], "early": ["05:30", "07:00"]},
+      "by_mode": {
+        "subway":     {"morning_peak": 2,  "day": 4,  "evening_peak": 2,  "evening": 5,  "night": null, "early": 6},
+        "monorail":   {"morning_peak": 6,  "day": 10, "evening_peak": 6,  "evening": 12, "night": null, "early": 15},
+        "light_rail": {"morning_peak": 5,  "day": 8,  "evening_peak": 5,  "evening": 10, "night": null, "early": 12},
+        "train":      {"morning_peak": 10, "day": 20, "evening_peak": 10, "evening": 30, "night": null, "early": 30},
+        "tram":       {"morning_peak": 7,  "day": 10, "evening_peak": 7,  "evening": 15, "night": null, "early": 15},
+        "trolleybus": {"morning_peak": 8,  "day": 12, "evening_peak": 8,  "evening": 20, "night": null, "early": 20},
+        "bus":        {"morning_peak": 8,  "day": 12, "evening_peak": 8,  "evening": 20, "night": 45,   "early": 20},
+        "share_taxi": {"morning_peak": 10, "day": 15, "evening_peak": 10, "evening": 25, "night": null, "early": 25}
+      }
+    }
+  },
+  "quality": {
+    "manual_sample_size": 60,
+    "sample_seed": 20210101,
+    "far_from_road_m": 500,
+    "max_plausible_residents_per_100m2": 10
+  }
+}
