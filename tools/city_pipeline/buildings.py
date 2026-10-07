@@ -15,6 +15,9 @@ import shapely
 
 FUNCTIONS = ("residential", "work", "retail", "education", "medical", "transport", "control", "other")
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+_HEIGHT = re.compile(r"^\s*(\d+(?:[.,]\d+)?)\s*(m|м|meters?|metres?|ft|feet|')?\s*$", re.IGNORECASE)
+_FEET_INCHES = re.compile(r"^\s*(\d+)\s*'\s*(\d+(?:\.\d+)?)\s*\"\s*$")
+FOOT_M = 0.3048
 
 
 @dataclass
@@ -33,6 +36,27 @@ class BuildingTable:
     levels: np.ndarray
     levels_source: list
     floor_area_m2: np.ndarray
+
+
+def _parse_height(value):
+    """Высота OSM в метрах: число без единиц или с m — метры, ft/' — футы, 10'6" — футы и дюймы.
+
+    Иные форматы (несколько значений, диапазоны, неизвестные единицы) — None:
+    этажность тогда оценивается по типу здания, а не по неверно понятому числу.
+    """
+    if value is None:
+        return None
+    feet_inches = _FEET_INCHES.match(value)
+    if feet_inches:
+        meters = (int(feet_inches.group(1)) + float(feet_inches.group(2)) / 12) * FOOT_M
+        return meters if meters > 0 else None
+    match = _HEIGHT.match(value)
+    if not match:
+        return None
+    number = float(match.group(1).replace(",", "."))
+    unit = (match.group(2) or "m").lower()
+    meters = number * FOOT_M if unit in ("ft", "feet", "'") else number
+    return meters if meters > 0 else None
 
 
 def _parse_number(value):
@@ -157,7 +181,7 @@ def classify(ids, geometry, metric, tags, pois, sites, sites_metric, config):
             levels[row] = max(1.0, round(value))
             levels_source[row] = "tag"
             continue
-        height = _parse_number(item.get("height"))
+        height = _parse_height(item.get("height"))
         if height is not None and height / meters <= maximum:
             levels[row] = max(1.0, round(height / meters))
             levels_source[row] = "height"

@@ -297,8 +297,8 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
     write_csv(out_dir / "gateways.csv.gz", ["kind", "ref", "class", "inside_ref", "outside_ref", "zone_id", "lon", "lat"], gateway_rows)
     add("gateways", "transport", "gateways.csv.gz", "csv+gzip", "observed", ["osm"])
 
-    write_csv(out_dir / "facilities.csv.gz", ["facility_id", "kind", "name", "source", "lon", "lat", "zone_id", "building_ids", "capacity"],
-              ([f["facility_id"], f["kind"], f["name"], f["source"], fmt(f["lon"], 7), fmt(f["lat"], 7), zone_name[fac_zone[i]], ";".join(f["building_ids"]), "unknown"]
+    write_csv(out_dir / "facilities.csv.gz", ["facility_id", "kind", "name", "source", "osm_ids", "lon", "lat", "zone_id", "building_ids", "capacity"],
+              ([f["facility_id"], f["kind"], f["name"], f["source"], ";".join(f["osm_ids"]), fmt(f["lon"], 7), fmt(f["lat"], 7), zone_name[fac_zone[i]], ";".join(f["building_ids"]), "unknown"]
                for i, f in enumerate(facilities)))
     add("facilities", "facilities", "facilities.csv.gz", "csv+gzip", "observed", ["osm"])
 

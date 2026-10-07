@@ -82,6 +82,8 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(len(hospital), 1)
         self.assertEqual((hospital[0]["levels"], hospital[0]["levels_source"]), ("5", "height"))
         self.assertEqual(len(by_kind[("unknown", "unknown")]), 1)
+        school = by_kind[("tag", "education")]
+        self.assertEqual((school[0]["levels"], school[0]["levels_source"]), ("3", "height"))   # 30 ft ≈ 9.1 м
 
     def test_population_is_integer_and_conserved(self):
         population = self.report["population"]
@@ -155,8 +157,13 @@ class BuildTests(unittest.TestCase):
     def test_facilities_have_unknown_capacity_and_building_links(self):
         rows = read_csv(self.out / "facilities.csv.gz")
         kinds = {row["kind"]: row for row in rows}
-        self.assertEqual(set(kinds), {"hospital", "clinic"})
+        self.assertEqual(sorted(row["kind"] for row in rows), ["clinic", "hospital", "school"])
         self.assertTrue(kinds["hospital"]["building_ids"])
+        # Точка больницы поглощена участком, точка школы — контуром здания; имя взято у точки.
+        self.assertEqual(kinds["hospital"]["source"], "site")
+        self.assertEqual(len(kinds["hospital"]["osm_ids"].split(";")), 2)
+        self.assertEqual((kinds["school"]["source"], kinds["school"]["name"], len(kinds["school"]["osm_ids"].split(";"))), ("building", "Школа", 2))
+        self.assertEqual(self.report["facilities"]["merged_osm_objects"], 2)
         self.assertEqual(kinds["clinic"]["building_ids"], "")
         self.assertTrue(all(row["capacity"] == "unknown" for row in rows))
 

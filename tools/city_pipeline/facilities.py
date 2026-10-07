@@ -16,6 +16,46 @@ def _kind(tags, kinds):
     return None
 
 
+def _merge_duplicates(records):
+    """Объединить одно учреждение, нанесённое точкой, контуром здания и участком.
+
+    Запись того же вида, чья точка лежит внутри контура другой записи, сливается с
+    самым большим таким контуром (внешний участок поглощает корпус и точку внутри).
+    Все исходные ID сохраняются в osm_ids; имя — первое непустое, начиная с контура.
+    """
+    records.sort(key=lambda record: record["facility_id"])
+    areas = [row for row, record in enumerate(records) if record["area"] is not None]
+    target = list(range(len(records)))
+    if areas:
+        polygons = [records[row]["area"] for row in areas]
+        sizes = shapely.area(polygons)
+        tree = shapely.STRtree(polygons)
+        points = shapely.points([record["lon"] for record in records], [record["lat"] for record in records])
+        point_index, area_index = tree.query(points, predicate="intersects")
+        best = {}
+        for row, slot in zip(point_index.tolist(), area_index.tolist()):
+            owner = areas[slot]
+            if owner == row or records[owner]["kind"] != records[row]["kind"]:
+                continue
+            key = (-sizes[slot], records[owner]["facility_id"])
+            if row not in best or key < best[row][0]:
+                best[row] = (key, owner)
+        for row, (_, owner) in best.items():
+            target[row] = owner
+    groups = {}
+    for row, owner in enumerate(target):
+        groups.setdefault(owner, []).append(row)
+    merged = []
+    for owner, rows in groups.items():
+        record = dict(records[owner])
+        record["osm_ids"] = sorted(records[row]["facility_id"] for row in rows)
+        if not record["name"]:
+            record["name"] = next((records[row]["name"] for row in rows if records[row]["name"]), "")
+        merged.append(record)
+    merged.sort(key=lambda record: record["facility_id"])
+    return merged
+
+
 def collect(data, buildings, projector, config):
     """Список учреждений с привязкой к зданиям. Возвращает (записи, метрические точки)."""
     kinds = config["facilities"]["kinds"]
@@ -35,7 +75,7 @@ def collect(data, buildings, projector, config):
         point = shapely.point_on_surface(polygon)
         source = "building" if osm_id in building_index else "site"
         records.append({"facility_id": osm_id, "kind": kind, "name": tags.get("name", ""), "source": source, "lon": point.x, "lat": point.y, "area": polygon})
-    records.sort(key=lambda record: record["facility_id"])
+    records = _merge_duplicates(records)
 
     lon = np.array([record["lon"] for record in records], dtype=np.float64)
     lat = np.array([record["lat"] for record in records], dtype=np.float64)

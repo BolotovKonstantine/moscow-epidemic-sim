@@ -192,6 +192,7 @@ def build_report(context):
         "facilities": {
             "count": len(facilities), "by_kind": dict(sorted(fac_kinds.items())),
             "linked_to_buildings_pct": _pct(fac_linked, len(facilities)),
+            "merged_osm_objects": sum(len(f["osm_ids"]) - 1 for f in facilities),
             "capacity": "unknown — вместимость, койки и приёмы отсутствуют в источниках",
         },
         "zones": {
