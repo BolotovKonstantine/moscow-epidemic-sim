@@ -3,6 +3,9 @@ import unittest
 import numpy as np
 from shapely.geometry import box
 
+from shapely.geometry import LineString, MultiLineString
+
+from tools.city_pipeline.build import crossing_points
 from tools.city_pipeline.geo import Projector
 from tools.city_pipeline.roads import build_graph
 
@@ -24,6 +27,15 @@ class RoadTests(unittest.TestCase):
         graph = build_graph(ways, region, Projector("EPSG:32637"))
         kept = {edge["way_id"]: edge["gateway"] for edge in graph.edges}
         self.assertEqual(kept, {1: False, 2: True})
+
+
+    def test_crossing_points_take_only_ends_of_boundary_overlap(self):
+        region = box(37.0, 55.0, 37.1, 55.1)
+        # Ребро входит внутрь, идёт вдоль верхней границы через три вершины и выходит.
+        edge = LineString([(37.02, 55.05), (37.03, 55.1), (37.05, 55.1), (37.07, 55.1), (37.09, 55.15)])
+        points = crossing_points(edge.intersection(region.boundary))
+        self.assertEqual([tuple(map(float, p)) for p in points], [(37.03, 55.1), (37.07, 55.1)])
+        self.assertEqual(len(crossing_points(MultiLineString([]))), 0)
 
 
 if __name__ == "__main__":

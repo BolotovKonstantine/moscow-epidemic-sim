@@ -1,6 +1,7 @@
 """Функции и этажность зданий.
 
-Источник функции фиксируется для каждого здания: `tag` — тег самого здания,
+Источник функции фиксируется для каждого здания: `tag` — теги самого здания,
+`tag+poi` — основная функция из тегов, вторичные доли — по точкам внутри,
 `poi` — точки организаций внутри контура, `site` — участок (landuse, территория
 больницы или школы), `unknown` — данных нет. `poi` и `site` являются оценкой.
 Этажность: `tag` (building:levels), `height` (высота / метры на этаж) или
@@ -135,6 +136,7 @@ def classify(ids, geometry, metric, tags, pois, sites, sites_metric, config):
     secondary = cfg["poi_secondary_weight"]
     for row in range(count):
         found = poi_functions[row]
+        from_points = any(function != primary[row] for function in found)
         if direct[row] is not None and direct[row] not in found:
             # Функциональный тег самого здания (apartments + shop) — вторичная функция, как точка внутри.
             found = [direct[row]] + found
@@ -143,7 +145,8 @@ def classify(ids, geometry, metric, tags, pois, sites, sites_metric, config):
             for function in found:
                 if function != primary[row]:
                     shares[row, index[function]] += secondary
-            function_source[row] = "tag"
+            # tag+poi: основная функция из тегов здания, вторичные — оценка по точкам внутри.
+            function_source[row] = "tag+poi" if from_points else "tag"
         elif found:
             for function in found:
                 shares[row, index[function]] += 1.0

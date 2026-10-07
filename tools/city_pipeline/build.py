@@ -84,6 +84,27 @@ def clip_region(source_pbf: Path, region_wgs84, work_dir: Path) -> Path:
     return out
 
 
+def crossing_points(crossing):
+    """Точки входа/выхода из пересечения ребра с границей региона.
+
+    Точечные пересечения берутся как есть; у участков, идущих вдоль границы
+    (линии в пересечении), — только их концы, а не каждая промежуточная вершина.
+    Возвращает уникальные координаты (N, 2) в стабильном порядке.
+    """
+    parts = shapely.get_parts(crossing)
+    if len(parts) == 0:
+        return np.empty((0, 2))
+    kinds = shapely.get_type_id(parts)
+    points = [shapely.get_coordinates(parts[kinds == shapely.GeometryType.POINT])]
+    lines = parts[kinds == shapely.GeometryType.LINESTRING]
+    if len(lines):
+        # Соседние куски участка вдоль границы склеиваются, чтобы их стыки не считались входами.
+        lines = shapely.get_parts(shapely.line_merge(shapely.multilinestrings(lines)))
+        points.append(shapely.get_coordinates(shapely.get_point(lines, 0)))
+        points.append(shapely.get_coordinates(shapely.get_point(lines, -1)))
+    return np.unique(np.vstack(points), axis=0)
+
+
 def road_zone_crossings(edge_lines, projector, zones, region_metric=None, covered=None):
     """Пары соседних зон, границу между которыми пересекает ребро дороги.
 
@@ -145,10 +166,12 @@ def road_zone_crossings(edge_lines, projector, zones, region_metric=None, covere
 def build_package(config, *, sources, source_roles, kind, region_parts, region_osm: Path, raster: Path, out_dir: Path, created_at: str, log=print):
     """Собрать пакет. sources — карточки для паспорта; source_roles — {"osm": id, "population": id}."""
     projector = Projector(config["metric_crs"])
+    # Проверяем заранее, что прежний каталог — пакет (с manifest.json) или пуст: чужие данные не трогаем.
+    if out_dir.exists() and any(out_dir.iterdir()) and not (out_dir / "manifest.json").is_file():
+        raise ValueError(f"{out_dir} не пуст и не является городским пакетом; удалите его вручную")
+    # Файлы пишутся во временный каталог рядом; прерванная сборка не портит прежний пакет.
+    final_dir, out_dir = out_dir, out_dir.with_name(out_dir.name + ".partial")
     if out_dir.exists():
-        # Удаляется только прежний пакет: каталог с manifest.json или пустой.
-        if any(out_dir.iterdir()) and not (out_dir / "manifest.json").is_file():
-            raise ValueError(f"{out_dir} не пуст и не является городским пакетом; удалите его вручную")
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
 
@@ -247,6 +270,7 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
 
     node_rows = ([int(node), fmt(graph.node_lon[i], 7), fmt(graph.node_lat[i], 7), fmt(bool(graph.node_inside[i])), zone_name[node_zone[i]], int(graph.weak_labels[i]), int(graph.strong_labels[i])]
                  for i, node in enumerate(graph.node_ids))
+    log("  дороги и узлы…")
     write_csv(out_dir / "road_nodes.csv.gz", ["node_id", "lon", "lat", "inside", "zone_id", "weak_component", "strong_component"], node_rows)
     write_geojsonl(out_dir / "roads.geojsonl.gz", round_wgs84(graph.edge_lines), [
         {key: (round(value, 1) if key == "length_m" else value) for key, value in edge.items()} for edge in graph.edges
@@ -257,6 +281,7 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
     stop_x = np.array([stop["x"] for stop in network.stops])
     stop_y = np.array([stop["y"] for stop in network.stops])
     stop_zone = zones.index_of(stop_x, stop_y) if network.stops else np.array([], dtype=np.int64)
+    log("  транспорт…")
     write_csv(out_dir / "transit_stops.csv.gz", ["stop_id", "kind", "name", "lon", "lat", "inside", "zone_id", "modes"],
               ([stop["stop_id"], stop["kind"], stop["name"], fmt(stop["lon"], 7), fmt(stop["lat"], 7), fmt(stop["inside"]), zone_name[stop_zone[i]], ";".join(stop["modes"])]
                for i, stop in enumerate(network.stops)))
@@ -285,6 +310,7 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
     })
     add("transit-service", "transport", "transit_service.json", "json", "game_setting", ["osm"])
 
+    log("  внешние входы…")
     gateway_rows = []
     position = {node: i for i, node in enumerate(graph.node_ids.tolist())}
     gateway_index = [i for i, edge in enumerate(graph.edges) if edge["gateway"]]
@@ -295,7 +321,7 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
         a, b = position[edge["from_node"]], position[edge["to_node"]]
         inner = [int(graph.node_ids[n]) for n in (a, b) if graph.node_inside[n]]
         outer = [int(graph.node_ids[n]) for n in (a, b) if not graph.node_inside[n]]
-        points = shapely.get_coordinates(crossing)
+        points = crossing_points(crossing)
         cx, cy = projector.xy(points[:, 0], points[:, 1])
         point_zone = zones.index_of(cx, cy)
         # Одна строка на точку пересечения границы; узлы — концы ребра по сторонам границы.
@@ -312,6 +338,7 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
     write_csv(out_dir / "gateways.csv.gz", ["kind", "ref", "class", "inside_ref", "outside_ref", "zone_id", "lon", "lat"], gateway_rows)
     add("gateways", "transport", "gateways.csv.gz", "csv+gzip", "observed", ["osm"])
 
+    log("  учреждения…")
     write_csv(out_dir / "facilities.csv.gz", ["facility_id", "kind", "name", "source", "osm_ids", "lon", "lat", "zone_id", "building_ids", "capacity"],
               ([f["facility_id"], f["kind"], f["name"], f["source"], ";".join(f["osm_ids"]), fmt(f["lon"], 7), fmt(f["lat"], 7), zone_name[fac_zone[i]], ";".join(f["building_ids"]), "unknown"]
                for i, f in enumerate(facilities)))
@@ -333,6 +360,7 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
             zone_fac[int(fac_zone[i])][facility["kind"]] += 1
     moscow_share = area_share(zones, region_parts["moscow_admin"])
     mkad_share = area_share(zones, region_parts["mkad_outer"])
+    log("  зоны…")
     write_geojsonl(out_dir / "zones.geojsonl.gz", round_wgs84(projector.to_wgs84(zones.geometry_metric)), [{
         "zone_id": zones.ids[z], "zone_index": z, "area_m2": round(float(zones.area_m2[z]), 1),
         "moscow_share": round(float(moscow_share[z]), 4), "inside_mkad_share": round(float(mkad_share[z]), 4),
@@ -345,6 +373,7 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
         "uncertainty": "Граница зоны — расчётное деление, не административная единица; неопределённость населения та же, что у population.",
     })
 
+    log("  связи зон…")
     links = {}
     for (za, zb), edge_index in road_zone_crossings(graph.edge_lines, projector, zones, region_metric,
                                                        np.array([not edge["gateway"] for edge in graph.edges], dtype=bool)):
@@ -361,6 +390,7 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
               ([zones.ids[a], zones.ids[b], kind, count, fmt(length, 1)] for (a, b, kind), (count, length) in sorted(links.items(), key=lambda item: (zones.ids[item[0][0]], zones.ids[item[0][1]], item[0][2]))))
     add("zone-links", "zones", "zone_links.csv.gz", "csv+gzip", "observed", ["osm"])
 
+    log("Отчёт качества…")
     # ---------------------------------------------------------------- отчёт качества
     weak_label, weak_size = largest_component(graph.weak_labels)
     _, strong_size = largest_component(graph.strong_labels)
@@ -409,4 +439,7 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
     }
     write_json(out_dir / "manifest.json", manifest)
     validate_manifest(out_dir / "manifest.json")
+    if final_dir.exists():
+        shutil.rmtree(final_dir)
+    out_dir.rename(final_dir)
     return manifest, report

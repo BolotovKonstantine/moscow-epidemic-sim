@@ -25,68 +25,80 @@ class TransitNetwork:
 _NUMBERED = re.compile(r"_\d+$")
 
 
-def _stops_in_order(members, stop_roles, platform_roles, points, pair_m, pair_same_name_m):
+def _stops_in_order(members, stop_roles, platform_roles, points, metric, pair_m, pair_same_name_m, aliases):
     """Члены-остановки и платформы в порядке маршрута.
 
-    В схеме PTv2 у остановки обычно есть точка остановки (stop) и платформа рядом.
-    Соседние в маршруте точка и платформа считаются одной остановкой (берётся точка
-    остановки), если они ближе pair_m или носят одно имя и ближе pair_same_name_m
-    (длинные платформы электричек). Платформа без пары остаётся отдельной остановкой.
-    Если маршрут перечисляет сначала все точки, потом все платформы (или наоборот),
-    это два параллельных списка: основой служит более полный (точки при равенстве),
-    парные элементы второго списка отбрасываются, а непарные вставляются после
-    последнего парного соседа, сохраняя порядок второго списка.
+    Учитываются члены с ролями остановки и платформы, а также члены с пустой или
+    нераспознанной ролью, если они сами являются остановками (известны в points);
+    их вид определяется по тегам. В схеме PTv2 у остановки обычно есть точка
+    остановки (stop) и платформа рядом: соседние в маршруте точка и платформа
+    считаются одной остановкой (берётся точка остановки), если они ближе pair_m
+    или носят одно имя и ближе pair_same_name_m (длинные платформы электричек).
+    Расстояния — в метрической проекции. Платформа без пары остаётся отдельной.
+
+    Если маршрут перечисляет сначала все точки, потом все платформы и хотя бы одна
+    пара найдена, это два параллельных списка: основой служит более полный (точки
+    при равенстве), парные элементы второго отбрасываются, а непарные вставляются
+    после последнего парного соседа. Без единой пары сохраняется исходный порядок.
+    Отброшенный элемент пары записывается в aliases → оставленный (для stop_area).
     """
-    paired = _paired(points, pair_m, pair_same_name_m)
-    ordered = [(kind, ref, role in stop_roles) for kind, ref, role in members if role in stop_roles or role in platform_roles]
+    def paired(a, b):
+        if a not in metric or b not in metric:
+            return False
+        distance = float(np.hypot(metric[a][0] - metric[b][0], metric[a][1] - metric[b][1]))
+        name_a, name_b = points[a][1].get("name", ""), points[b][1].get("name", "")
+        return distance < pair_m or (name_a != "" and name_a == name_b and distance < pair_same_name_m)
+
+    ordered = []
+    for kind, ref, role in members:
+        osm_id = _member_id(kind, ref)
+        if role in stop_roles:
+            ordered.append((kind, ref, True))
+        elif role in platform_roles:
+            ordered.append((kind, ref, False))
+        elif osm_id in points:
+            ordered.append((kind, ref, _stop_kind(points[osm_id][1]) != "platform"))
     kinds = [is_stop for _, _, is_stop in ordered]
+
     if any(kinds) and not all(kinds) and sum(a != b for a, b in zip(kinds, kinds[1:])) <= 1:
         stops = [(kind, ref) for kind, ref, is_stop in ordered if is_stop]
         platforms = [(kind, ref) for kind, ref, is_stop in ordered if not is_stop]
         primary, extra = (stops, platforms) if len(stops) >= len(platforms) else (platforms, stops)
         primary_ids = [_member_id(kind, ref) for kind, ref in primary]
-        inserts = {}
-        last = -1
+        matches = []
         for kind, ref in extra:
             osm_id = _member_id(kind, ref)
-            match = [i for i, other in enumerate(primary_ids) if paired(other, osm_id)]
-            if match:
-                last = min(match, key=lambda i: (abs(i - last), i))
-            else:
-                inserts.setdefault(last, []).append((kind, ref))
-        result = list(inserts.get(-1, []))
-        for i, member in enumerate(primary):
-            result.append(member)
-            result.extend(inserts.get(i, []))
-        return result
+            matches.append([i for i, other in enumerate(primary_ids) if paired(other, osm_id)])
+        if any(matches):
+            inserts = {}
+            last = -1
+            for (kind, ref), match in zip(extra, matches):
+                if match:
+                    last = min(match, key=lambda i: (abs(i - last), i))
+                    aliases.setdefault(_member_id(kind, ref), primary_ids[last])
+                else:
+                    inserts.setdefault(last, []).append((kind, ref))
+            result = list(inserts.get(-1, []))
+            for i, member in enumerate(primary):
+                result.append(member)
+                result.extend(inserts.get(i, []))
+            return result
 
     result = []
     previous = None  # (kind, ref, is_stop) последнего добавленного
     for kind, ref, is_stop in ordered:
-        if previous is not None and previous[2] != is_stop and paired(_member_id(previous[0], previous[1]), _member_id(kind, ref)):
+        osm_id = _member_id(kind, ref)
+        if previous is not None and previous[2] != is_stop and paired(_member_id(previous[0], previous[1]), osm_id):
             if is_stop:          # платформа, затем её точка остановки: заменить платформу
+                aliases.setdefault(_member_id(previous[0], previous[1]), osm_id)
                 result[-1] = (kind, ref)
                 previous = (kind, ref, True)
-            continue             # точка остановки, затем её платформа: пропустить платформу
+            else:                # точка остановки, затем её платформа: пропустить платформу
+                aliases.setdefault(osm_id, _member_id(previous[0], previous[1]))
+            continue
         result.append((kind, ref))
         previous = (kind, ref, is_stop)
     return result
-
-
-def _paired(points, pair_m, pair_same_name_m):
-    def paired(a, b):
-        if a not in points or b not in points:
-            return False
-        distance = _distance_m(points[a][0], points[b][0])
-        name_a, name_b = points[a][1].get("name", ""), points[b][1].get("name", "")
-        return distance < pair_m or (name_a != "" and name_a == name_b and distance < pair_same_name_m)
-
-    return paired
-
-
-def _distance_m(a, b):
-    lat = np.radians((a[1] + b[1]) / 2)
-    return float(np.hypot((a[0] - b[0]) * np.cos(lat), a[1] - b[1]) * 111_320.0)
 
 
 def _point(geometry):
@@ -106,6 +118,10 @@ def build_network(data, region_wgs84, projector, config):
     stop_roles = set(transit["stop_roles"])
     platform_roles = set(transit["platform_roles"])
     points = {osm_id: (_point(geometry), tags) for osm_id, (geometry, tags) in data.transit_points.items()}
+    point_ids = sorted(points)
+    px, py = projector.xy(np.array([points[i][0][0] for i in point_ids]), np.array([points[i][0][1] for i in point_ids]))
+    metric = {osm_id: (float(x), float(y)) for osm_id, x, y in zip(point_ids, np.atleast_1d(px), np.atleast_1d(py))}
+    aliases = {}  # отброшенный при объединении пары элемент → оставленная остановка
 
     used = {}
     routes = []
@@ -114,11 +130,8 @@ def build_network(data, region_wgs84, projector, config):
     for rel_id, tags, members in data.routes:
         # Номерные роли старой схемы («forward_stop_13», «stop_2») приводятся к базовой.
         members = [(kind, ref, _NUMBERED.sub("", role)) for kind, ref, role in members if kind in ("n", "w")]
-        candidates = _stops_in_order(members, stop_roles, platform_roles, points, transit["stop_platform_pair_m"], transit["stop_platform_pair_same_name_m"])
-        if not candidates:
-            # Маршруты без ролей остановок (пустая роль, «bus_stop», «halt» и т. п.):
-            # члены, которые сами являются остановками или платформами.
-            candidates = [(kind, ref) for kind, ref, role in members if _member_id(kind, ref) in points]
+        candidates = _stops_in_order(members, stop_roles, platform_roles, points, metric,
+                                     transit["stop_platform_pair_m"], transit["stop_platform_pair_same_name_m"], aliases)
         sequence = []
         missing = 0
         for kind, ref in candidates:
@@ -147,7 +160,9 @@ def build_network(data, region_wgs84, projector, config):
 
     transfers_raw = []
     for rel_id, tags, members in data.stop_areas:
-        members_in_use = sorted({_member_id(kind, ref) for kind, ref, _ in members if _member_id(kind, ref) in used})
+        # Платформа, объединённая с точкой остановки, представлена этой точкой.
+        resolved_ids = {aliases.get(_member_id(kind, ref), _member_id(kind, ref)) for kind, ref, _ in members}
+        members_in_use = sorted(osm_id for osm_id in resolved_ids if osm_id in used)
         for i, a in enumerate(members_in_use):
             for b in members_in_use[i + 1:]:
                 transfers_raw.append((f"r{rel_id}", a, b))

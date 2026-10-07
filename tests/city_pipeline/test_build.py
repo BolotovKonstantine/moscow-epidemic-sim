@@ -78,6 +78,7 @@ class BuildTests(unittest.TestCase):
         mixed = [row for row in rows.values() if row["levels"] == "5" and row["levels_source"] == "tag"][0]
         # apartments + shop=supermarket: жильё основная функция, торговля — вторичная из тега здания.
         self.assertEqual(mixed["dominant_function"], "residential")
+        self.assertEqual(mixed["function_source"], "tag+poi")
         self.assertGreater(float(mixed["share_retail"]), 0)
         self.assertEqual(len(by_kind[("poi", "retail")]), 1)
         self.assertEqual(len(by_kind[("site", "residential")]), 1)
@@ -193,6 +194,11 @@ class BuildTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.build(foreign)
         self.assertTrue((foreign / "keep.txt").is_file())
+
+    def test_interrupted_build_leaves_no_package(self):
+        # После успешной сборки временного каталога не остаётся, а прежний пакет заменяется целиком.
+        self.assertFalse((self.root / "first.partial").exists())
+        self.assertTrue((self.out / "manifest.json").is_file())
 
     def test_manual_sample_is_marked_unverified(self):
         sample = self.report["manual_sample"]
