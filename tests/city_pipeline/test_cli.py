@@ -94,5 +94,22 @@ class ConfigTests(unittest.TestCase):
                 load_config(path)
 
 
+
+class RegistryTests(unittest.TestCase):
+    def test_malformed_registry_is_a_package_error(self):
+        from tools.city_pipeline.sources import load_registry
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sources.json"
+            for document in ("[]", "null", '{"registry_version": 1}', '{"registry_version": 1, "sources": [5]}',
+                             '{"registry_version": true, "sources": []}',
+                             '{"registry_version": 1, "sources": [{"source_id": 1, "url": "u", "file": "f", "owner": "o", "license": "l", "data_date": null, "acquired_at": "a", "coverage": "c", "format": "f", "sha256": "s"}]}'):
+                with self.subTest(document=document):
+                    path.write_text(document)
+                    with self.assertRaises(ManifestError):
+                        load_registry(path)
+            real = Path(__file__).resolve().parents[2] / "data" / "manifests" / "sources.json"
+            self.assertEqual(len(load_registry(real)), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

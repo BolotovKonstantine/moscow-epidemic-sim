@@ -101,6 +101,8 @@ def build_city(directory: Path):
     # контур с тегом building остаётся зданием.
     fallback = b.square(lon0 - 0.045, lat0 - 0.04, 0.0003, {"building": "yes"})
     b.relation(41, [("way", fallback, "outer"), ("way", 999999, "outer")], {"type": "multipolygon", "building": "apartments"})
+    # Гостиница с ключом tourism (только из конфигурации мини-города).
+    b.square(lon0 - 0.02, lat0 + 0.04, 0.0003, {"building": "yes", "tourism": "hotel"})
     # Врачебный кабинет, нанесённый только контуром без здания.
     b.square(lon0 - 0.03, lat0 + 0.03, 0.0003, {"amenity": "doctors", "name": "Кабинет"})                     # неизвестная функция
     b.node(lon0 - 0.0021, lat0 - 0.0021, {"amenity": "clinic", "name": "Поликлиника"})
@@ -179,6 +181,8 @@ def mini_city_config():
     config["description"] = "Синтетический мини-город для теста сборки; не карта Москвы."
     config["boundary"]["mkad_area_km2_range"] = [10, 30]
     config["quality"]["manual_sample_size"] = 4
+    # Ключ, которого нет среди встроенных: проверяет, что фильтр OSM берёт ключи из конфигурации.
+    config["buildings"]["poi_functions"]["tourism"] = {"hotel": "work"}
     return config
 
 

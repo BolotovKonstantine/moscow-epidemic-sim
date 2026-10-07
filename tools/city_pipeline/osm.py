@@ -61,12 +61,18 @@ def read_osm(path, config) -> OsmData:
     route_modes = set(config["transit"]["route_modes"])
     wkb = osmium.geom.WKBFactory()
     data = OsmData()
+    # Ключи классификации из конфигурации (poi_functions, site_functions, facilities.kinds) читаются
+    # и сохраняются вместе с фиксированными, чтобы новые ключи (tourism, leisure…) не терялись.
+    config_keys = set(poi_keys) | set(site_functions)
+    building_tags = tuple(sorted(set(BUILDING_TAGS) | config_keys))
+    site_tags = tuple(sorted(set(SITE_TAGS) | config_keys))
+    poi_tags = tuple(sorted(set(POI_TAGS) | config_keys))
     building_outers = {}       # ID здания-отношения → его внешние линии
     platform_lines = set()     # платформы, временно сохранённые линией (до прихода площади)
     processor = (
         osmium.FileProcessor(str(path))
         .with_areas()
-        .with_filter(osmium.filter.KeyFilter(*INTEREST_KEYS))
+        .with_filter(osmium.filter.KeyFilter(*sorted(set(INTEREST_KEYS) | config_keys)))
     )
     for obj in processor:
         tags = obj.tags
@@ -86,9 +92,9 @@ def read_osm(path, config) -> OsmData:
                 continue
             plain = dict(tags)
             if is_building:
-                data.buildings.append((osm_id, geometry, _subset(plain, BUILDING_TAGS)))
+                data.buildings.append((osm_id, geometry, _subset(plain, building_tags)))
             if is_site:
-                data.sites.append((osm_id, geometry, _subset(plain, SITE_TAGS)))
+                data.sites.append((osm_id, geometry, _subset(plain, site_tags)))
             if is_platform and (osm_id not in data.transit_points or osm_id in platform_lines):
                 # Площадь замкнутой платформы заменяет её временную линию: точка — внутри платформы.
                 data.transit_points[osm_id] = (geometry, _subset(plain, STOP_TAGS))
@@ -98,7 +104,7 @@ def read_osm(path, config) -> OsmData:
             lon, lat = obj.location.lon, obj.location.lat
             osm_id = f"n{obj.id}"
             if any(key in plain for key in poi_keys):
-                data.pois.append((osm_id, lon, lat, _subset(plain, POI_TAGS)))
+                data.pois.append((osm_id, lon, lat, _subset(plain, poi_tags)))
             if _is_transit_point(plain):
                 data.transit_points[osm_id] = ((lon, lat), _subset(plain, STOP_TAGS))
         elif obj.is_way():

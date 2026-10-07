@@ -179,6 +179,9 @@ def build_network(data, region_wgs84, projector, config):
         per_route.append((rel_id, tags, candidates))
 
     roots = _alias_roots(aliases, points)
+    members_of = {}  # остановка → все объединённые в неё объекты OSM
+    for osm_id, root in sorted(roots.items()):
+        members_of.setdefault(root, []).append(osm_id)
 
     def canonical(osm_id):
         """Синоним из любого маршрута применяется везде."""
@@ -234,7 +237,7 @@ def build_network(data, region_wgs84, projector, config):
     x, y = projector.xy(lon, lat)
     position = {stop: index for index, stop in enumerate(stop_ids)}
     stops = [{
-        "stop_id": stop, "name": points[stop][1].get("name", ""), "lon": lon[index], "lat": lat[index],
+        "stop_id": stop, "osm_ids": members_of.get(stop, [stop]), "name": points[stop][1].get("name", ""), "lon": lon[index], "lat": lat[index],
         "x": float(x[index]), "y": float(y[index]), "inside": bool(inside[index]), "modes": sorted(used[stop]),
         "kind": _stop_kind(points[stop][1]),
     } for index, stop in enumerate(stop_ids)]

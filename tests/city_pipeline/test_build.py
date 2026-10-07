@@ -109,7 +109,8 @@ class BuildTests(unittest.TestCase):
         hospital = by_kind[("site", "medical")]
         self.assertEqual(len(hospital), 1)
         self.assertEqual((hospital[0]["levels"], hospital[0]["levels_source"]), ("5", "height"))
-        self.assertEqual(len(by_kind[("unknown", "unknown")]), 3)   # без функции, levels=2.5 и контур сломанного мультиполигона
+        self.assertEqual(len(by_kind[("unknown", "unknown")]), 3)
+        self.assertEqual(len(by_kind[("tag", "work")]), 1)   # building=yes + tourism=hotel из конфигурации   # без функции, levels=2.5 и контур сломанного мультиполигона
         school = by_kind[("tag", "education")]
         self.assertEqual((school[0]["levels"], school[0]["levels_source"]), ("3", "height"))   # 30 ft ≈ 9.1 м
 
@@ -176,6 +177,11 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(transit["stops_inside_region"], 6)
         self.assertEqual(transit["segments"], 11)
         self.assertIn("r30", {row["stop_id"] for row in read_csv(self.out / "transit_stops.csv.gz")})
+        stop_rows = read_csv(self.out / "transit_stops.csv.gz")
+        merged = [row for row in stop_rows if ";" in row["osm_ids"]]
+        # Точки s1, s2 поглотили платформы 1 и 2: в каждой по два ID OSM, собственный — среди них.
+        self.assertEqual(len(merged), 2)
+        self.assertTrue(all(row["stop_id"] in row["osm_ids"].split(";") for row in stop_rows))
         routes = {row["route_id"]: row for row in read_csv(self.out / "transit_routes.csv.gz")}
         self.assertEqual(routes["r16"]["stops"].split(";")[0], routes["r15"]["stops"].split(";")[0])   # одна физическая остановка
         # Несобранная платформа-отношение между остановками — пропуск: прямого отрезка нет.

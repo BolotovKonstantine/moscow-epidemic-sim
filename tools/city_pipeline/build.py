@@ -342,8 +342,8 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     stop_y = np.array([stop["y"] for stop in network.stops])
     stop_zone = zones.index_of(stop_x, stop_y) if network.stops else np.array([], dtype=np.int64)
     log("  транспорт…")
-    write_csv(out_dir / "transit_stops.csv.gz", ["stop_id", "kind", "name", "lon", "lat", "inside", "zone_id", "modes"],
-              ([stop["stop_id"], stop["kind"], stop["name"], fmt(stop["lon"], 7), fmt(stop["lat"], 7), fmt(stop["inside"]), zone_name[stop_zone[i]], ";".join(stop["modes"])]
+    write_csv(out_dir / "transit_stops.csv.gz", ["stop_id", "osm_ids", "kind", "name", "lon", "lat", "inside", "zone_id", "modes"],
+              ([stop["stop_id"], ";".join(stop["osm_ids"]), stop["kind"], stop["name"], fmt(stop["lon"], 7), fmt(stop["lat"], 7), fmt(stop["inside"]), zone_name[stop_zone[i]], ";".join(stop["modes"])]
                for i, stop in enumerate(network.stops)))
     write_csv(out_dir / "transit_routes.csv.gz", ["route_id", "mode", "ref", "name", "network", "stop_count", "missing_members", "crosses_boundary", "stops"],
               ([route["route_id"], route["mode"], route["ref"], route["name"], route["network"], len(route["stops"]), route["missing_members"], fmt(route["crosses_boundary"]), ";".join(route["stops"])]

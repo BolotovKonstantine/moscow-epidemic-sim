@@ -17,13 +17,21 @@ REGISTRY_FIELDS = ("source_id", "url", "file", "owner", "license", "data_date", 
 
 def load_registry(path: Path) -> dict:
     registry = read_json(path)
-    if registry.get("registry_version") != 1:
-        raise ManifestError(f"{path}: неподдерживаемая версия реестра")
+    if not isinstance(registry, dict) or type(registry.get("registry_version")) is not int or registry["registry_version"] != 1:
+        raise ManifestError(f"{path}: неподдерживаемая версия или структура реестра")
+    sources = registry.get("sources")
+    if not isinstance(sources, list):
+        raise ManifestError(f"{path}: sources должен быть списком")
     result = {}
-    for source in registry.get("sources", []):
+    for number, source in enumerate(sources):
+        if not isinstance(source, dict):
+            raise ManifestError(f"{path}: sources[{number}] должен быть объектом")
         missing = [field for field in REGISTRY_FIELDS if field not in source]
         if missing:
             raise ManifestError(f"{source.get('source_id', '?')}: нет полей {', '.join(missing)}")
+        wrong = [field for field in REGISTRY_FIELDS if not isinstance(source[field], str) and not (field == "data_date" and source[field] is None)]
+        if wrong:
+            raise ManifestError(f"{source.get('source_id', '?')}: поля должны быть строками: {', '.join(wrong)}")
         if source["source_id"] in result:
             raise ManifestError(f"Повторяющийся source_id {source['source_id']}")
         if "/" in source["file"] or source["file"] in ("", ".", ".."):

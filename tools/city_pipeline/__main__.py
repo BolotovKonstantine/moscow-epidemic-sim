@@ -123,6 +123,10 @@ def command_build(args) -> int:
     # Одинаковые сборки, запущенные одновременно, ждут друг друга, а не пишут одни файлы.
     lock = (work / ".lock").open("w")
     fcntl.flock(lock, fcntl.LOCK_EX)
+    # Любые сборки в один каталог пакета (даже с разной конфигурацией) устанавливают его по очереди.
+    out.parent.mkdir(parents=True, exist_ok=True)
+    package_lock = (out.parent / f".{out.name}.lock").open("w")
+    fcntl.flock(package_lock, fcntl.LOCK_EX)
     projector = Projector(config["metric_crs"])
 
     print("Граница региона…")
