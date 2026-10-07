@@ -73,9 +73,16 @@ class BuildTests(unittest.TestCase):
         ids = {row["building_id"] for row in read_csv(self.out / "building_attributes.csv.gz")}
         self.assertIn("r40", ids)
         self.assertEqual(self.report["buildings"]["duplicate_building_ways_removed"], 1)
+        # Сломанные площади считаются по слоям, а не одним числом в разделе зданий.
+        self.assertEqual(set(self.report_broken()), {"buildings", "sites", "platforms"})
+        self.assertTrue(all(isinstance(value, int) for value in self.report_broken().values()))
         # r41 не собран (нет второго контура) — его целый контур-здание сохраняется.
         self.assertNotIn("r41", ids)
         self.assertEqual(len([i for i in ids if i.startswith("w")]), len(ids) - 1)
+
+    def report_broken(self):
+        return {"buildings": self.report["buildings"]["broken_osm_areas"], "sites": self.report["facilities"]["broken_osm_site_areas"],
+                "platforms": self.report["transit"]["broken_osm_platform_areas"]}
 
     def test_closed_platform_stop_is_inside_its_area(self):
         stops = {row["name"]: row for row in read_csv(self.out / "transit_stops.csv.gz")}

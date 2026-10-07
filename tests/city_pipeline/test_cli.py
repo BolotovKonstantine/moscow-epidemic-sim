@@ -111,5 +111,27 @@ class RegistryTests(unittest.TestCase):
             self.assertEqual(len(load_registry(real)), 2)
 
 
+
+class ClipCacheTests(unittest.TestCase):
+    def test_interrupted_extract_leaves_no_valid_stamp(self):
+        import subprocess
+        from unittest import mock
+        from shapely.geometry import box
+        from tools.city_pipeline import build
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            source = work / "source.osm.pbf"
+            source.write_bytes(b"pbf")
+            (work / "region.osm.pbf").write_bytes(b"old")
+            (work / "region.osm.pbf.stamp").write_text("old-key")
+            with mock.patch.object(build.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "osmium")):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    build.clip_region(source, box(37.0, 55.0, 37.1, 55.1), work)
+            # Метка снята, прежний файл не подменён недописанным, временных файлов не осталось.
+            self.assertFalse((work / "region.osm.pbf.stamp").exists())
+            self.assertEqual((work / "region.osm.pbf").read_bytes(), b"old")
+            self.assertEqual(sorted(p.name for p in work.iterdir()), ["region-clip.geojson", "region.osm.pbf", "source.osm.pbf"])
+
+
 if __name__ == "__main__":
     unittest.main()

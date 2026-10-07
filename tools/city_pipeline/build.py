@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -75,11 +76,21 @@ def clip_region(source_pbf: Path, region_wgs84, work_dir: Path) -> Path:
     write_geojson(polygon_path, np.array([region_wgs84]), [{"part": "region"}])
     out = work_dir / "region.osm.pbf"
     stamp = work_dir / "region.osm.pbf.stamp"
-    command = ["osmium", "extract", "-p", str(polygon_path), "-s", "smart", "-S", f"types={CLIP_COMPLETE_TYPES}", str(source_pbf), "-o", str(out), "--overwrite"]
-    key = sha256_file(source_pbf) + sha256_file(polygon_path) + " ".join(command[4:8])
+    options = ["-s", "smart", "-S", f"types={CLIP_COMPLETE_TYPES}"]
+    key = sha256_file(source_pbf) + sha256_file(polygon_path) + " ".join(options)
     if out.is_file() and stamp.is_file() and stamp.read_text() == key:
         return out
-    subprocess.run(command, check=True)
+    # Прежняя метка снимается до записи, вырезка идёт во временный файл, и PBF с меткой
+    # устанавливаются только после успеха: прерванная вырезка не будет принята за кэш.
+    stamp.unlink(missing_ok=True)
+    handle, name = tempfile.mkstemp(prefix="region.", suffix=".osm.pbf", dir=work_dir)
+    os.close(handle)
+    partial = Path(name)
+    try:
+        subprocess.run(["osmium", "extract", "-p", str(polygon_path), *options, str(source_pbf), "-o", str(partial), "--overwrite"], check=True)
+        partial.replace(out)
+    finally:
+        partial.unlink(missing_ok=True)
     stamp.write_text(key)
     return out
 

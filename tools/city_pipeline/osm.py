@@ -31,7 +31,7 @@ class OsmData:
     transit_points: dict = field(default_factory=dict)  # osm_id -> (lon, lat, tags)
     routes: list = field(default_factory=list)          # (rel_id, tags, [(type, ref, role)])
     stop_areas: list = field(default_factory=list)      # (rel_id, tags, [(type, ref, role)])
-    broken_areas: int = 0
+    broken_areas: dict = field(default_factory=lambda: {"buildings": 0, "sites": 0, "platforms": 0})
     duplicate_building_ways: int = 0   # контуры, совпавшие со зданием-отношением
 
 
@@ -88,7 +88,9 @@ def read_osm(path, config) -> OsmData:
             try:
                 geometry = bytes.fromhex(wkb.create_multipolygon(obj))
             except RuntimeError:
-                data.broken_areas += 1
+                # Сломанная площадь учитывается в каждом слое, куда она попала бы.
+                for layer, flag in (("buildings", is_building), ("sites", is_site), ("platforms", is_platform)):
+                    data.broken_areas[layer] += int(flag)
                 continue
             plain = dict(tags)
             if is_building:

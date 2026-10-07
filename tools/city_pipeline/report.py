@@ -140,7 +140,7 @@ def build_report(context):
         },
         "buildings": {
             "count": count, "moscow": int(in_moscow.sum()), "buffer": int((~in_moscow).sum()),
-            "broken_osm_areas": context["data"].broken_areas,
+            "broken_osm_areas": context["data"].broken_areas["buildings"],
             "duplicate_building_ways_removed": context["data"].duplicate_building_ways,
             "function_source": dict(sorted(source_counts.items())),
             "function_source_pct": {key: _pct(value, count) for key, value in sorted(source_counts.items())},
@@ -188,6 +188,7 @@ def build_report(context):
         },
         "transit": {
             "stops": len(network.stops), "stops_inside_region": int(stops_inside),
+            "broken_osm_platform_areas": context["data"].broken_areas["platforms"],
             "routes": len(network.routes), "routes_by_mode": dict(sorted(routes_by_mode.items())),
             "routes_without_stops": sum(1 for route in network.routes if not route["stops"]),
             "segments": len(network.segments), "transfers": len(network.transfers),
@@ -201,6 +202,7 @@ def build_report(context):
             "count": len(facilities), "by_kind": dict(sorted(fac_kinds.items())),
             "linked_to_buildings_pct": _pct(fac_linked, len(facilities)),
             "merged_osm_objects": sum(len(f["osm_ids"]) - 1 for f in facilities),
+            "broken_osm_site_areas": context["data"].broken_areas["sites"],
             "capacity": "unknown — вместимость, койки и приёмы отсутствуют в источниках",
         },
         "zones": {
