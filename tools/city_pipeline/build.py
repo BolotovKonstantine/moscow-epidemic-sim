@@ -83,34 +83,49 @@ def clip_region(source_pbf: Path, region_wgs84, work_dir: Path) -> Path:
     return out
 
 
-def road_zone_crossings(edge_lines, projector, zones, step_m):
+def road_zone_crossings(edge_lines, projector, zones):
     """Пары соседних зон, границу между которыми пересекает ребро дороги.
 
-    Ребро между перекрёстками может проходить через несколько зон, поэтому
-    каждый отрезок геометрии дробится с шагом не длиннее step_m (меньше размера зоны) и каждая смена зоны
-    вдоль линии даёт связь. Возвращает отсортированные уникальные ((a, b), ребро), a < b.
+    Ребро между перекрёстками может проходить через несколько зон. Для каждого
+    отрезка геометрии точно вычисляются параметры пересечения вертикальных и
+    горизонтальных линий сетки; середины между соседними пересечениями лежат
+    внутри одного квадрата и дают упорядоченную цепочку зон без пропусков, даже
+    если отрезок задевает угол квадрата. Проход ровно через угол даёт диагональную
+    пару. Точки вне региона имеют зону -1 и связей не создают.
+    Возвращает отсортированные уникальные ((a, b), ребро), a < b.
     """
     if len(edge_lines) == 0:
         return []
+    size = zones.cell_size
     coords, owner = shapely.get_coordinates(projector.to_metric(edge_lines), return_index=True)
     same = owner[1:] == owner[:-1]
-    start, end = coords[:-1][same], coords[1:][same]
-    steps = np.maximum(np.ceil(np.hypot(*(end - start).T) / step_m).astype(np.int64), 1)
-    # Точки каждого отрезка: начало и промежуточные с шагом не длиннее step_m; конец ребра — отдельно.
-    segment = np.repeat(np.arange(len(steps)), steps)
-    fraction = (np.arange(len(segment)) - np.repeat(np.cumsum(steps) - steps, steps)) / np.repeat(steps, steps)
-    points = start[segment] + (end - start)[segment] * fraction[:, None]
-    edge_of = owner[:-1][same][segment]
-    last = np.r_[np.nonzero(owner[1:] != owner[:-1])[0], len(owner) - 1]
-    points = np.vstack((points, coords[last]))
-    edge_of = np.r_[edge_of, owner[last]]
-    order = np.argsort(edge_of, kind="stable")
-    points, edge_of = points[order], edge_of[order]
+    start, end, edge = coords[:-1][same], coords[1:][same], owner[:-1][same]
+    crossing = np.nonzero((np.floor(start / size) != np.floor(end / size)).any(axis=1))[0]
+    pieces = {}
+    for row in crossing.tolist():
+        (x0, y0), (x1, y1) = start[row], end[row]
+        ts = [0.0, 1.0]
+        for p0, p1 in ((x0, x1), (y0, y1)):
+            if p1 != p0:
+                lines = np.arange(np.floor(min(p0, p1) / size) + 1, np.floor(max(p0, p1) / size) + 1) * size
+                ts.extend(((lines - p0) / (p1 - p0)).tolist())
+        ts = np.unique(np.clip(ts, 0.0, 1.0))
+        mids = (ts[:-1] + ts[1:]) / 2
+        pieces[row] = np.column_stack((x0 + (x1 - x0) * mids, y0 + (y1 - y0) * mids))
+    counts = np.ones(len(start), dtype=np.int64)
+    for row, points in pieces.items():
+        counts[row] = len(points)
+    offsets = np.cumsum(counts) - counts
+    points = np.empty((int(counts.sum()), 2))
+    points[offsets] = (start + end) / 2
+    for row, piece in pieces.items():
+        points[offsets[row]:offsets[row] + len(piece)] = piece
+    edge_of = np.repeat(edge, counts)
     zone = zones.index_of(points[:, 0], points[:, 1])
     change = (edge_of[1:] == edge_of[:-1]) & (zone[1:] != zone[:-1]) & (zone[1:] >= 0) & (zone[:-1] >= 0)
     a, b = zone[:-1][change], zone[1:][change]
     rows = np.unique(np.column_stack((np.minimum(a, b), np.maximum(a, b), edge_of[:-1][change])), axis=0)
-    return [((int(za), int(zb)), int(edge)) for za, zb, edge in rows]
+    return [((int(za), int(zb)), int(e)) for za, zb, e in rows]
 
 
 # ---------------------------------------------------------------- основная сборка
@@ -316,7 +331,7 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
     })
 
     links = {}
-    for (za, zb), edge_index in road_zone_crossings(graph.edge_lines, projector, zones, config["zones"]["crossing_step_m"]):
+    for (za, zb), edge_index in road_zone_crossings(graph.edge_lines, projector, zones):
         key = (za, zb, "road")
         count, length = links.get(key, (0, np.inf))
         links[key] = (count + 1, min(length, graph.edges[edge_index]["length_m"]))

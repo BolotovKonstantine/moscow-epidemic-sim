@@ -100,6 +100,8 @@ def build_city(directory: Path):
     far = b.node(lon0 + 1.0, lat0, {"highway": "bus_stop", "public_transport": "platform", "name": "За границей"})
     b.relation(10, [("node", p1, "platform"), ("node", p2, "platform"), ("way", line_platform, "platform"), ("node", 999999, "platform")], {"type": "route", "route": "bus", "ref": "1", "name": "Автобус 1"})
     b.relation(11, [("node", p3, "platform"), ("node", p1, "platform"), ("node", far, "platform")], {"type": "route", "route": "bus", "ref": "2", "name": "Автобус 2"})
+    # Внутри → ненайденный член → снаружи: пропуск не делает остановку 2 входом.
+    b.relation(12, [("node", p2, "platform"), ("node", 999998, "platform"), ("node", far, "platform")], {"type": "route", "route": "bus", "ref": "3", "name": "Автобус 3"})
     b.relation(20, [("node", p2, "platform"), ("node", p3, "platform")], {"type": "public_transport", "public_transport": "stop_area", "name": "Узел"})
 
     osm_path = directory / "mini.osm"

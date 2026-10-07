@@ -18,9 +18,15 @@ class Zones:
     geometry_metric: np.ndarray
     area_m2: np.ndarray
     cell_size: float
+    clipped: np.ndarray   # bool: квадрат обрезан границей региона
 
     def index_of(self, x, y):
-        """Индекс зоны для метрических точек или -1, если точка вне зон."""
+        """Индекс зоны для метрических точек или -1, если точка вне зон.
+
+        Квадрат сетки находится по целочисленному ключу; для зон, обрезанных
+        границей региона, точка дополнительно проверяется по их геометрии
+        (точка на границе считается внутри).
+        """
         x = np.asarray(x, dtype=np.float64)
         y = np.asarray(y, dtype=np.float64)
         ix = np.floor(x / self.cell_size).astype(np.int64)
@@ -31,7 +37,13 @@ class Zones:
         sorted_key = zone_key[order]
         position = np.clip(np.searchsorted(sorted_key, key), 0, len(sorted_key) - 1)
         found = sorted_key[position] == key
-        return np.where(found, order[position], -1)
+        index = np.where(found, order[position], -1)
+        check = np.nonzero(index >= 0)[0]
+        check = check[self.clipped[index[check]]]
+        if check.size:
+            inside = shapely.intersects_xy(self.geometry_metric[index[check]], x[check], y[check])
+            index[check[~inside]] = -1
+        return index
 
 
 def build_zones(region_metric, cell_size):
@@ -55,7 +67,9 @@ def build_zones(region_metric, cell_size):
     ix = grid_x[keep][order]
     iy = grid_y[keep][order]
     ids = [f"g{a}_{b}" for a, b in zip(ix.tolist(), iy.tolist())]
-    return Zones(ids, ix, iy, clipped[keep][order], area[keep][order], float(cell_size))
+    geometry = clipped[keep][order]
+    shapely.prepare(geometry)
+    return Zones(ids, ix, iy, geometry, area[keep][order], float(cell_size), edge[keep][order])
 
 
 def area_share(zones, polygon_metric):

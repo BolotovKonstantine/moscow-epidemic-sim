@@ -134,18 +134,19 @@ class BuildTests(unittest.TestCase):
 
     def test_transit_routes_segments_and_transfers(self):
         transit = self.report["transit"]
-        self.assertEqual(transit["routes"], 2)
+        self.assertEqual(transit["routes"], 3)
         self.assertEqual(transit["stops"], 5)            # включая линию-платформу и остановку за границей
         self.assertEqual(transit["stops_inside_region"], 4)
         self.assertEqual(transit["segments"], 4)
         self.assertEqual(transit["transfers"], 1)
-        self.assertEqual(transit["unresolved_route_members"], 1)
-        # Ненайденный член маршрута 1 не делает его пересекающим границу; маршрут 2 выходит наружу.
-        self.assertEqual(transit["routes_crossing_boundary"], 1)
+        self.assertEqual(transit["unresolved_route_members"], 2)
+        # Ненайденный член маршрута 1 не делает его пересекающим границу; маршруты 2 и 3 выходят наружу.
+        self.assertEqual(transit["routes_crossing_boundary"], 2)
         self.assertEqual(transit["components"], 1)
         gateways = [row for row in read_csv(self.out / "gateways.csv.gz") if row["kind"] == "transit"]
         stops = {row["stop_id"]: row for row in read_csv(self.out / "transit_stops.csv.gz")}
-        # Вход — остановка внутри, соседняя по маршруту с остановкой снаружи.
+        # Вход — остановка внутри, соседняя по маршруту с остановкой снаружи; у маршрута 3
+        # между ними ненайденный член, поэтому вход неизвестен и не публикуется.
         self.assertEqual([(row["ref"], stops[row["inside_ref"]]["name"]) for row in gateways], [("r11", "Остановка 1")])
         routes = {row["route_id"]: row for row in read_csv(self.out / "transit_routes.csv.gz")}
         self.assertEqual(routes["r10"]["crosses_boundary"], "0")

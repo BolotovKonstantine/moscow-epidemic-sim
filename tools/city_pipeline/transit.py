@@ -69,6 +69,7 @@ def build_network(data, region_wgs84, projector, config):
         routes.append({
             "route_id": route_id, "mode": mode, "ref": tags.get("ref", ""), "name": tags.get("name", ""),
             "network": tags.get("network", ""), "stops": resolved, "missing_members": missing,
+            "sequence": sequence,  # с None на месте ненайденных членов
         })
 
     transfers_raw = []
@@ -109,9 +110,12 @@ def build_network(data, region_wgs84, projector, config):
         # Ненайденные члены маршрута не доказывают выход за границу: это видно только по остановкам вне региона.
         inside_flags = [stops[position[stop]]["inside"] for stop in route["stops"]]
         route["crosses_boundary"] = any(inside_flags) and not all(inside_flags)
+        # Вход — остановка внутри, непосредственный сосед которой (без ненайденного члена между ними) — снаружи.
+        sequence = route.pop("sequence")
+        known = [None if stop is None else stops[position[stop]]["inside"] for stop in sequence]
         route["boundary_stops"] = sorted({
-            stop for i, stop in enumerate(route["stops"]) if inside_flags[i]
-            and ((i > 0 and not inside_flags[i - 1]) or (i + 1 < len(inside_flags) and not inside_flags[i + 1]))
+            stop for i, stop in enumerate(sequence) if known[i]
+            and ((i > 0 and known[i - 1] is False) or (i + 1 < len(known) and known[i + 1] is False))
         })
     segments.sort(key=lambda item: (item["route_id"], item["sequence"]))
     routes.sort(key=lambda item: item["route_id"])
