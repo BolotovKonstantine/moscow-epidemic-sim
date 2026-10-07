@@ -135,11 +135,16 @@ class BuildTests(unittest.TestCase):
 
     def test_transit_routes_segments_and_transfers(self):
         transit = self.report["transit"]
-        self.assertEqual(transit["routes"], 5)
+        self.assertEqual(transit["routes"], 6)
         self.assertEqual(transit["routes_without_stops"], 0)   # старые и пустые роли распознаны
-        self.assertEqual(transit["stops"], 5)            # включая линию-платформу и остановку за границей
-        self.assertEqual(transit["stops_inside_region"], 4)
-        self.assertEqual(transit["segments"], 6)
+        self.assertEqual(transit["stops"], 7)            # включая линию-платформу, остановку за границей и точки остановок PTv2
+        self.assertEqual(transit["stops_inside_region"], 6)
+        self.assertEqual(transit["segments"], 8)
+        routes = {row["route_id"]: row for row in read_csv(self.out / "transit_routes.csv.gz")}
+        # Смешанный PTv2: пары «точка остановки + платформа» схлопнуты, одиночная платформа сохранена.
+        self.assertEqual(routes["r15"]["stop_count"], "3")
+        stops = routes["r15"]["stops"].split(";")
+        self.assertEqual([stop[0] for stop in stops], ["n", "n", "w"])   # две точки остановок и платформа-линия
         self.assertEqual(transit["transfers"], 1)
         self.assertEqual(transit["unresolved_route_members"], 2)
         # Ненайденный член маршрута 1 не делает его пересекающим границу; маршруты 2 и 3 выходят наружу.
@@ -170,6 +175,19 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(checks["facility_provenance_complete"], "pass")
         self.assertEqual(kinds["clinic"]["building_ids"], "")
         self.assertTrue(all(row["capacity"] == "unknown" for row in rows))
+
+    def test_manual_sample_keeps_levels_as_in_attributes(self):
+        rows = {row["building_id"]: row for row in read_csv(self.out / "building_attributes.csv.gz")}
+        for item in self.report["manual_sample"]["items"]:
+            self.assertEqual(float(rows[item["building_id"]]["levels"]), item["levels"])
+
+    def test_refuses_to_delete_foreign_directory(self):
+        foreign = self.root / "foreign"
+        foreign.mkdir()
+        (foreign / "keep.txt").write_text("не пакет")
+        with self.assertRaises(ValueError):
+            self.build(foreign)
+        self.assertTrue((foreign / "keep.txt").is_file())
 
     def test_manual_sample_is_marked_unverified(self):
         sample = self.report["manual_sample"]

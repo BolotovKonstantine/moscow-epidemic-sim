@@ -80,6 +80,8 @@
   "transit": {
     "route_modes": ["subway", "monorail", "light_rail", "train", "tram", "trolleybus", "bus", "share_taxi"],
     "stop_roles": ["stop", "stop_entry_only", "stop_exit_only", "forward_stop", "backward_stop", "forward:stop", "backward:stop"],
+    "stop_platform_pair_m": 100,
+    "stop_platform_pair_same_name_m": 400,
     "platform_roles": ["platform", "platform_entry_only", "platform_exit_only", "forward_platform", "backward_platform", "forward:platform", "backward:platform"]
   },
   "model_assumptions": {

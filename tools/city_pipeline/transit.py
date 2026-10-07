@@ -25,6 +25,48 @@ class TransitNetwork:
 _NUMBERED = re.compile(r"_\d+$")
 
 
+def _stops_in_order(members, stop_roles, platform_roles, points, pair_m, pair_same_name_m):
+    """Члены-остановки и платформы в порядке маршрута.
+
+    В схеме PTv2 у остановки обычно есть точка остановки (stop) и платформа рядом.
+    Соседние в маршруте точка и платформа считаются одной остановкой (берётся точка
+    остановки), если они ближе pair_m или носят одно имя и ближе pair_same_name_m
+    (длинные платформы электричек). Платформа без пары остаётся отдельной остановкой.
+    Если маршрут перечисляет сначала все точки, потом все платформы (или наоборот),
+    это два параллельных списка, и берётся более полный из них.
+    """
+    ordered = [(kind, ref, role in stop_roles) for kind, ref, role in members if role in stop_roles or role in platform_roles]
+    kinds = [is_stop for _, _, is_stop in ordered]
+    if any(kinds) and not all(kinds) and sum(a != b for a, b in zip(kinds, kinds[1:])) <= 1:
+        stops = [(kind, ref) for kind, ref, is_stop in ordered if is_stop]
+        platforms = [(kind, ref) for kind, ref, is_stop in ordered if not is_stop]
+        return stops if len(stops) >= len(platforms) else platforms
+
+    def paired(a, b):
+        if a not in points or b not in points:
+            return False
+        distance = _distance_m(points[a][0], points[b][0])
+        name_a, name_b = points[a][1].get("name", ""), points[b][1].get("name", "")
+        return distance < pair_m or (name_a != "" and name_a == name_b and distance < pair_same_name_m)
+
+    result = []
+    previous = None  # (kind, ref, is_stop) последнего добавленного
+    for kind, ref, is_stop in ordered:
+        if previous is not None and previous[2] != is_stop and paired(_member_id(previous[0], previous[1]), _member_id(kind, ref)):
+            if is_stop:          # платформа, затем её точка остановки: заменить платформу
+                result[-1] = (kind, ref)
+                previous = (kind, ref, True)
+            continue             # точка остановки, затем её платформа: пропустить платформу
+        result.append((kind, ref))
+        previous = (kind, ref, is_stop)
+    return result
+
+
+def _distance_m(a, b):
+    lat = np.radians((a[1] + b[1]) / 2)
+    return float(np.hypot((a[0] - b[0]) * np.cos(lat), a[1] - b[1]) * 111_320.0)
+
+
 def _point(geometry):
     if isinstance(geometry, tuple):
         return geometry
@@ -50,9 +92,7 @@ def build_network(data, region_wgs84, projector, config):
     for rel_id, tags, members in data.routes:
         # Номерные роли старой схемы («forward_stop_13», «stop_2») приводятся к базовой.
         members = [(kind, ref, _NUMBERED.sub("", role)) for kind, ref, role in members if kind in ("n", "w")]
-        candidates = [(kind, ref) for kind, ref, role in members if role in stop_roles]
-        if not candidates:
-            candidates = [(kind, ref) for kind, ref, role in members if role in platform_roles]
+        candidates = _stops_in_order(members, stop_roles, platform_roles, points, transit["stop_platform_pair_m"], transit["stop_platform_pair_same_name_m"])
         if not candidates:
             # Маршруты без ролей остановок (пустая роль, «bus_stop», «halt» и т. п.):
             # члены, которые сами являются остановками или платформами.

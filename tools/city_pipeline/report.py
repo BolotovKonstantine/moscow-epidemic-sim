@@ -51,7 +51,7 @@ def _manual_sample(context):
                 "building_id": osm_id, "territory": territory, "osm_url": f"https://www.openstreetmap.org/{kind}/{osm_id[1:]}",
                 "lon": round(float(buildings.lon[row]), 6), "lat": round(float(buildings.lat[row]), 6),
                 "function": dominant, "function_source": buildings.function_source[row],
-                "levels": int(buildings.levels[row]), "levels_source": buildings.levels_source[row],
+                "levels": round(float(buildings.levels[row]), 2), "levels_source": buildings.levels_source[row],
                 "residents": int(context["population"].residents[row]), "verified": None,
             })
     return sample

@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,23 @@ def _created_at() -> str:
     epoch = os.environ.get("SOURCE_DATE_EPOCH")
     moment = datetime.fromtimestamp(int(epoch), UTC) if epoch else datetime.now(UTC).replace(microsecond=0)
     return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+SAFE_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+SAFE_VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+_-]*$")
+
+
+def package_dir(root: Path, package_id, package_version) -> Path:
+    """Каталог пакета внутри root; ID и версия — только безопасные для имени файла символы."""
+    if not isinstance(package_id, str) or not SAFE_NAME.fullmatch(package_id):
+        raise ManifestError(f"Недопустимый package_id для каталога: {package_id!r}")
+    if not isinstance(package_version, str) or not SAFE_VERSION.fullmatch(package_version) or ".." in package_version:
+        raise ManifestError(f"Недопустимая package_version для каталога: {package_version!r}")
+    base = root.resolve()
+    out = (base / f"{package_id}-{package_version}").resolve()
+    if out.parent != base:
+        raise ManifestError(f"Каталог пакета {out} вне {base}")
+    return out
 
 
 def command_validate(args) -> int:
@@ -79,7 +97,7 @@ def command_build(args) -> int:
     raster = f"zip://{raster_zip}!/{raster_name}"
     processing = f"city_pipeline-{config['package_id']}-{config['package_version']}"
     sources = [manifest_source(selected[role], processing) for role in sorted(selected)]
-    out = args.out / f"{config['package_id']}-{config['package_version']}"
+    out = package_dir(args.out, config["package_id"], config["package_version"])
     manifest, report = build_package(
         config, sources=sources, source_roles={role: source["source_id"] for role, source in selected.items()},
         kind="city_data", region_parts=parts, region_osm=region_osm, raster=raster, out_dir=out, created_at=_created_at(),

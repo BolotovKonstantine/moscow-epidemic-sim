@@ -114,6 +114,12 @@ def build_city(directory: Path):
     # (пустая роль и «bus_stop»); путь маршрута (way 1) остановкой не считается.
     b.relation(13, [("node", p1, "forward_stop_1"), ("node", p2, "backward_stop_2")], {"type": "route", "route": "bus", "ref": "4", "name": "Автобус 4"})
     b.relation(14, [("node", p2, ""), ("node", p3, "bus_stop"), ("way", 1, "")], {"type": "route", "route": "bus", "ref": "5", "name": "Автобус 5"})
+    # PTv2 со смешанной разметкой: пары «точка остановки + платформа» рядом (≈10 м) и
+    # одиночная платформа-линия (≈190 м от остановки 2) — три остановки, два отрезка.
+    s1 = b.node(lon0 - 0.005, lat0 + 0.0001, {"public_transport": "stop_position", "name": "Остановка 1"})
+    s2 = b.node(lon0 + 0.005, lat0 + 0.0001, {"public_transport": "stop_position", "name": "Остановка 2"})
+    b.relation(15, [("node", s1, "stop"), ("node", p1, "platform"), ("node", p2, "platform"), ("node", s2, "stop"),
+                    ("way", line_platform, "platform")], {"type": "route", "route": "bus", "ref": "6", "name": "Автобус 6"})
     b.relation(20, [("node", p2, "platform"), ("node", p3, "platform")], {"type": "public_transport", "public_transport": "stop_area", "name": "Узел"})
 
     osm_path = directory / "mini.osm"

@@ -145,6 +145,9 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
     """Собрать пакет. sources — карточки для паспорта; source_roles — {"osm": id, "population": id}."""
     projector = Projector(config["metric_crs"])
     if out_dir.exists():
+        # Удаляется только прежний пакет: каталог с manifest.json или пустой.
+        if any(out_dir.iterdir()) and not (out_dir / "manifest.json").is_file():
+            raise ValueError(f"{out_dir} не пуст и не является городским пакетом; удалите его вручную")
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
 
