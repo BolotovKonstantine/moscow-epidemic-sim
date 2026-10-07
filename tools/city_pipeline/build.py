@@ -352,7 +352,7 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
               ([s["route_id"], s["sequence"], s["mode"], s["from_stop"], s["to_stop"], fmt(s["distance_m"], 1)] for s in network.segments))
     transit_estimation = {
         "method": "Остановки, маршруты и их порядок — из отношений OSM. Точка остановки и платформа объединяются в одну остановку эвристически: соседние в маршруте ближе stop_platform_pair_m или с одним именем ближе stop_platform_pair_same_name_m; синонимы применяются ко всем маршрутам. Отрезки — по прямой между соседними остановками.",
-        "uncertainty": "Пороги объединения — параметры конфигурации: разные близкие остановки могут быть слиты, пары с ошибками порядка в OSM — не найдены. Исходные ID OSM остановок сохранены в stop_id.",
+        "uncertainty": "Пороги объединения — параметры конфигурации: разные близкие остановки могут быть слиты, пары с ошибками порядка в OSM — не найдены. stop_id — ID представителя объединённой остановки; все исходные ID OSM, вошедшие в неё, — в колонке osm_ids файла transit_stops.",
     }
     add("transit-stops", "transport", "transit_stops.csv.gz", "csv+gzip", "estimated", ["osm"], transit_estimation)
     add("transit-routes", "transport", "transit_routes.csv.gz", "csv+gzip", "estimated", ["osm"], transit_estimation)
@@ -410,8 +410,8 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
               ([f["facility_id"], f["kind"], f["name"], f["source"], ";".join(f["osm_ids"]), fmt(f["lon"], 7), fmt(f["lat"], 7), zone_name[fac_zone[i]], ";".join(f["building_ids"]), "unknown"]
                for i, f in enumerate(facilities)))
     add("facilities", "facilities", "facilities.csv.gz", "csv+gzip", "estimated", ["osm"], {
-        "method": "Вид, имя и координаты — из тегов OSM. Точки, корпуса и территории одного вида, вложенные друг в друга, объединены в одно учреждение (osm_ids) эвристически; building_ids — здания, чья представительная точка лежит в контуре или содержит точку учреждения.",
-        "uncertainty": "Объединение и привязка к зданиям — пространственная эвристика: соседние разные учреждения одного вида могут быть слиты, корпуса — не привязаны. Вместимость unknown.",
+        "method": "Вид и имя — из тегов OSM. Координаты: у точек — координаты узла OSM; у учреждения-здания — представительная точка здания (point_on_surface в метрической проекции); у учреждения-территории — point_on_surface её контура, то есть вычисленная точка, а не наблюдение. Точки, корпуса и территории одного вида, вложенные друг в друга, объединены в одно учреждение (osm_ids) эвристически; building_ids — здания, чья представительная точка лежит в контуре или содержит точку учреждения.",
+        "uncertainty": "Объединение и привязка к зданиям — пространственная эвристика: соседние разные учреждения одного вида могут быть слиты, корпуса — не привязаны. Точка контура лежит внутри него, но не обязательно у входа или главного корпуса. Вместимость unknown.",
     })
 
     # Зоны и связи между ними.
