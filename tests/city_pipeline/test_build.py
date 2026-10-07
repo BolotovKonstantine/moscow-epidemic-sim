@@ -74,7 +74,11 @@ class BuildTests(unittest.TestCase):
         for row in rows.values():
             by_kind.setdefault((row["function_source"], row["dominant_function"]), []).append(row)
         tagged = sorted(row["levels"] for row in rows.values() if row["levels_source"] == "tag")
-        self.assertEqual(tagged, ["2.5", "9"])   # дробный тег сохраняется без округления
+        self.assertEqual(tagged, ["2.5", "5", "9"])   # дробный тег сохраняется без округления
+        mixed = [row for row in rows.values() if row["levels"] == "5" and row["levels_source"] == "tag"][0]
+        # apartments + shop=supermarket: жильё основная функция, торговля — вторичная из тега здания.
+        self.assertEqual(mixed["dominant_function"], "residential")
+        self.assertGreater(float(mixed["share_retail"]), 0)
         self.assertEqual(len(by_kind[("poi", "retail")]), 1)
         self.assertEqual(len(by_kind[("site", "residential")]), 1)
         hospital = by_kind[("site", "medical")]
@@ -162,7 +166,8 @@ class BuildTests(unittest.TestCase):
     def test_facilities_have_unknown_capacity_and_building_links(self):
         rows = read_csv(self.out / "facilities.csv.gz")
         kinds = {row["kind"]: row for row in rows}
-        self.assertEqual(sorted(row["kind"] for row in rows), ["clinic", "hospital", "school"])
+        self.assertEqual(sorted(row["kind"] for row in rows), ["clinic", "doctors", "hospital", "school"])
+        self.assertEqual(kinds["doctors"]["source"], "site")   # учреждение только контуром, без здания
         self.assertNotIn("Больница за границей", {row["name"] for row in rows})   # точка вне региона
         self.assertTrue(kinds["hospital"]["building_ids"])
         # Точка больницы поглощена участком; точка и корпус школы — её концентрическим участком; имя — у точки.

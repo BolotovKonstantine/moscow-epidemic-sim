@@ -38,7 +38,8 @@ class PopulationResult:
     allocated_total: int
     unallocated: float
     by_method: dict
-    raster_covers_region: bool
+    raster_covers_region: bool   # охват региона и ни одной ячейки без данных внутри
+    missing_cells: int
     cells_in_region: int
     populated_cells_without_residential: int   # ячейки, ушедшие в пул зоны
 
@@ -59,21 +60,26 @@ def outward_window(window, width, height):
 def read_cells(raster_path, region_wgs84):
     """Ячейки сетки внутри региона: (lon, lat, population)."""
     with rasterio.open(raster_path) as dataset:
+        if dataset.crs is None or dataset.crs.to_epsg() != 4326:
+            raise ValueError(f"Сетка населения должна быть в EPSG:4326, получено {dataset.crs}")
         minx, miny, maxx, maxy = region_wgs84.bounds
         bounds = dataset.bounds
         covers = bounds.left <= minx and bounds.right >= maxx and bounds.bottom <= miny and bounds.top >= maxy
         window = outward_window(rasterio.windows.from_bounds(minx, miny, maxx, maxy, dataset.transform), dataset.width, dataset.height)
         values = dataset.read(1, window=window, masked=True).astype(np.float64)
         transform = dataset.window_transform(window)
+    inside = rasterio.features.geometry_mask([region_wgs84], out_shape=values.shape, transform=transform, invert=True, all_touched=False)
+    # Ячейки без данных (nodata, NaN, отрицательные) — пропуск покрытия, а не ноль жителей.
+    missing = (np.ma.getmaskarray(values) | ~np.isfinite(values.data) | (values.data < 0)) & inside
     data = values.filled(0.0)
-    data[~np.isfinite(data) | (data < 0)] = 0.0
-    inside = rasterio.features.geometry_mask([region_wgs84], out_shape=data.shape, transform=transform, invert=True, all_touched=False)
+    data[missing | ~np.isfinite(data) | (data < 0)] = 0.0
     rows, cols = np.nonzero(inside & (data > 0))
     xs, ys = rasterio.transform.xy(transform, rows, cols, offset="center")
     return {
         "lon": np.asarray(xs, dtype=np.float64), "lat": np.asarray(ys, dtype=np.float64),
         "population": data[rows, cols], "rows": rows, "cols": cols,
-        "transform": transform, "shape": data.shape, "covers": covers, "cells_in_region": int(inside.sum()),
+        "transform": transform, "shape": data.shape, "covers": covers and not missing.any(),
+        "cells_in_region": int(inside.sum()), "missing_cells": int(missing.sum()),
     }
 
 
@@ -173,7 +179,7 @@ def allocate(buildings, building_zone, cells, cell_zone, zone_ix, zone_iy, confi
     return PopulationResult(
         residents=residents, method=method, region_total=float(population.sum()), allocated_total=int(residents.sum()),
         unallocated=unallocated, by_method=by_method,
-        raster_covers_region=bool(cells["covers"]), cells_in_region=cells["cells_in_region"],
+        raster_covers_region=bool(cells["covers"]), cells_in_region=cells["cells_in_region"], missing_cells=cells["missing_cells"],
         populated_cells_without_residential=orphan_cells,
     )
 

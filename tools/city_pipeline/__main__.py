@@ -42,6 +42,17 @@ def package_dir(root: Path, package_id, package_version) -> Path:
     return out
 
 
+def work_dir(root: Path, package_id) -> Path:
+    """Каталог промежуточных файлов пакета внутри root."""
+    if not isinstance(package_id, str) or not SAFE_NAME.fullmatch(package_id):
+        raise ManifestError(f"Недопустимый package_id для каталога: {package_id!r}")
+    base = root.resolve()
+    work = (base / package_id).resolve()
+    if work.parent != base:
+        raise ManifestError(f"Рабочий каталог {work} вне {base}")
+    return work
+
+
 def command_validate(args) -> int:
     manifest = validate_manifest(args.manifest, check_files=not args.metadata_only)
     mode = "только паспорт; файлы не проверялись" if args.metadata_only else "паспорт, файлы и SHA256"
@@ -77,10 +88,12 @@ def command_build(args) -> int:
         raise ManifestError("Не найдена утилита osmium (osmium-tool)")
     registry = load_registry(args.registry)
     config = read_json(args.config)
+    # ID и версия проверяются до любой записи на диск: и рабочий, и выходной каталог — внутри своих корней.
+    out = package_dir(args.out, config.get("package_id"), config.get("package_version"))
+    work = work_dir(args.work, config["package_id"])
     selected = _selected_sources(config, registry)
     osm = verify(selected["osm"], args.raw)
     raster_zip = verify(selected["population"], args.raw)
-    work = args.work / config["package_id"]
     work.mkdir(parents=True, exist_ok=True)
     projector = Projector(config["metric_crs"])
 
@@ -97,7 +110,6 @@ def command_build(args) -> int:
     raster = f"zip://{raster_zip}!/{raster_name}"
     processing = f"city_pipeline-{config['package_id']}-{config['package_version']}"
     sources = [manifest_source(selected[role], processing) for role in sorted(selected)]
-    out = package_dir(args.out, config["package_id"], config["package_version"])
     manifest, report = build_package(
         config, sources=sources, source_roles={role: source["source_id"] for role, source in selected.items()},
         kind="city_data", region_parts=parts, region_osm=region_osm, raster=raster, out_dir=out, created_at=_created_at(),

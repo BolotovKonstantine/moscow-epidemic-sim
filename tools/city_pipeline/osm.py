@@ -55,6 +55,7 @@ def read_osm(path, config) -> OsmData:
     roads = set(config["roads"]["highways"])
     ignore = set(config["buildings"]["ignore_values"])
     site_functions = config["buildings"]["site_functions"]
+    facility_kinds = config["facilities"]["kinds"]
     poi_keys = set(config["buildings"]["poi_functions"]) | set(config["facilities"]["kinds"])
     route_modes = set(config["transit"]["route_modes"])
     wkb = osmium.geom.WKBFactory()
@@ -71,7 +72,8 @@ def read_osm(path, config) -> OsmData:
             osm_id = ("w" if obj.from_way() else "r") + str(obj.orig_id())
             building = tags.get("building")
             is_building = building is not None and building not in ignore
-            is_site = _is_site(tags, site_functions)
+            # Участок: функция территории или учреждение, нанесённое только контуром (doctors и т. п.).
+            is_site = _is_site(tags, site_functions) or _is_site(tags, facility_kinds)
             is_platform = tags.get("public_transport") == "platform" or tags.get("railway") == "platform"
             if not (is_building or is_site or is_platform):
                 continue

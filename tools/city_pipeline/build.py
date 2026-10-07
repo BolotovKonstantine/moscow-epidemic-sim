@@ -44,14 +44,15 @@ def make_boundary(config, boundary_osm: Path, projector: Projector):
 
 def write_boundary(path: Path, parts, projector, config):
     order = ("region", "moscow_admin", "mkad_outer")
-    geometries = round_wgs84(projector.to_wgs84(np.array([parts[name] for name in order])))
+    exact = projector.to_wgs84(np.array([parts[name] for name in order]))
+    geometries = round_wgs84(exact)  # округление только для файла
     properties = [
         {"part": "region", "rule": "moscow_admin_union_mkad_outer_buffer", "buffer_meters": config["boundary"]["buffer_meters"], "area_km2": round(parts["region"].area / 1e6, 3)},
         {"part": "moscow_admin", "osm_relation": parts["moscow_relation_id"], "area_km2": round(parts["moscow_admin"].area / 1e6, 3)},
         {"part": "mkad_outer", "osm_way_count": parts["mkad_way_count"], "edge_offset_m": config["boundary"]["mkad_edge_offset_m"], "area_km2": round(parts["mkad_outer"].area / 1e6, 3)},
     ]
     write_geojson(path, geometries, properties)
-    return dict(zip(order, geometries))
+    return dict(zip(order, exact))  # для предикатов и пересечений — без округления
 
 
 def prefilter_boundary(source_pbf: Path, out: Path):

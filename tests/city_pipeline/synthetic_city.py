@@ -89,7 +89,12 @@ def build_city(directory: Path):
     b.square(lon0 + 0.006, lat0 + 0.006, 0.002, {"amenity": "hospital", "name": "Больница"})
     b.square(lon0 + 0.006, lat0 + 0.006, 0.0004, {"building": "yes", "height": "15"})   # корпус больницы
     b.square(lon0 + 0.0312, lat0 - 0.0312, 0.0003, {"building": "yes"})
-    b.square(lon0 + 0.035, lat0 + 0.035, 0.0002, {"building": "yes", "building:levels": "2.5"})   # дробная этажность                     # неизвестная функция
+    b.square(lon0 + 0.035, lat0 + 0.035, 0.0002, {"building": "yes", "building:levels": "2.5"})   # дробная этажность
+    # Жилой дом с магазином в теге самого здания — смешанная функция.
+    # Далеко от остальных (другой блок зон), чтобы не получать избыток населения.
+    b.square(lon0 + 0.1, lat0 - 0.1, 0.0003, {"building": "apartments", "shop": "supermarket", "building:levels": "5"})
+    # Врачебный кабинет, нанесённый только контуром без здания.
+    b.square(lon0 - 0.03, lat0 + 0.03, 0.0003, {"amenity": "doctors", "name": "Кабинет"})                     # неизвестная функция
     b.node(lon0 - 0.0021, lat0 - 0.0021, {"amenity": "clinic", "name": "Поликлиника"})
     b.node(lon0 + 1.0, lat0 + 0.01, {"amenity": "hospital", "name": "Больница за границей"})   # вне региона
     b.node(lon0 + 0.0065, lat0 + 0.0065, {"amenity": "hospital"})   # та же больница точкой на территории

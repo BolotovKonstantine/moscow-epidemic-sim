@@ -114,11 +114,11 @@ def classify(ids, geometry, metric, tags, pois, sites, sites_metric, config):
     index = {name: position for position, name in enumerate(FUNCTIONS)}
 
     primary = [None] * count
+    direct = [None] * count   # amenity/shop/office/… на самом здании
     for row, item in enumerate(tags):
         function = _tag_function(item.get("building"), cfg["tag_functions"])
-        if function is None:
-            function = _poi_function(item, cfg["poi_functions"])
-        primary[row] = function
+        direct[row] = _poi_function(item, cfg["poi_functions"])
+        primary[row] = function if function is not None else direct[row]
 
     # Точки организаций внутри контура здания.
     poi_functions = [[] for _ in range(count)]
@@ -135,6 +135,9 @@ def classify(ids, geometry, metric, tags, pois, sites, sites_metric, config):
     secondary = cfg["poi_secondary_weight"]
     for row in range(count):
         found = poi_functions[row]
+        if direct[row] is not None and direct[row] not in found:
+            # Функциональный тег самого здания (apartments + shop) — вторичная функция, как точка внутри.
+            found = [direct[row]] + found
         if primary[row] is not None:
             shares[row, index[primary[row]]] = 1.0
             for function in found:
