@@ -58,6 +58,15 @@ class StopOrderTests(unittest.TestCase):
                           [("n1", 37.600, 55.75, "A", "stop_position"), ("n2", 37.610, 55.75, "B", "platform"), ("n3", 37.620, 55.75, "C", "stop_position")])
         self.assertEqual(result, [("n", 1), ("n", 2), ("n", 3)])
 
+    def test_interleaved_stop_takes_only_one_platform(self):
+        # stop A, platform A, platform B, stop C (далеко): обе платформы ближе 100 м к A,
+        # но A уже в паре с первой — платформа B остаётся отдельной остановкой.
+        result, aliases = order([("n", 1, "stop"), ("n", 2, "platform"), ("n", 3, "platform"), ("n", 4, "stop")],
+                                [("n1", 37.6000, 55.75, "", "stop_position"), ("n2", 37.6001, 55.75, "", "platform"),
+                                 ("n3", 37.6008, 55.75, "", "platform"), ("n4", 37.6100, 55.75, "", "stop_position")])
+        self.assertEqual(result, [("n", 1), ("n", 3), ("n", 4)])
+        self.assertEqual(aliases, [("n2", "n1")])
+
     def test_interleaved_pair_records_alias(self):
         result, aliases = order([("n", 1, "platform"), ("n", 2, "stop"), ("n", 3, "platform")],
                                 [("n1", 37.600, 55.75, "A", "platform"), ("n2", 37.6001, 55.75, "A", "stop_position"), ("n3", 37.610, 55.75, "B", "platform")])

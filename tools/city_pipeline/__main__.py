@@ -10,6 +10,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from jsonschema import Draft202012Validator
 from shapely.errors import ShapelyError
 
 from .manifest import ManifestError, read_json, validate_manifest
@@ -57,12 +58,21 @@ def work_dir(root: Path, package_id) -> Path:
 SUPPORTED_CONFIG_VERSION = 1
 
 
+CONFIG_SCHEMA = Path(__file__).parent / "schemas" / "build-config-v1.schema.json"
+
+
 def load_config(path: Path) -> dict:
-    """Конфигурация сборки; неизвестная версия отклоняется, а не читается по правилам версии 1."""
+    """Конфигурация сборки версии 1, проверенная JSON Schema до любой работы.
+
+    Неизвестная версия отклоняется отдельным сообщением; true не считается версией 1.
+    """
     config = read_json(path)
-    if not isinstance(config, dict) or config.get("config_version") != SUPPORTED_CONFIG_VERSION:
-        version = config.get("config_version") if isinstance(config, dict) else None
+    version = config.get("config_version") if isinstance(config, dict) else None
+    if type(version) is not int or version != SUPPORTED_CONFIG_VERSION:
         raise ManifestError(f"{path}: неподдерживаемая config_version {version!r}, ожидается {SUPPORTED_CONFIG_VERSION}")
+    errors = sorted(Draft202012Validator(read_json(CONFIG_SCHEMA)).iter_errors(config), key=lambda error: list(error.absolute_path))
+    if errors:
+        raise ManifestError("\n".join(f"{path}: {'.'.join(map(str, error.absolute_path)) or '$'}: {error.message}" for error in errors))
     return config
 
 

@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -72,13 +73,25 @@ class ConfigTests(unittest.TestCase):
     def test_unknown_config_version_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
-            for version in (2, None, "1"):
+            for version in (2, None, "1", True):
                 with self.subTest(version=version):
-                    path.write_text('{"config_version": %s}' % ("null" if version is None else (f'"{version}"' if isinstance(version, str) else version)))
+                    path.write_text(json.dumps({"config_version": version}))
                     with self.assertRaises(ManifestError):
                         load_config(path)
+            # Версия 1 без обязательных разделов — понятная ошибка, а не KeyError.
             path.write_text('{"config_version": 1}')
-            self.assertEqual(load_config(path)["config_version"], 1)
+            with self.assertRaisesRegex(ManifestError, "sources"):
+                load_config(path)
+            real = Path(__file__).resolve().parents[2] / "data" / "manifests" / "moscow-2021.json"
+            self.assertEqual(load_config(real)["package_id"], "moscow-2021")
+            from tests.city_pipeline.synthetic_city import mini_city_config
+            path.write_text(json.dumps(mini_city_config()))
+            self.assertEqual(load_config(path)["package_id"], "synthetic-mini-city")
+            broken = json.loads(real.read_text(encoding="utf-8"))
+            broken["zones"]["cell_size_m"] = -1
+            path.write_text(json.dumps(broken))
+            with self.assertRaisesRegex(ManifestError, "zones.cell_size_m"):
+                load_config(path)
 
 
 if __name__ == "__main__":

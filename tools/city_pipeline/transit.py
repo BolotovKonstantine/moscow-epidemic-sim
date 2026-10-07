@@ -89,18 +89,21 @@ def _stops_in_order(members, stop_roles, platform_roles, points, metric, pair_m,
 
     result = []
     previous = None  # (kind, ref, is_stop) последнего добавленного
+    consumed = False  # последний добавленный уже объединён в пару — второй пары у него не будет
     for kind, ref, is_stop in ordered:
         osm_id = _member_id(kind, ref)
-        if previous is not None and previous[2] != is_stop and paired(_member_id(previous[0], previous[1]), osm_id):
+        if previous is not None and not consumed and previous[2] != is_stop and paired(_member_id(previous[0], previous[1]), osm_id):
             if is_stop:          # платформа, затем её точка остановки: заменить платформу
                 aliases.append((_member_id(previous[0], previous[1]), osm_id))
                 result[-1] = (kind, ref)
                 previous = (kind, ref, True)
             else:                # точка остановки, затем её платформа: пропустить платформу
                 aliases.append((osm_id, _member_id(previous[0], previous[1])))
+            consumed = True
             continue
         result.append((kind, ref))
         previous = (kind, ref, is_stop)
+        consumed = False
     return result
 
 
@@ -166,8 +169,11 @@ def build_network(data, region_wgs84, projector, config):
     per_route = []
     for rel_id, tags, members in data.routes:
         # Номерные роли старой схемы («forward_stop_13», «stop_2») приводятся к базовой.
-        members = [(kind, ref, _NUMBERED.sub("", role)) for kind, ref, role in members
-                   if kind in ("n", "w") or _member_id(kind, ref) in points]   # платформа-мультиполигон — отношение
+        members = [(kind, ref, _NUMBERED.sub("", role)) for kind, ref, role in members]
+        # Отношение-платформа (мультиполигон) остаётся: известное — остановкой, несобранное с ролью
+        # остановки — пропуском (None), чтобы соседние остановки не соединялись напрямую.
+        members = [(kind, ref, role) for kind, ref, role in members
+                   if kind in ("n", "w") or _member_id(kind, ref) in points or role in stop_roles or role in platform_roles]
         candidates = _stops_in_order(members, stop_roles, platform_roles, points, metric,
                                      transit["stop_platform_pair_m"], transit["stop_platform_pair_same_name_m"], aliases)
         per_route.append((rel_id, tags, candidates))

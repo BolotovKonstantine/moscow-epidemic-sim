@@ -143,6 +143,9 @@ def build_city(directory: Path):
     # Замкнутая платформа: точка остановки — внутри площади, а не на её контуре.
     closed_platform = b.square(lon0 + 0.015, lat0 + 0.0002, 0.0002, {"public_transport": "platform", "name": "Платформа-площадь"})
     b.relation(18, [("node", p2, "platform"), ("way", closed_platform, "platform")], {"type": "route", "route": "bus", "ref": "9", "name": "Автобус 9"})
+    # Платформа-отношение, которую не удаётся собрать (нет контура): пропуск, а не прямой отрезок.
+    b.relation(31, [("way", 888888, "outer")], {"type": "multipolygon", "public_transport": "platform"})
+    b.relation(19, [("node", s1, "stop"), ("relation", 31, "platform"), ("node", p3, "platform")], {"type": "route", "route": "bus", "ref": "10", "name": "Автобус 10"})
     b.relation(20, [("node", p2, "platform"), ("node", p3, "platform")], {"type": "public_transport", "public_transport": "stop_area", "name": "Узел"})
 
     osm_path = directory / "mini.osm"

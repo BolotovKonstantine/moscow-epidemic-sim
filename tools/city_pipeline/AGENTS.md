@@ -4,7 +4,7 @@
 
 ## Устройство
 
-- `schemas/city-package-v1.schema.json` — JSON Schema паспорта, версия 1.
+- `schemas/city-package-v1.schema.json` — JSON Schema паспорта, версия 1; `schemas/build-config-v1.schema.json` — схема конфигурации сборки, проверяется в `fetch` и `build` до любой работы.
 - `manifest.py` — структурная и смысловая проверка паспорта, файлов и SHA256. Не загружает данные из сети.
 - `sources.py` — реестр источников `data/manifests/sources.json`: загрузка в `data/raw/` и проверка SHA256.
 - `osm.py` — чтение OSM за один проход pyosmium; `geo.py` — проекции и граница региона.

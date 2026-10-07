@@ -167,7 +167,7 @@ class BuildTests(unittest.TestCase):
 
     def test_transit_routes_segments_and_transfers(self):
         transit = self.report["transit"]
-        self.assertEqual(transit["routes"], 9)
+        self.assertEqual(transit["routes"], 10)
         self.assertEqual(transit["routes_without_stops"], 0)   # старые и пустые роли распознаны
         # Платформы 1 и 2 объединены с точками остановок s1, s2 во всех маршрутах: остаются
         # s1, s2, платформа 2а, линия-платформа и остановка за границей.
@@ -178,12 +178,15 @@ class BuildTests(unittest.TestCase):
         self.assertIn("r30", {row["stop_id"] for row in read_csv(self.out / "transit_stops.csv.gz")})
         routes = {row["route_id"]: row for row in read_csv(self.out / "transit_routes.csv.gz")}
         self.assertEqual(routes["r16"]["stops"].split(";")[0], routes["r15"]["stops"].split(";")[0])   # одна физическая остановка
+        # Несобранная платформа-отношение между остановками — пропуск: прямого отрезка нет.
+        self.assertEqual(routes["r19"]["missing_members"], "1")
+        self.assertNotIn("r19", {row["route_id"] for row in read_csv(self.out / "transit_segments.csv.gz")})
         # Смешанный PTv2: пары «точка остановки + платформа» схлопнуты, одиночная платформа сохранена.
         self.assertEqual(routes["r15"]["stop_count"], "3")
         stops = routes["r15"]["stops"].split(";")
         self.assertEqual([stop[0] for stop in stops], ["n", "n", "w"])   # две точки остановок и платформа-линия
         self.assertEqual(transit["transfers"], 1)
-        self.assertEqual(transit["unresolved_route_members"], 2)
+        self.assertEqual(transit["unresolved_route_members"], 3)   # + несобранная платформа-отношение
         # Ненайденный член маршрута 1 не делает его пересекающим границу; маршруты 2 и 3 выходят наружу.
         self.assertEqual(transit["routes_crossing_boundary"], 2)
         self.assertEqual(transit["components"], 1)

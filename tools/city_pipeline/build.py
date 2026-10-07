@@ -350,9 +350,13 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
                for route in network.routes))
     write_csv(out_dir / "transit_segments.csv.gz", ["route_id", "sequence", "mode", "from_stop", "to_stop", "distance_m"],
               ([s["route_id"], s["sequence"], s["mode"], s["from_stop"], s["to_stop"], fmt(s["distance_m"], 1)] for s in network.segments))
-    add("transit-stops", "transport", "transit_stops.csv.gz", "csv+gzip", "observed", ["osm"])
-    add("transit-routes", "transport", "transit_routes.csv.gz", "csv+gzip", "observed", ["osm"])
-    add("transit-segments", "transport", "transit_segments.csv.gz", "csv+gzip", "observed", ["osm"])
+    transit_estimation = {
+        "method": "Остановки, маршруты и их порядок — из отношений OSM. Точка остановки и платформа объединяются в одну остановку эвристически: соседние в маршруте ближе stop_platform_pair_m или с одним именем ближе stop_platform_pair_same_name_m; синонимы применяются ко всем маршрутам. Отрезки — по прямой между соседними остановками.",
+        "uncertainty": "Пороги объединения — параметры конфигурации: разные близкие остановки могут быть слиты, пары с ошибками порядка в OSM — не найдены. Исходные ID OSM остановок сохранены в stop_id.",
+    }
+    add("transit-stops", "transport", "transit_stops.csv.gz", "csv+gzip", "estimated", ["osm"], transit_estimation)
+    add("transit-routes", "transport", "transit_routes.csv.gz", "csv+gzip", "estimated", ["osm"], transit_estimation)
+    add("transit-segments", "transport", "transit_segments.csv.gz", "csv+gzip", "estimated", ["osm"], transit_estimation)
     write_csv(out_dir / "transit_transfers.csv.gz", ["stop_area_id", "from_stop", "to_stop", "distance_m", "walk_s"],
               ([t["stop_area_id"], t["from_stop"], t["to_stop"], fmt(t["distance_m"], 1), fmt(t["walk_s"], 0)] for t in network.transfers))
     add("transit-transfers", "transport", "transit_transfers.csv.gz", "csv+gzip", "estimated", ["osm"], {
@@ -396,7 +400,10 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
             i = stop_position[end]
             gateway_rows.append(["transit", route["route_id"], route["mode"], end, "", zone_name[stop_zone[i]], fmt(network.stops[i]["lon"], 7), fmt(network.stops[i]["lat"], 7)])
     write_csv(out_dir / "gateways.csv.gz", ["kind", "ref", "class", "inside_ref", "outside_ref", "zone_id", "lon", "lat"], gateway_rows)
-    add("gateways", "transport", "gateways.csv.gz", "csv+gzip", "observed", ["osm"])
+    add("gateways", "transport", "gateways.csv.gz", "csv+gzip", "estimated", ["osm"], {
+        "method": "road — пересечения рёбер дорог OSM с границей региона; transit — остановки внутри региона, соседние по маршруту с остановкой снаружи (после объединения остановок, см. transit-stops).",
+        "uncertainty": "Входы маршрутов наследуют эвристику объединения остановок; при ненайденном члене маршрута между остановками вход не публикуется.",
+    })
 
     log("  учреждения…")
     write_csv(out_dir / "facilities.csv.gz", ["facility_id", "kind", "name", "source", "osm_ids", "lon", "lat", "zone_id", "building_ids", "capacity"],
@@ -451,7 +458,10 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
             links[key] = (count + 1, min(length, segment["distance_m"]))
     write_csv(out_dir / "zone_links.csv.gz", ["zone_a", "zone_b", "kind", "connections", "min_length_m"],
               ([zones.ids[a], zones.ids[b], kind, count, fmt(length, 1)] for (a, b, kind), (count, length) in sorted(links.items(), key=lambda item: (zones.ids[item[0][0]], zones.ids[item[0][1]], item[0][2]))))
-    add("zone-links", "zones", "zone_links.csv.gz", "csv+gzip", "observed", ["osm"])
+    add("zone-links", "zones", "zone_links.csv.gz", "csv+gzip", "estimated", ["osm"], {
+        "method": "road — пересечения рёбер дорог OSM с границами квадратов сетки внутри региона; виды транспорта — зоны соседних остановок маршрута после объединения остановок (см. transit-stops).",
+        "uncertainty": "Связи по дорогам точны относительно данных OSM; связи по транспорту наследуют эвристику объединения остановок.",
+    })
 
     log("Отчёт качества…")
     # ---------------------------------------------------------------- отчёт качества
