@@ -68,6 +68,11 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual((self.out / "manifest.json").read_bytes(), (self.root / "second" / "manifest.json").read_bytes())
 
+    def test_relation_building_is_not_duplicated_by_its_outer_way(self):
+        ids = {row["building_id"] for row in read_csv(self.out / "building_attributes.csv.gz")}
+        self.assertIn("r40", ids)
+        self.assertEqual(self.report["buildings"]["duplicate_building_ways_removed"], 1)
+
     def test_building_functions_and_levels(self):
         rows = {row["building_id"]: row for row in read_csv(self.out / "building_attributes.csv.gz")}
         by_kind = {}
@@ -110,6 +115,9 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(checks["population_matches_grid"], "pass")
         self.assertEqual(checks["raster_covers_region"], "pass")
         self.assertEqual(checks["residential_density_plausible"], "pass")
+        # Ячейка далеко от зданий — без жилья; ячейка дома с избытком — переполнение вместимости.
+        self.assertEqual(population["populated_cells_without_housing"], 1)
+        self.assertEqual(population["populated_cells_over_capacity"], 1)
 
     def test_road_graph_splits_at_shared_nodes_and_reports_components(self):
         roads = self.report["roads"]

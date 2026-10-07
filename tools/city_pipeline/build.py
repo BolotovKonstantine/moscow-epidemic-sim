@@ -162,6 +162,28 @@ def road_zone_crossings(edge_lines, projector, zones, region_metric=None, covere
     return [((int(za), int(zb)), int(e)) for za, zb, e in rows]
 
 
+def replace_dir(new: Path, final: Path):
+    """Установить new на место final, не теряя прежний пакет при сбое.
+
+    Прежний каталог сначала переименовывается в уникальную резервную копию; если
+    установка нового не удалась, резервная копия возвращается на место. Удаляется
+    она только после успешной установки.
+    """
+    backup = None
+    if final.exists():
+        backup = Path(tempfile.mkdtemp(prefix=f"{final.name}.", suffix=".previous", dir=final.parent))
+        backup.rmdir()
+        final.rename(backup)
+    try:
+        new.rename(final)
+    except BaseException:
+        if backup is not None and not final.exists():
+            backup.rename(final)
+        raise
+    if backup is not None:
+        shutil.rmtree(backup)
+
+
 # ---------------------------------------------------------------- основная сборка
 
 def build_package(config, *, sources, source_roles, kind, region_parts, region_osm: Path, raster: Path, out_dir: Path, created_at: str, log=print):
@@ -455,7 +477,5 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     write_json(out_dir / "manifest.json", manifest)
     validate_manifest(out_dir / "manifest.json")
     out_dir.chmod(0o755)  # mkdtemp создаёт каталог только для владельца
-    if final_dir.exists():
-        shutil.rmtree(final_dir)
-    out_dir.rename(final_dir)
+    replace_dir(out_dir, final_dir)
     return manifest, report

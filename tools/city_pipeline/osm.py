@@ -32,6 +32,7 @@ class OsmData:
     routes: list = field(default_factory=list)          # (rel_id, tags, [(type, ref, role)])
     stop_areas: list = field(default_factory=list)      # (rel_id, tags, [(type, ref, role)])
     broken_areas: int = 0
+    duplicate_building_ways: int = 0   # контуры, совпавшие со зданием-отношением
 
 
 def _subset(tags, keys):
@@ -60,7 +61,7 @@ def read_osm(path, config) -> OsmData:
     route_modes = set(config["transit"]["route_modes"])
     wkb = osmium.geom.WKBFactory()
     data = OsmData()
-
+    building_outers = set()
     processor = (
         osmium.FileProcessor(str(path))
         .with_areas()
@@ -125,7 +126,13 @@ def read_osm(path, config) -> OsmData:
                 data.routes.append((obj.id, _subset(dict(tags), ("route", "ref", "name", "from", "to", "network", "operator")), members))
             elif kind == "public_transport" and tags.get("public_transport") == "stop_area":
                 data.stop_areas.append((obj.id, _subset(dict(tags), ("name",)), members))
+            elif kind == "multipolygon" and tags.get("building") not in (None, *ignore):
+                building_outers.update(f"w{ref}" for member_kind, ref, role in members if member_kind == "w" and role in ("outer", ""))
 
+    # Здание-мультиполигон и его отмеченный building внешний контур — одно здание: остаётся отношение.
+    before = len(data.buildings)
+    data.buildings = [item for item in data.buildings if item[0] not in building_outers]
+    data.duplicate_building_ways = before - len(data.buildings)
     data.buildings.sort(key=lambda item: item[0])
     data.sites.sort(key=lambda item: item[0])
     data.pois.sort(key=lambda item: item[0])

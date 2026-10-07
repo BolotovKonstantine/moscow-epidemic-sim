@@ -41,7 +41,8 @@ class PopulationResult:
     raster_covers_region: bool   # охват региона и ни одной ячейки без данных внутри
     missing_cells: int
     cells_in_region: int
-    populated_cells_without_residential: int   # ячейки, ушедшие в пул зоны
+    populated_cells_without_housing: int       # нет ни жилых зданий, ни зданий без функции
+    populated_cells_over_capacity: int         # здания есть, но их вместимости не хватило
 
 
 def outward_window(window, width, height):
@@ -135,9 +136,14 @@ def allocate(buildings, building_zone, cells, cell_zone, zone_ix, zone_iy, confi
         return amounts - given
 
     # 1–2. Ячейка: жилые здания, затем здания без известной функции (до потолка плотности).
+    eligible = np.zeros(len(population))
+    has_cell = building_cell >= 0
+    np.add.at(eligible, building_cell[has_cell], (weight + unknown_weight)[has_cell])
     remaining = spread(0, building_cell, len(population), weight, population)
     remaining = spread(1, building_cell, len(population), unknown_weight, remaining)
-    orphan_cells = int(((remaining > 0) & (population > 0)).sum())
+    populated = population > 0
+    cells_without_housing = int((populated & (eligible <= 0)).sum())
+    cells_over_capacity = int((populated & (eligible > 0) & (remaining > 1e-9)).sum())
 
     # 3–4. Пул зоны из остатков ячеек: жилые, затем здания без функции.
     zone_count = len(zone_ix)
@@ -180,7 +186,7 @@ def allocate(buildings, building_zone, cells, cell_zone, zone_ix, zone_iy, confi
         residents=residents, method=method, region_total=float(population.sum()), allocated_total=int(residents.sum()),
         unallocated=unallocated, by_method=by_method,
         raster_covers_region=bool(cells["covers"]), cells_in_region=cells["cells_in_region"], missing_cells=cells["missing_cells"],
-        populated_cells_without_residential=orphan_cells,
+        populated_cells_without_housing=cells_without_housing, populated_cells_over_capacity=cells_over_capacity,
     )
 
 

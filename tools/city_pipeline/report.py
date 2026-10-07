@@ -141,6 +141,7 @@ def build_report(context):
         "buildings": {
             "count": count, "moscow": int(in_moscow.sum()), "buffer": int((~in_moscow).sum()),
             "broken_osm_areas": context["data"].broken_areas,
+            "duplicate_building_ways_removed": context["data"].duplicate_building_ways,
             "function_source": dict(sorted(source_counts.items())),
             "function_source_pct": {key: _pct(value, count) for key, value in sorted(source_counts.items())},
             "unknown_function_pct_moscow": _pct(int((unknown & in_moscow).sum()), int(in_moscow.sum())),
@@ -164,7 +165,8 @@ def build_report(context):
             "dense_buildings": int(dense.sum()), "dense_buildings_residents": dense_residents, "dense_limit_per_100m2": dense_limit,
             "grid_cells_in_region": population.cells_in_region,
             "grid_cells_missing_in_region": population.missing_cells,
-            "populated_cells_without_residential_buildings": population.populated_cells_without_residential,
+            "populated_cells_without_housing": population.populated_cells_without_housing,
+            "populated_cells_over_capacity": population.populated_cells_over_capacity,
             "not_in_package": ["возраст", "пол", "домохозяйства", "занятость", "социальные условия"],
         },
         "roads": {

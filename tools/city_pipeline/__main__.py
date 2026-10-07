@@ -1,6 +1,7 @@
 """CLI проверки, получения источников и сборки городских пакетов."""
 
 import argparse
+import fcntl
 import os
 import re
 import shutil
@@ -90,11 +91,16 @@ def command_build(args) -> int:
     config = read_json(args.config)
     # ID и версия проверяются до любой записи на диск: и рабочий, и выходной каталог — внутри своих корней.
     out = package_dir(args.out, config.get("package_id"), config.get("package_version"))
-    work = work_dir(args.work, config["package_id"])
+    # Отдельный рабочий каталог на версию и конфигурацию: разные сборки не делят вырезку.
+    from .build import config_digest
+    work = work_dir(args.work, config["package_id"]) / f"{config['package_version']}-{config_digest(config)}"
     selected = _selected_sources(config, registry)
     osm = verify(selected["osm"], args.raw)
     raster_zip = verify(selected["population"], args.raw)
     work.mkdir(parents=True, exist_ok=True)
+    # Одинаковые сборки, запущенные одновременно, ждут друг друга, а не пишут одни файлы.
+    lock = (work / ".lock").open("w")
+    fcntl.flock(lock, fcntl.LOCK_EX)
     projector = Projector(config["metric_crs"])
 
     print("Граница региона…")

@@ -94,6 +94,9 @@ def build_city(directory: Path):
     # Далеко от остальных (другой блок зон), чтобы не получать избыток населения.
     b.square(lon0 + 0.1, lat0 - 0.1, 0.0003, {"building": "apartments", "shop": "supermarket", "building:levels": "5"})
     b.node(lon0 + 0.1, lat0 - 0.1, {"amenity": "cafe"})   # точка внутри: вторичная доля — оценка (tag+poi)
+    # Здание-мультиполигон, у внешнего контура которого тоже есть building: одно здание (отношение).
+    outer = b.square(lon0 - 0.04, lat0 - 0.04, 0.0003, {"building": "yes"})
+    b.relation(40, [("way", outer, "outer")], {"type": "multipolygon", "building": "apartments"})
     # Врачебный кабинет, нанесённый только контуром без здания.
     b.square(lon0 - 0.03, lat0 + 0.03, 0.0003, {"amenity": "doctors", "name": "Кабинет"})                     # неизвестная функция
     b.node(lon0 - 0.0021, lat0 - 0.0021, {"amenity": "clinic", "name": "Поликлиника"})

@@ -27,5 +27,24 @@ class PackageDirTests(unittest.TestCase):
                         work_dir(root, package_id)
 
 
+
+class ReplaceDirTests(unittest.TestCase):
+    def test_replace_keeps_previous_package_on_failure(self):
+        from tools.city_pipeline.build import replace_dir
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            final, new = root / "pkg", root / "pkg.new"
+            final.mkdir()
+            (final / "manifest.json").write_text("old")
+            with self.assertRaises(OSError):
+                replace_dir(root / "missing", final)          # установка не удалась
+            self.assertEqual((final / "manifest.json").read_text(), "old")
+            new.mkdir()
+            (new / "manifest.json").write_text("new")
+            replace_dir(new, final)
+            self.assertEqual((final / "manifest.json").read_text(), "new")
+            self.assertEqual(sorted(p.name for p in root.iterdir()), ["pkg"])   # резервная копия удалена
+
+
 if __name__ == "__main__":
     unittest.main()
