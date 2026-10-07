@@ -114,6 +114,9 @@ def build_report(context):
         _check("buildings_have_zone", bool((context["building_zone"] >= 0).all()), "каждое здание попадает в зону"),
         _check("road_graph_mostly_connected", len(graph.node_ids) == 0 or (context["weak_size"] / max(len(graph.node_ids), 1)) >= 0.9,
                f"крупнейшая компонента {_pct(context['weak_size'], len(graph.node_ids))}% узлов"),
+        _check("facility_provenance_complete", all(f["facility_id"] in f["osm_ids"] for f in facilities)
+               and len({i for f in facilities for i in f["osm_ids"]}) == sum(len(f["osm_ids"]) for f in facilities),
+               "каждый объект OSM учреждения ровно в одной записи, собственный ID записи — в её osm_ids"),
         _check("residents_reach_main_graph", len(b_ok) == 0 or float(b_ok.mean()) >= 0.95,
                f"{_pct(int(b_ok.sum()), len(b_ok))}% жилых зданий ближе всего к узлу крупнейшей компоненты"),
         _check("facilities_reach_main_graph", len(f_ok) == 0 or float(f_ok.mean()) >= 0.95,

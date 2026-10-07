@@ -159,11 +159,14 @@ class BuildTests(unittest.TestCase):
         kinds = {row["kind"]: row for row in rows}
         self.assertEqual(sorted(row["kind"] for row in rows), ["clinic", "hospital", "school"])
         self.assertTrue(kinds["hospital"]["building_ids"])
-        # Точка больницы поглощена участком, точка школы — контуром здания; имя взято у точки.
+        # Точка больницы поглощена участком; точка и корпус школы — её концентрическим участком; имя — у точки.
         self.assertEqual(kinds["hospital"]["source"], "site")
         self.assertEqual(len(kinds["hospital"]["osm_ids"].split(";")), 2)
-        self.assertEqual((kinds["school"]["source"], kinds["school"]["name"], len(kinds["school"]["osm_ids"].split(";"))), ("building", "Школа", 2))
-        self.assertEqual(self.report["facilities"]["merged_osm_objects"], 2)
+        self.assertEqual((kinds["school"]["source"], kinds["school"]["name"], len(kinds["school"]["osm_ids"].split(";"))), ("site", "Школа", 3))
+        self.assertIn(kinds["school"]["facility_id"], kinds["school"]["osm_ids"].split(";"))
+        self.assertEqual(self.report["facilities"]["merged_osm_objects"], 3)
+        checks = {check["check"]: check["status"] for check in self.report["checks"]}
+        self.assertEqual(checks["facility_provenance_complete"], "pass")
         self.assertEqual(kinds["clinic"]["building_ids"], "")
         self.assertTrue(all(row["capacity"] == "unknown" for row in rows))
 

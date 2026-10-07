@@ -22,7 +22,8 @@ def _merge_duplicates(records, projector):
     Запись того же вида, чья точка лежит внутри контура другой записи, сливается с
     самым большим таким контуром (внешний участок поглощает корпус и точку внутри).
     Все исходные ID сохраняются в osm_ids; имя — первое непустое, начиная с контура.
-    Размер контура сравнивается в метрической проекции, а не в градусах.
+    Размер контура сравнивается в метрической проекции, а не в градусах; вложенные
+    контуры (точка участка внутри корпуса) сводятся к одному самому внешнему.
     """
     records.sort(key=lambda record: record["facility_id"])
     areas = [row for row, record in enumerate(records) if record["area"] is not None]
@@ -33,16 +34,25 @@ def _merge_duplicates(records, projector):
         tree = shapely.STRtree(polygons)
         points = shapely.points([record["lon"] for record in records], [record["lat"] for record in records])
         point_index, area_index = tree.query(points, predicate="intersects")
+        # Порядок контуров: (площадь в м², ID). Запись сливается только с контуром строго
+        # «больше» себя, поэтому ссылки не образуют циклов (точка участка внутри корпуса).
+        rank = {row: (0.0, "") for row in range(len(records))}
+        for slot, row in enumerate(areas):
+            rank[row] = (float(sizes[slot]), records[row]["facility_id"])
         best = {}
         for row, slot in zip(point_index.tolist(), area_index.tolist()):
             owner = areas[slot]
-            if owner == row or records[owner]["kind"] != records[row]["kind"]:
+            if owner == row or records[owner]["kind"] != records[row]["kind"] or rank[owner] <= rank[row]:
                 continue
-            key = (-sizes[slot], records[owner]["facility_id"])
-            if row not in best or key < best[row][0]:
-                best[row] = (key, owner)
-        for row, (_, owner) in best.items():
-            target[row] = owner
+            if row not in best or rank[owner] > rank[best[row]]:
+                best[row] = owner
+        target = [best.get(row, row) for row in range(len(records))]
+        for row in range(len(records)):
+            # Цепочка точка → корпус → участок сводится к самому внешнему контуру.
+            root = row
+            while target[root] != root:
+                root = target[root]
+            target[row] = root
     groups = {}
     for row, owner in enumerate(target):
         groups.setdefault(owner, []).append(row)

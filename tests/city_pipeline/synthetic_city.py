@@ -94,6 +94,8 @@ def build_city(directory: Path):
     # Школа: контур здания с тегом и точка внутри — одно учреждение; высота в футах.
     b.square(lon0 - 0.006, lat0 + 0.006, 0.0003, {"building": "school", "amenity": "school", "height": "30 ft"})
     b.node(lon0 - 0.006, lat0 + 0.006, {"amenity": "school", "name": "Школа"})
+    # Участок школы с тем же центром: его представительная точка лежит внутри корпуса.
+    b.square(lon0 - 0.006, lat0 + 0.006, 0.001, {"amenity": "school"})
 
     # Автобус: две платформы, маршрут и stop_area.
     p1 = b.node(lon0 - 0.005, lat0 + 0.0002, {"highway": "bus_stop", "public_transport": "platform", "name": "Остановка 1"})
