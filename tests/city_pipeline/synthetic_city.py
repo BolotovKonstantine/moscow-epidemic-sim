@@ -97,6 +97,10 @@ def build_city(directory: Path):
     # Здание-мультиполигон, у внешнего контура которого тоже есть building: одно здание (отношение).
     outer = b.square(lon0 - 0.04, lat0 - 0.04, 0.0003, {"building": "yes"})
     b.relation(40, [("way", outer, "outer")], {"type": "multipolygon", "building": "apartments"})
+    # Сломанное здание-мультиполигон (внешний контур отсутствует в данных): его второй, целый
+    # контур с тегом building остаётся зданием.
+    fallback = b.square(lon0 - 0.045, lat0 - 0.04, 0.0003, {"building": "yes"})
+    b.relation(41, [("way", fallback, "outer"), ("way", 999999, "outer")], {"type": "multipolygon", "building": "apartments"})
     # Врачебный кабинет, нанесённый только контуром без здания.
     b.square(lon0 - 0.03, lat0 + 0.03, 0.0003, {"amenity": "doctors", "name": "Кабинет"})                     # неизвестная функция
     b.node(lon0 - 0.0021, lat0 - 0.0021, {"amenity": "clinic", "name": "Поликлиника"})
@@ -136,6 +140,9 @@ def build_city(directory: Path):
     ring = b.square(lon0 + 0.012, lat0 + 0.0002, 0.0001)
     b.relation(30, [("way", ring, "outer")], {"type": "multipolygon", "public_transport": "platform", "name": "Платформа-отношение"})
     b.relation(17, [("node", p2, "platform"), ("relation", 30, "platform")], {"type": "route", "route": "bus", "ref": "8", "name": "Автобус 8"})
+    # Замкнутая платформа: точка остановки — внутри площади, а не на её контуре.
+    closed_platform = b.square(lon0 + 0.015, lat0 + 0.0002, 0.0002, {"public_transport": "platform", "name": "Платформа-площадь"})
+    b.relation(18, [("node", p2, "platform"), ("way", closed_platform, "platform")], {"type": "route", "route": "bus", "ref": "9", "name": "Автобус 9"})
     b.relation(20, [("node", p2, "platform"), ("node", p3, "platform")], {"type": "public_transport", "public_transport": "stop_area", "name": "Узел"})
 
     osm_path = directory / "mini.osm"

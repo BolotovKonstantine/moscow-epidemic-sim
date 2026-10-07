@@ -61,7 +61,8 @@ def read_osm(path, config) -> OsmData:
     route_modes = set(config["transit"]["route_modes"])
     wkb = osmium.geom.WKBFactory()
     data = OsmData()
-    building_outers = set()
+    building_outers = {}       # ID здания-отношения → его внешние линии
+    platform_lines = set()     # платформы, временно сохранённые линией (до прихода площади)
     processor = (
         osmium.FileProcessor(str(path))
         .with_areas()
@@ -88,8 +89,10 @@ def read_osm(path, config) -> OsmData:
                 data.buildings.append((osm_id, geometry, _subset(plain, BUILDING_TAGS)))
             if is_site:
                 data.sites.append((osm_id, geometry, _subset(plain, SITE_TAGS)))
-            if is_platform and osm_id not in data.transit_points:
+            if is_platform and (osm_id not in data.transit_points or osm_id in platform_lines):
+                # Площадь замкнутой платформы заменяет её временную линию: точка — внутри платформы.
                 data.transit_points[osm_id] = (geometry, _subset(plain, STOP_TAGS))
+                platform_lines.discard(osm_id)
         elif obj.is_node():
             plain = dict(tags)
             lon, lat = obj.location.lon, obj.location.lat
@@ -101,11 +104,12 @@ def read_osm(path, config) -> OsmData:
         elif obj.is_way():
             highway = tags.get("highway")
             if tags.get("public_transport") == "platform" or tags.get("railway") == "platform":
-                # Открытая линия платформы; замкнутые приходят и как площадь — берётся первая.
+                # Линия платформы. Замкнутая линия позже приходит и как площадь и заменяется ею.
                 osm_id = f"w{obj.id}"
                 if osm_id not in data.transit_points:
                     try:
                         data.transit_points[osm_id] = (bytes.fromhex(wkb.create_linestring(obj)), _subset(dict(tags), STOP_TAGS))
+                        platform_lines.add(osm_id)
                     except RuntimeError:
                         pass
             if highway in roads and tags.get("area") != "yes":
@@ -127,11 +131,14 @@ def read_osm(path, config) -> OsmData:
             elif kind == "public_transport" and tags.get("public_transport") == "stop_area":
                 data.stop_areas.append((obj.id, _subset(dict(tags), ("name",)), members))
             elif kind == "multipolygon" and tags.get("building") not in (None, *ignore):
-                building_outers.update(f"w{ref}" for member_kind, ref, role in members if member_kind == "w" and role in ("outer", ""))
+                building_outers[f"r{obj.id}"] = {f"w{ref}" for member_kind, ref, role in members if member_kind == "w" and role in ("outer", "")}
 
     # Здание-мультиполигон и его отмеченный building внешний контур — одно здание: остаётся отношение.
+    # Только для собранных отношений: если мультиполигон сломан, контур-линия остаётся единственным зданием.
+    assembled = {item[0] for item in data.buildings}
+    suppressed = set().union(*(outers for rel_id, outers in building_outers.items() if rel_id in assembled))
     before = len(data.buildings)
-    data.buildings = [item for item in data.buildings if item[0] not in building_outers]
+    data.buildings = [item for item in data.buildings if item[0] not in suppressed]
     data.duplicate_building_ways = before - len(data.buildings)
     data.buildings.sort(key=lambda item: item[0])
     data.sites.sort(key=lambda item: item[0])

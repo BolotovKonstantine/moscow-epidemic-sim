@@ -73,6 +73,24 @@ class BuildTests(unittest.TestCase):
         ids = {row["building_id"] for row in read_csv(self.out / "building_attributes.csv.gz")}
         self.assertIn("r40", ids)
         self.assertEqual(self.report["buildings"]["duplicate_building_ways_removed"], 1)
+        # r41 не собран (нет второго контура) — его целый контур-здание сохраняется.
+        self.assertNotIn("r41", ids)
+        self.assertEqual(len([i for i in ids if i.startswith("w")]), len(ids) - 1)
+
+    def test_closed_platform_stop_is_inside_its_area(self):
+        stops = {row["name"]: row for row in read_csv(self.out / "transit_stops.csv.gz")}
+        platform = stops["Платформа-площадь"]
+        lon0, lat0 = 37.6 + 0.015, 55.75 + 0.0002
+        # Внутри квадрата ±0.0002°, а не на его контуре.
+        self.assertLess(abs(float(platform["lon"]) - lon0), 0.0002 - 1e-7)
+        self.assertLess(abs(float(platform["lat"]) - lat0), 0.0002 - 1e-7)
+
+    def test_building_facility_uses_building_point(self):
+        buildings = {row["building_id"]: row for row in read_csv(self.out / "building_attributes.csv.gz")}
+        for row in read_csv(self.out / "facilities.csv.gz"):
+            if row["source"] == "building":
+                building = buildings[row["facility_id"]]
+                self.assertEqual((row["lon"], row["lat"], row["zone_id"]), (building["lon"], building["lat"], building["zone_id"]))
 
     def test_building_functions_and_levels(self):
         rows = {row["building_id"]: row for row in read_csv(self.out / "building_attributes.csv.gz")}
@@ -91,7 +109,7 @@ class BuildTests(unittest.TestCase):
         hospital = by_kind[("site", "medical")]
         self.assertEqual(len(hospital), 1)
         self.assertEqual((hospital[0]["levels"], hospital[0]["levels_source"]), ("5", "height"))
-        self.assertEqual(len(by_kind[("unknown", "unknown")]), 2)   # здание без функции и здание с levels=2.5
+        self.assertEqual(len(by_kind[("unknown", "unknown")]), 3)   # без функции, levels=2.5 и контур сломанного мультиполигона
         school = by_kind[("tag", "education")]
         self.assertEqual((school[0]["levels"], school[0]["levels_source"]), ("3", "height"))   # 30 ft ≈ 9.1 м
 
@@ -149,14 +167,14 @@ class BuildTests(unittest.TestCase):
 
     def test_transit_routes_segments_and_transfers(self):
         transit = self.report["transit"]
-        self.assertEqual(transit["routes"], 8)
+        self.assertEqual(transit["routes"], 9)
         self.assertEqual(transit["routes_without_stops"], 0)   # старые и пустые роли распознаны
         # Платформы 1 и 2 объединены с точками остановок s1, s2 во всех маршрутах: остаются
         # s1, s2, платформа 2а, линия-платформа и остановка за границей.
         # ... и платформа-мультиполигон r30.
-        self.assertEqual(transit["stops"], 6)
-        self.assertEqual(transit["stops_inside_region"], 5)
-        self.assertEqual(transit["segments"], 10)
+        self.assertEqual(transit["stops"], 7)   # + замкнутая платформа
+        self.assertEqual(transit["stops_inside_region"], 6)
+        self.assertEqual(transit["segments"], 11)
         self.assertIn("r30", {row["stop_id"] for row in read_csv(self.out / "transit_stops.csv.gz")})
         routes = {row["route_id"]: row for row in read_csv(self.out / "transit_routes.csv.gz")}
         self.assertEqual(routes["r16"]["stops"].split(";")[0], routes["r15"]["stops"].split(";")[0])   # одна физическая остановка

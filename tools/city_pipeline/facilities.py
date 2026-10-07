@@ -88,9 +88,14 @@ def collect(data, buildings, projector, config, region_wgs84):
             continue
         seen.add(osm_id)
         polygon = shapely.from_wkb(wkb)
-        point = shapely.point_on_surface(polygon)
-        source = "building" if osm_id in building_index else "site"
-        records.append({"facility_id": osm_id, "kind": kind, "name": tags.get("name", ""), "source": source, "lon": point.x, "lat": point.y, "area": polygon})
+        if osm_id in building_index:
+            # Учреждение-здание — та же представительная точка, что у здания (зона и привязка совпадают).
+            row = building_index[osm_id]
+            source, lon, lat = "building", float(buildings.lon[row]), float(buildings.lat[row])
+        else:
+            point = shapely.point_on_surface(polygon)
+            source, lon, lat = "site", point.x, point.y
+        records.append({"facility_id": osm_id, "kind": kind, "name": tags.get("name", ""), "source": source, "lon": lon, "lat": lat, "area": polygon})
     shapely.prepare(region_wgs84)
     records = [record for record in records if shapely.contains_xy(region_wgs84, record["lon"], record["lat"])]
     records = _merge_duplicates(records, projector)
