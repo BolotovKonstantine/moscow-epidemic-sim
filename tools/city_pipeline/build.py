@@ -56,10 +56,17 @@ def write_boundary(path: Path, parts, projector, config):
     return dict(zip(order, exact))  # для предикатов и пересечений — без округления
 
 
-def prefilter_boundary(source_pbf: Path, out: Path):
+def boundary_filter_expressions(boundary_config):
+    """Выражения osmium tags-filter из конфигурации границы (отношения Москвы и классы дорог МКАД)."""
+    admin = [f"r/{key}={value}" for key, value in sorted(boundary_config["moscow_admin"].items())]
+    highways = ",".join(boundary_config["mkad"]["highways"])
+    return admin + [f"w/highway={highways}"]
+
+
+def prefilter_boundary(source_pbf: Path, out: Path, boundary_config):
     """Быстро выбрать отношение Москвы и линии МКАД утилитой osmium."""
     out.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["osmium", "tags-filter", str(source_pbf), "r/boundary=administrative", "w/highway=motorway,trunk", "-o", str(out), "--overwrite"], check=True)
+    subprocess.run(["osmium", "tags-filter", str(source_pbf), *boundary_filter_expressions(boundary_config), "-o", str(out), "--overwrite"], check=True)
 
 
 CLIP_COMPLETE_TYPES = "multipolygon,boundary,route,public_transport"
@@ -101,8 +108,11 @@ def nearest_edges(x, y, road_metric):
     При равных расстояниях берётся ребро с меньшим индексом — результат детерминирован.
     """
     x = np.asarray(x, dtype=np.float64)
-    if x.size == 0 or len(road_metric) == 0:
+    if x.size == 0:
         return np.array([]), np.array([], dtype=np.int64)
+    if len(road_metric) == 0:
+        # Объекты есть, дорог нет: бесконечное расстояние и нет ребра — проверки доступности не проходят.
+        return np.full(x.size, np.inf), np.full(x.size, -1, dtype=np.int64)
     points = shapely.points(x, np.asarray(y, dtype=np.float64))
     tree = shapely.STRtree(road_metric)
     (point_index, edge_index), distance = tree.query_nearest(points, return_distance=True, all_matches=True)
@@ -481,6 +491,13 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     populated = population.residents > 0
     edge_component = graph.weak_labels[np.array([position[edge["from_node"]] for edge in graph.edges], dtype=np.int64)] if graph.edges else np.array([], dtype=np.int64)
     road_metric = projector.to_metric(graph.edge_lines)
+
+    def reach(edge_index):
+        """Попадает ли ближайшее ребро в крупнейшую компоненту; нет ребра — нет доступа."""
+        found = edge_index >= 0
+        result = np.zeros(len(edge_index), dtype=bool)
+        result[found] = edge_component[edge_index[found]] == weak_label
+        return result
     b_dist, b_edge = nearest_edges(buildings.centroid_x[populated], buildings.centroid_y[populated], road_metric)
     f_dist, f_edge = nearest_edges(fac_x, fac_y, road_metric)
     context = {
@@ -489,8 +506,8 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
         "graph": graph, "weak_label": weak_label, "weak_size": weak_size, "strong_size": strong_size,
         "network": network, "transit_components": (transit_count, transit_largest), "facilities": facilities,
         "zones": zones, "zone_pop": zone_pop, "zone_buildings": zone_buildings, "links": links,
-        "building_reach": (b_dist, edge_component[b_edge] == weak_label if len(b_edge) else np.array([], dtype=bool)),
-        "facility_reach": (f_dist, edge_component[f_edge] == weak_label if len(f_edge) else np.array([], dtype=bool)),
+        "building_reach": (b_dist, reach(b_edge)),
+        "facility_reach": (f_dist, reach(f_edge)),
         "building_zone": building_zone, "gateways": gateway_rows,
     }
     report = build_report(context)

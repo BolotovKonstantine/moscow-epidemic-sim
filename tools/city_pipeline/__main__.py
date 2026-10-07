@@ -131,7 +131,7 @@ def command_build(args) -> int:
 
     print("Граница региона…")
     boundary_osm = work / "boundary-sources.osm.pbf"
-    prefilter_boundary(osm, boundary_osm)
+    prefilter_boundary(osm, boundary_osm, config["boundary"])
     parts = make_boundary(config, boundary_osm, projector)
     region_wgs = projector.to_wgs84(parts["region"])
     print(f"  регион {parts['region'].area / 1e6:.0f} км², внутри МКАД {parts['mkad_outer'].area / 1e6:.0f} км²")

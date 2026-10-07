@@ -54,5 +54,21 @@ class CellTests(unittest.TestCase):
             read_cells(path, self.region)
 
 
+    def test_raster_without_population_gives_zero_residents(self):
+        from types import SimpleNamespace
+        from tools.city_pipeline.population import allocate
+        path = Path(self.temporary.name) / "empty.tif"
+        write_raster(path, np.zeros((5, 5)))
+        cells = read_cells(path, self.region)
+        self.assertEqual(len(cells["population"]), 0)
+        buildings = SimpleNamespace(
+            shares=np.array([[1.0, 0, 0, 0, 0, 0, 0, 0]]), floor_area_m2=np.array([1000.0]), footprint_m2=np.array([500.0]),
+            function_source=["tag"], lon=np.array([37.2]), lat=np.array([55.8]))
+        config = {"population": {"max_residents_per_m2_floor": 0.1, "unknown_building_min_footprint_m2": 30, "zone_pool_fallback": True, "block_zones": 5}}
+        result = allocate(buildings, np.array([0]), cells, np.array([], dtype=np.int64), np.array([0]), np.array([0]), config, ["w1"])
+        self.assertEqual(int(result.residents.sum()), 0)
+        self.assertEqual(result.allocated_total, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

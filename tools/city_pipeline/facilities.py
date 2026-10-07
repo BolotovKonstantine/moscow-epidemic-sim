@@ -82,11 +82,15 @@ def collect(data, buildings, projector, config, region_wgs84):
             records.append({"facility_id": osm_id, "kind": kind, "name": tags.get("name", ""), "source": "node", "lon": lon, "lat": lat, "area": None})
     seen = {record["facility_id"] for record in records}
     building_index = {osm_id: row for row, osm_id in enumerate(buildings.ids)}
+    # Здание OSM, отброшенное при отборе зданий (его точка вне региона), не возвращается как учреждение.
+    all_buildings = {item[0] for item in data.buildings}
     for osm_id, wkb, tags in data.sites + [(item[0], item[1], item[2]) for item in data.buildings]:
         kind = _kind(tags, kinds)
         if not kind or osm_id in seen:
             continue
         seen.add(osm_id)
+        if osm_id in all_buildings and osm_id not in building_index:
+            continue
         polygon = shapely.from_wkb(wkb)
         if osm_id in building_index:
             # Учреждение-здание — та же представительная точка, что у здания (зона и привязка совпадают).

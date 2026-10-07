@@ -131,7 +131,8 @@ def allocate(buildings, building_zone, cells, cell_zone, zone_ix, zone_iy, confi
         total = np.zeros(key_count)
         np.add.at(total, keys[usable], building_weight[usable])
         given = np.minimum(amounts, total) if capped else np.where(total > 0, amounts, 0.0)
-        receive = usable & (given[np.maximum(keys, 0)] > 0)
+        receive = usable.copy()  # без индексации пустого given, если ключей нет (сетка без населения)
+        receive[usable] = given[keys[usable]] > 0
         stages[receive, stage] += given[keys[receive]] * building_weight[receive] / total[keys[receive]]
         return amounts - given
 

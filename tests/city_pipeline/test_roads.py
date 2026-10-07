@@ -5,7 +5,7 @@ from shapely.geometry import box
 
 from shapely.geometry import LineString, MultiLineString
 
-from tools.city_pipeline.build import crossing_points, nearest_edges
+from tools.city_pipeline.build import boundary_filter_expressions, crossing_points, nearest_edges
 from tools.city_pipeline.geo import Projector
 from tools.city_pipeline.roads import build_graph
 
@@ -47,6 +47,14 @@ class RoadTests(unittest.TestCase):
         self.assertAlmostEqual(float(distance[0]), 50.0)
         self.assertEqual(int(edge[0]), 0)
         self.assertEqual(len(nearest_edges([], [], lines)[0]), 0)
+        # Объекты есть, дорог нет: по одному результату на объект, бесконечность и -1.
+        distance, edge = nearest_edges([1.0, 2.0], [0.0, 0.0], np.array([]))
+        self.assertEqual((list(distance), list(edge)), ([np.inf, np.inf], [-1, -1]))
+
+    def test_boundary_prefilter_follows_configuration(self):
+        expressions = boundary_filter_expressions({"moscow_admin": {"boundary": "administrative", "admin_level": "4"},
+                                                   "mkad": {"match": {"ref": ["МКАД"]}, "highways": ["motorway", "trunk", "primary"]}})
+        self.assertEqual(expressions, ["r/admin_level=4", "r/boundary=administrative", "w/highway=motorway,trunk,primary"])
 
 
 if __name__ == "__main__":

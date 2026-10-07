@@ -82,7 +82,8 @@ def read_osm(path, config) -> OsmData:
             is_building = building is not None and building not in ignore
             # Участок: функция территории или учреждение, нанесённое только контуром (doctors и т. п.).
             is_site = _is_site(tags, site_functions) or _is_site(tags, facility_kinds)
-            is_platform = tags.get("public_transport") == "platform" or tags.get("railway") == "platform"
+            # Платформа или станция, нанесённая площадью, — остановка (как и узел с теми же тегами).
+            is_platform = _is_transit_point(dict(tags))
             if not (is_building or is_site or is_platform):
                 continue
             try:

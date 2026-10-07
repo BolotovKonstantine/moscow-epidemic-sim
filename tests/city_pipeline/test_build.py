@@ -175,14 +175,14 @@ class BuildTests(unittest.TestCase):
 
     def test_transit_routes_segments_and_transfers(self):
         transit = self.report["transit"]
-        self.assertEqual(transit["routes"], 10)
+        self.assertEqual(transit["routes"], 11)
         self.assertEqual(transit["routes_without_stops"], 0)   # старые и пустые роли распознаны
         # Платформы 1 и 2 объединены с точками остановок s1, s2 во всех маршрутах: остаются
         # s1, s2, платформа 2а, линия-платформа и остановка за границей.
         # ... и платформа-мультиполигон r30.
-        self.assertEqual(transit["stops"], 7)   # + замкнутая платформа
-        self.assertEqual(transit["stops_inside_region"], 6)
-        self.assertEqual(transit["segments"], 11)
+        self.assertEqual(transit["stops"], 8)   # + замкнутая платформа и станция-площадь
+        self.assertEqual(transit["stops_inside_region"], 7)
+        self.assertEqual(transit["segments"], 12)
         self.assertIn("r30", {row["stop_id"] for row in read_csv(self.out / "transit_stops.csv.gz")})
         stop_rows = read_csv(self.out / "transit_stops.csv.gz")
         merged = [row for row in stop_rows if ";" in row["osm_ids"]]
