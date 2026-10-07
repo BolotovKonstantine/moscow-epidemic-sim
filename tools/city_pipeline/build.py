@@ -60,16 +60,25 @@ def prefilter_boundary(source_pbf: Path, out: Path):
     subprocess.run(["osmium", "tags-filter", str(source_pbf), "r/boundary=administrative", "w/highway=motorway,trunk", "-o", str(out), "--overwrite"], check=True)
 
 
+CLIP_COMPLETE_TYPES = "multipolygon,boundary,route,public_transport"
+
+
 def clip_region(source_pbf: Path, region_wgs84, work_dir: Path) -> Path:
-    """Вырезать регион с полными линиями и мультиполигонами (osmium extract -s smart)."""
+    """Вырезать регион с полными линиями, мультиполигонами и маршрутами (osmium extract -s smart).
+
+    Маршруты и stop_area дополняются всеми членами, в том числе за границей: так
+    остановки снаружи известны с координатами, и выход маршрута из региона виден
+    по ним, а не по пропаже членов при вырезке.
+    """
     polygon_path = work_dir / "region-clip.geojson"
     write_geojson(polygon_path, np.array([region_wgs84]), [{"part": "region"}])
     out = work_dir / "region.osm.pbf"
     stamp = work_dir / "region.osm.pbf.stamp"
-    key = sha256_file(source_pbf) + sha256_file(polygon_path)
+    command = ["osmium", "extract", "-p", str(polygon_path), "-s", "smart", "-S", f"types={CLIP_COMPLETE_TYPES}", str(source_pbf), "-o", str(out), "--overwrite"]
+    key = sha256_file(source_pbf) + sha256_file(polygon_path) + " ".join(command[4:8])
     if out.is_file() and stamp.is_file() and stamp.read_text() == key:
         return out
-    subprocess.run(["osmium", "extract", "-p", str(polygon_path), "-s", "smart", str(source_pbf), "-o", str(out), "--overwrite"], check=True)
+    subprocess.run(command, check=True)
     stamp.write_text(key)
     return out
 
@@ -248,18 +257,26 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
 
     gateway_rows = []
     position = {node: i for i, node in enumerate(graph.node_ids.tolist())}
-    for edge in graph.edges:
-        if not edge["gateway"]:
-            continue
+    gateway_index = [i for i, edge in enumerate(graph.edges) if edge["gateway"]]
+    border = shapely.boundary(region_wgs)
+    crossings = shapely.intersection(graph.edge_lines[gateway_index], border) if gateway_index else []
+    for index, crossing in zip(gateway_index, crossings):
+        edge = graph.edges[index]
         a, b = position[edge["from_node"]], position[edge["to_node"]]
-        inner, outer = (a, b) if graph.node_inside[a] else (b, a)
-        gateway_rows.append(["road", edge["edge_id"], edge["highway"], int(graph.node_ids[inner]), int(graph.node_ids[outer]), zone_name[node_zone[inner]], fmt(graph.node_lon[inner], 7), fmt(graph.node_lat[inner], 7)])
+        inner = [int(graph.node_ids[n]) for n in (a, b) if graph.node_inside[n]]
+        outer = [int(graph.node_ids[n]) for n in (a, b) if not graph.node_inside[n]]
+        points = shapely.get_coordinates(crossing)
+        cx, cy = projector.xy(points[:, 0], points[:, 1])
+        point_zone = zones.index_of(cx, cy)
+        # Одна строка на точку пересечения границы; узлы — концы ребра по сторонам границы.
+        for point, zone_index in sorted(zip(map(tuple, points), point_zone.tolist())):
+            gateway_rows.append(["road", edge["edge_id"], edge["highway"], ";".join(map(str, inner)), ";".join(map(str, outer)),
+                                 zone_name[zone_index], fmt(point[0], 7), fmt(point[1], 7)])
     stop_position = {stop["stop_id"]: i for i, stop in enumerate(network.stops)}
     for route in network.routes:
         if not route["crosses_boundary"]:
             continue
-        inside = [stop for stop in route["stops"] if network.stops[stop_position[stop]]["inside"]]
-        for end in sorted({inside[0], inside[-1]} if inside else set()):
+        for end in route["boundary_stops"]:
             i = stop_position[end]
             gateway_rows.append(["transit", route["route_id"], route["mode"], end, "", zone_name[stop_zone[i]], fmt(network.stops[i]["lon"], 7), fmt(network.stops[i]["lat"], 7)])
     write_csv(out_dir / "gateways.csv.gz", ["kind", "ref", "class", "inside_ref", "outside_ref", "zone_id", "lon", "lat"], gateway_rows)

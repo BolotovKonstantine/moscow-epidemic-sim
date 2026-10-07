@@ -76,6 +76,8 @@ def build_city(directory: Path):
     b.way([b.node(lon0 - 0.0105, lat0 + 0.0005), b.node(lon0 - 0.009, lat0 + 0.0005)], {"highway": "footway"})
     # Длинное прямое ребро (~3 км) без промежуточных узлов: пересекает несколько зон.
     b.way([b.node(lon0 - 0.025, lat0 + 0.03), b.node(lon0 + 0.025, lat0 + 0.03)], {"highway": "tertiary"})
+    # Ребро с обоими концами вне региона (±0.6° ≈ 37 км), середина которого проходит через регион.
+    b.way([b.node(lon0 - 0.6, lat0 + 0.25), b.node(lon0 + 0.6, lat0 + 0.25)], {"highway": "primary"})
 
     # Здания.
     b.square(lon0 + 0.002, lat0 + 0.002, 0.0003, {"building": "apartments", "building:levels": "9"})
@@ -93,8 +95,11 @@ def build_city(directory: Path):
     p1 = b.node(lon0 - 0.005, lat0 + 0.0002, {"highway": "bus_stop", "public_transport": "platform", "name": "Остановка 1"})
     p2 = b.node(lon0 + 0.005, lat0 + 0.0002, {"highway": "bus_stop", "public_transport": "platform", "name": "Остановка 2"})
     p3 = b.node(lon0 + 0.0052, lat0 + 0.0002, {"public_transport": "platform", "name": "Остановка 2а"})
-    b.relation(10, [("node", p1, "platform"), ("node", p2, "platform"), ("node", 999999, "platform")], {"type": "route", "route": "bus", "ref": "1", "name": "Автобус 1"})
-    b.relation(11, [("node", p3, "platform"), ("node", p1, "platform")], {"type": "route", "route": "bus", "ref": "2", "name": "Автобус 2"})
+    # Открытая линия-платформа и остановка далеко за границей региона.
+    line_platform = b.way([b.node(lon0 + 0.008, lat0 + 0.0002), b.node(lon0 + 0.0085, lat0 + 0.0002)], {"public_transport": "platform", "name": "Платформа-линия"})
+    far = b.node(lon0 + 1.0, lat0, {"highway": "bus_stop", "public_transport": "platform", "name": "За границей"})
+    b.relation(10, [("node", p1, "platform"), ("node", p2, "platform"), ("way", line_platform, "platform"), ("node", 999999, "platform")], {"type": "route", "route": "bus", "ref": "1", "name": "Автобус 1"})
+    b.relation(11, [("node", p3, "platform"), ("node", p1, "platform"), ("node", far, "platform")], {"type": "route", "route": "bus", "ref": "2", "name": "Автобус 2"})
     b.relation(20, [("node", p2, "platform"), ("node", p3, "platform")], {"type": "public_transport", "public_transport": "stop_area", "name": "Узел"})
 
     osm_path = directory / "mini.osm"

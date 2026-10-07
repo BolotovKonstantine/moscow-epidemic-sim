@@ -107,10 +107,14 @@ class BuildTests(unittest.TestCase):
 
     def test_road_graph_splits_at_shared_nodes_and_reports_components(self):
         roads = self.report["roads"]
-        # Крест — 4 ребра, изолированная улица — 1, длинная улица — 1, кольцо МКАД — 1 петля.
-        self.assertEqual(roads["edges"], 7)
-        self.assertEqual(roads["nodes"], 10)
-        self.assertEqual(roads["weak_components"], 4)
+        # Крест — 4 ребра, изолированная улица — 1, длинная улица — 1, кольцо МКАД — 1 петля,
+        # сквозное ребро с концами вне региона — 1.
+        self.assertEqual(roads["edges"], 8)
+        self.assertEqual(roads["nodes"], 12)
+        self.assertEqual(roads["weak_components"], 5)
+        self.assertEqual(roads["gateway_crossings"], 2)
+        crossings = [row for row in read_csv(self.out / "gateways.csv.gz") if row["kind"] == "road"]
+        self.assertTrue(all(row["inside_ref"] == "" and row["outside_ref"].count(";") == 1 and row["zone_id"] for row in crossings))
         self.assertNotIn("footway", roads["length_km_by_class"])
         checks = {check["check"]: check["status"] for check in self.report["checks"]}
         self.assertEqual(checks["road_graph_mostly_connected"], "fail")
@@ -131,12 +135,21 @@ class BuildTests(unittest.TestCase):
     def test_transit_routes_segments_and_transfers(self):
         transit = self.report["transit"]
         self.assertEqual(transit["routes"], 2)
-        self.assertEqual(transit["stops"], 3)
-        self.assertEqual(transit["segments"], 2)
+        self.assertEqual(transit["stops"], 5)            # включая линию-платформу и остановку за границей
+        self.assertEqual(transit["stops_inside_region"], 4)
+        self.assertEqual(transit["segments"], 4)
         self.assertEqual(transit["transfers"], 1)
         self.assertEqual(transit["unresolved_route_members"], 1)
+        # Ненайденный член маршрута 1 не делает его пересекающим границу; маршрут 2 выходит наружу.
         self.assertEqual(transit["routes_crossing_boundary"], 1)
         self.assertEqual(transit["components"], 1)
+        gateways = [row for row in read_csv(self.out / "gateways.csv.gz") if row["kind"] == "transit"]
+        stops = {row["stop_id"]: row for row in read_csv(self.out / "transit_stops.csv.gz")}
+        # Вход — остановка внутри, соседняя по маршруту с остановкой снаружи.
+        self.assertEqual([(row["ref"], stops[row["inside_ref"]]["name"]) for row in gateways], [("r11", "Остановка 1")])
+        routes = {row["route_id"]: row for row in read_csv(self.out / "transit_routes.csv.gz")}
+        self.assertEqual(routes["r10"]["crosses_boundary"], "0")
+        self.assertIn("w", routes["r10"]["stops"])
 
     def test_facilities_have_unknown_capacity_and_building_links(self):
         rows = read_csv(self.out / "facilities.csv.gz")

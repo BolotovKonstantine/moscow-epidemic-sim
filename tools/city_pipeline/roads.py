@@ -87,13 +87,20 @@ def build_graph(ways, region_wgs84, projector):
     node_inside = shapely.contains_xy(region_wgs84, node_lon, node_lat)
 
     position = {node: index for index, node in enumerate(node_ids.tolist())}
-    keep = []
-    for index, edge in enumerate(edges):
-        inside_a = node_inside[position[edge["from_node"]]]
-        inside_b = node_inside[position[edge["to_node"]]]
-        if inside_a or inside_b:
-            edge["gateway"] = not (inside_a and inside_b)
-            keep.append(index)
+    inside_a = np.array([node_inside[position[edge["from_node"]]] for edge in edges], dtype=bool)
+    inside_b = np.array([node_inside[position[edge["to_node"]]] for edge in edges], dtype=bool)
+    geometry = shapely.linestrings(np.concatenate(lines), indices=np.repeat(np.arange(len(lines)), [len(c) for c in lines]))
+    # Ребро сохраняется, если любая его часть в регионе (концы могут быть оба снаружи).
+    touches = inside_a | inside_b
+    outside = ~touches
+    touches[outside] = shapely.intersects(region_wgs84, geometry[outside])
+    # Вход — ребро, выходящее за границу, даже если оба его конца внутри.
+    gateway = ~(inside_a & inside_b)
+    both = inside_a & inside_b
+    gateway[both] = ~shapely.covered_by(geometry[both], region_wgs84)
+    keep = np.nonzero(touches)[0].tolist()
+    for index in keep:
+        edges[index]["gateway"] = bool(gateway[index])
     edges = [edges[index] for index in keep]
     lines = [lines[index] for index in keep]
 

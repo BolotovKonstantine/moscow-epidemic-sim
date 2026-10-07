@@ -170,7 +170,7 @@ def build_report(context):
             "largest_weak_component_pct": _pct(context["weak_size"], len(graph.node_ids)),
             "largest_strong_component_pct": _pct(context["strong_size"], len(graph.node_ids)),
             "bridges": sum(edge["bridge"] for edge in edges), "tunnels": sum(edge["tunnel"] for edge in edges),
-            "gateway_edges": gateways.get("road", 0),
+            "gateway_crossings": gateways.get("road", 0),
         },
         "reachability": {
             "residential_nearest_node_m": _quantiles(b_dist),

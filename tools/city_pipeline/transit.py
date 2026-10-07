@@ -23,8 +23,8 @@ class TransitNetwork:
 def _point(geometry):
     if isinstance(geometry, tuple):
         return geometry
-    polygon = shapely.from_wkb(geometry)
-    point = shapely.point_on_surface(polygon)
+    shape = shapely.from_wkb(geometry)  # полигон или линия платформы
+    point = shapely.point_on_surface(shape)
     return (point.x, point.y)
 
 
@@ -106,7 +106,13 @@ def build_network(data, region_wgs84, projector, config):
             "walk_s": meters / model["transfer_walk_speed_mps"] + model["transfer_overhead_s"],
         })
     for route in routes:
-        route["crosses_boundary"] = route["missing_members"] > 0 or any(not stops[position[stop]]["inside"] for stop in route["stops"])
+        # Ненайденные члены маршрута не доказывают выход за границу: это видно только по остановкам вне региона.
+        inside_flags = [stops[position[stop]]["inside"] for stop in route["stops"]]
+        route["crosses_boundary"] = any(inside_flags) and not all(inside_flags)
+        route["boundary_stops"] = sorted({
+            stop for i, stop in enumerate(route["stops"]) if inside_flags[i]
+            and ((i > 0 and not inside_flags[i - 1]) or (i + 1 < len(inside_flags) and not inside_flags[i + 1]))
+        })
     segments.sort(key=lambda item: (item["route_id"], item["sequence"]))
     routes.sort(key=lambda item: item["route_id"])
     return TransitNetwork(stops, routes, segments, transfers, unresolved)

@@ -97,6 +97,14 @@ def read_osm(path, config) -> OsmData:
                 data.transit_points[osm_id] = ((lon, lat), _subset(plain, STOP_TAGS))
         elif obj.is_way():
             highway = tags.get("highway")
+            if tags.get("public_transport") == "platform" or tags.get("railway") == "platform":
+                # Открытая линия платформы; замкнутые приходят и как площадь — берётся первая.
+                osm_id = f"w{obj.id}"
+                if osm_id not in data.transit_points:
+                    try:
+                        data.transit_points[osm_id] = (bytes.fromhex(wkb.create_linestring(obj)), _subset(dict(tags), STOP_TAGS))
+                    except RuntimeError:
+                        pass
             if highway in roads and tags.get("area") != "yes":
                 nodes = obj.nodes
                 if len(nodes) < 2 or not all(node.location.valid() for node in nodes):
