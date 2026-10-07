@@ -14,7 +14,7 @@ import numpy as np
 import shapely
 
 FUNCTIONS = ("residential", "work", "retail", "education", "medical", "transport", "control", "other")
-_NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+_LEVELS = re.compile(r"^\s*(\d+(?:[.,]\d+)?)\s*$")
 _HEIGHT = re.compile(r"^\s*(\d+(?:[.,]\d+)?)\s*(m|м|meters?|metres?|ft|feet|')?\s*$", re.IGNORECASE)
 _FEET_INCHES = re.compile(r"^\s*(\d+)\s*'\s*(\d+(?:\.\d+)?)\s*\"\s*$")
 FOOT_M = 0.3048
@@ -59,13 +59,15 @@ def _parse_height(value):
     return meters if meters > 0 else None
 
 
-def _parse_number(value):
+def _parse_levels(value):
+    """Этажность OSM: только одно число целиком («9», «2.5»). Диапазоны, списки,
+    единицы и пометки («3;5», «3-5», «5 эт.») — None, и этажность оценивается."""
     if value is None:
         return None
-    match = _NUMBER.search(value)
+    match = _LEVELS.match(value)
     if not match:
         return None
-    number = float(match.group().replace(",", "."))
+    number = float(match.group(1).replace(",", "."))
     return number if number > 0 else None
 
 
@@ -176,7 +178,7 @@ def classify(ids, geometry, metric, tags, pois, sites, sites_metric, config):
     meters = cfg["meters_per_level"]
     maximum = cfg["max_levels"]
     for row, item in enumerate(tags):
-        value = _parse_number(item.get("building:levels"))
+        value = _parse_levels(item.get("building:levels"))
         if value is not None and value <= maximum:
             levels[row] = max(1.0, round(value))
             levels_source[row] = "tag"

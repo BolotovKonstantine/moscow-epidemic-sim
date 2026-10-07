@@ -81,7 +81,7 @@ def build_city(directory: Path):
 
     # Здания.
     b.square(lon0 + 0.002, lat0 + 0.002, 0.0003, {"building": "apartments", "building:levels": "9"})
-    b.square(lon0 - 0.002, lat0 + 0.002, 0.0002, {"building": "house"})
+    b.square(lon0 - 0.002, lat0 + 0.002, 0.0002, {"building": "house", "building:levels": "1;3"})   # неоднозначно → оценка
     b.square(lon0 + 0.002, lat0 - 0.002, 0.0003, {"building": "yes"})                    # с магазином внутри
     b.node(lon0 + 0.002, lat0 - 0.002, {"shop": "convenience", "name": "Магазин"})
     b.square(lon0 - 0.006, lat0 - 0.006, 0.002, {"landuse": "residential"})

@@ -16,19 +16,20 @@ def _kind(tags, kinds):
     return None
 
 
-def _merge_duplicates(records):
+def _merge_duplicates(records, projector):
     """Объединить одно учреждение, нанесённое точкой, контуром здания и участком.
 
     Запись того же вида, чья точка лежит внутри контура другой записи, сливается с
     самым большим таким контуром (внешний участок поглощает корпус и точку внутри).
     Все исходные ID сохраняются в osm_ids; имя — первое непустое, начиная с контура.
+    Размер контура сравнивается в метрической проекции, а не в градусах.
     """
     records.sort(key=lambda record: record["facility_id"])
     areas = [row for row, record in enumerate(records) if record["area"] is not None]
     target = list(range(len(records)))
     if areas:
         polygons = [records[row]["area"] for row in areas]
-        sizes = shapely.area(polygons)
+        sizes = shapely.area(projector.to_metric(np.array(polygons, dtype=object)))
         tree = shapely.STRtree(polygons)
         points = shapely.points([record["lon"] for record in records], [record["lat"] for record in records])
         point_index, area_index = tree.query(points, predicate="intersects")
@@ -75,7 +76,7 @@ def collect(data, buildings, projector, config):
         point = shapely.point_on_surface(polygon)
         source = "building" if osm_id in building_index else "site"
         records.append({"facility_id": osm_id, "kind": kind, "name": tags.get("name", ""), "source": source, "lon": point.x, "lat": point.y, "area": polygon})
-    records = _merge_duplicates(records)
+    records = _merge_duplicates(records, projector)
 
     lon = np.array([record["lon"] for record in records], dtype=np.float64)
     lat = np.array([record["lat"] for record in records], dtype=np.float64)

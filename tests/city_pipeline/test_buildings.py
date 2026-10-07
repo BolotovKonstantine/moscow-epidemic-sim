@@ -1,6 +1,6 @@
 import unittest
 
-from tools.city_pipeline.buildings import _parse_height
+from tools.city_pipeline.buildings import _parse_height, _parse_levels
 
 
 class HeightTests(unittest.TestCase):
@@ -15,6 +15,15 @@ class HeightTests(unittest.TestCase):
         for value in ("12;15", "10-12", "5 storeys", "", "0", None):
             with self.subTest(value=value):
                 self.assertIsNone(_parse_height(value))
+
+
+class LevelsTests(unittest.TestCase):
+    def test_single_number_only(self):
+        self.assertEqual(_parse_levels("9"), 9.0)
+        self.assertEqual(_parse_levels(" 2,5 "), 2.5)
+        for value in ("3;5", "3-5", "5 эт.", "9+", "", "0", None):
+            with self.subTest(value=value):
+                self.assertIsNone(_parse_levels(value))
 
 
 if __name__ == "__main__":
