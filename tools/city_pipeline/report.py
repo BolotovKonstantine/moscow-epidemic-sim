@@ -119,9 +119,9 @@ def build_report(context):
                and len({i for f in facilities for i in f["osm_ids"]}) == sum(len(f["osm_ids"]) for f in facilities),
                "каждый объект OSM учреждения ровно в одной записи, собственный ID записи — в её osm_ids"),
         _check("residents_reach_main_graph", len(b_ok) == 0 or float(b_ok.mean()) >= 0.95,
-               f"{_pct(int(b_ok.sum()), len(b_ok))}% жилых зданий ближе всего к узлу крупнейшей компоненты"),
+               f"{_pct(int(b_ok.sum()), len(b_ok))}% жилых зданий ближе всего к ребру крупнейшей компоненты"),
         _check("facilities_reach_main_graph", len(f_ok) == 0 or float(f_ok.mean()) >= 0.95,
-               f"{_pct(int(f_ok.sum()), len(f_ok))}% учреждений ближе всего к узлу крупнейшей компоненты"),
+               f"{_pct(int(f_ok.sum()), len(f_ok))}% учреждений ближе всего к ребру крупнейшей компоненты"),
     ]
     if population.allocated_total != int(residents.sum()) or zone_total != int(residents.sum()):
         raise ReportError("Нарушено сохранение населения между зданиями и зонами")
@@ -180,10 +180,10 @@ def build_report(context):
             "gateway_crossings": gateways.get("road", 0),
         },
         "reachability": {
-            "residential_nearest_node_m": _quantiles(b_dist),
+            "residential_nearest_road_m": _quantiles(b_dist),
             "residential_far_from_road": int((b_dist > far).sum()), "far_threshold_m": far,
             "residential_in_main_component_pct": _pct(int(b_ok.sum()), len(b_ok)),
-            "facility_nearest_node_m": _quantiles(f_dist),
+            "facility_nearest_road_m": _quantiles(f_dist),
             "facility_in_main_component_pct": _pct(int(f_ok.sum()), len(f_ok)),
         },
         "transit": {

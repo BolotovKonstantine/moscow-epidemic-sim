@@ -54,6 +54,18 @@ def work_dir(root: Path, package_id) -> Path:
     return work
 
 
+SUPPORTED_CONFIG_VERSION = 1
+
+
+def load_config(path: Path) -> dict:
+    """Конфигурация сборки; неизвестная версия отклоняется, а не читается по правилам версии 1."""
+    config = read_json(path)
+    if not isinstance(config, dict) or config.get("config_version") != SUPPORTED_CONFIG_VERSION:
+        version = config.get("config_version") if isinstance(config, dict) else None
+        raise ManifestError(f"{path}: неподдерживаемая config_version {version!r}, ожидается {SUPPORTED_CONFIG_VERSION}")
+    return config
+
+
 def command_validate(args) -> int:
     manifest = validate_manifest(args.manifest, check_files=not args.metadata_only)
     mode = "только паспорт; файлы не проверялись" if args.metadata_only else "паспорт, файлы и SHA256"
@@ -74,7 +86,7 @@ def _selected_sources(config, registry):
 
 def command_fetch(args) -> int:
     registry = load_registry(args.registry)
-    config = read_json(args.config)
+    config = load_config(args.config)
     for role, source in _selected_sources(config, registry).items():
         path, downloaded = fetch(source, args.raw)
         print(f"{'загружен' if downloaded else 'уже есть'}: {role} · {source['source_id']} · {path}")
@@ -88,7 +100,7 @@ def command_build(args) -> int:
     if shutil.which("osmium") is None:
         raise ManifestError("Не найдена утилита osmium (osmium-tool)")
     registry = load_registry(args.registry)
-    config = read_json(args.config)
+    config = load_config(args.config)
     # ID и версия проверяются до любой записи на диск: и рабочий, и выходной каталог — внутри своих корней.
     out = package_dir(args.out, config.get("package_id"), config.get("package_version"))
     # Отдельный рабочий каталог на версию и конфигурацию: разные сборки не делят вырезку.

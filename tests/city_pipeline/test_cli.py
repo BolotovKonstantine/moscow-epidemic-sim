@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.city_pipeline.__main__ import package_dir, work_dir
+from tools.city_pipeline.__main__ import load_config, package_dir, work_dir
 from tools.city_pipeline.manifest import ManifestError
 
 
@@ -65,6 +65,20 @@ class FetchTests(unittest.TestCase):
             with self.assertRaises(ManifestError):
                 fetch(bad, raw)
             self.assertEqual(sorted(p.name for p in raw.iterdir()), ["copy.bin"])   # без *.part и плохого файла
+
+
+
+class ConfigTests(unittest.TestCase):
+    def test_unknown_config_version_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            for version in (2, None, "1"):
+                with self.subTest(version=version):
+                    path.write_text('{"config_version": %s}' % ("null" if version is None else (f'"{version}"' if isinstance(version, str) else version)))
+                    with self.assertRaises(ManifestError):
+                        load_config(path)
+            path.write_text('{"config_version": 1}')
+            self.assertEqual(load_config(path)["config_version"], 1)
 
 
 if __name__ == "__main__":

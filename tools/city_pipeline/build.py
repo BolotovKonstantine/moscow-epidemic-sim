@@ -9,7 +9,6 @@ from pathlib import Path
 
 import numpy as np
 import shapely
-from scipy.spatial import cKDTree
 
 from . import BUILDER_NAME, BUILDER_VERSION
 from .buildings import FUNCTIONS, classify, poi_records, site_records
@@ -83,6 +82,27 @@ def clip_region(source_pbf: Path, region_wgs84, work_dir: Path) -> Path:
     subprocess.run(command, check=True)
     stamp.write_text(key)
     return out
+
+
+def nearest_edges(x, y, road_metric):
+    """Расстояние до ближайшего ребра дороги (по геометрии, не по узлам) и индекс ребра.
+
+    При равных расстояниях берётся ребро с меньшим индексом — результат детерминирован.
+    """
+    x = np.asarray(x, dtype=np.float64)
+    if x.size == 0 or len(road_metric) == 0:
+        return np.array([]), np.array([], dtype=np.int64)
+    points = shapely.points(x, np.asarray(y, dtype=np.float64))
+    tree = shapely.STRtree(road_metric)
+    (point_index, edge_index), distance = tree.query_nearest(points, return_distance=True, all_matches=True)
+    order = np.lexsort((edge_index, point_index))
+    point_index, edge_index, distance = point_index[order], edge_index[order], distance[order]
+    first = np.r_[True, point_index[1:] != point_index[:-1]]
+    result_edge = np.full(x.size, -1, dtype=np.int64)
+    result_distance = np.full(x.size, np.inf)
+    result_edge[point_index[first]] = edge_index[first]
+    result_distance[point_index[first]] = distance[first]
+    return result_distance, result_edge
 
 
 def crossing_points(crossing):
@@ -225,12 +245,15 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
 
     # Здания: только с представительной точкой внутри региона.
     geometry = shapely.from_wkb([item[1] for item in data.buildings])
-    rep = shapely.point_on_surface(geometry)
-    keep = shapely.contains_xy(region_wgs, shapely.get_x(rep), shapely.get_y(rep))
+    # Отбор по той же метрической представительной точке, что используется дальше (classify).
+    metric = projector.to_metric(geometry)
+    rep = shapely.point_on_surface(metric)
+    shapely.prepare(region_metric)
+    keep = shapely.contains_xy(region_metric, shapely.get_x(rep), shapely.get_y(rep))
     building_ids = [item[0] for item, flag in zip(data.buildings, keep) if flag]
     building_tags = [item[2] for item, flag in zip(data.buildings, keep) if flag]
     geometry = geometry[keep]
-    metric = projector.to_metric(geometry)
+    metric = metric[keep]
     pois = poi_records(data.pois, projector, config["buildings"]["poi_functions"])
     site_functions, site_wkbs = site_records(data.sites, config["buildings"]["site_functions"])
     sites_metric = projector.to_metric(shapely.from_wkb(site_wkbs)) if site_wkbs else np.array([])
@@ -434,18 +457,19 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     # ---------------------------------------------------------------- отчёт качества
     weak_label, weak_size = largest_component(graph.weak_labels)
     _, strong_size = largest_component(graph.strong_labels)
-    tree = cKDTree(np.column_stack((node_x, node_y)))
     populated = population.residents > 0
-    b_dist, b_node = tree.query(np.column_stack((buildings.centroid_x[populated], buildings.centroid_y[populated])))
-    f_dist, f_node = tree.query(np.column_stack((fac_x, fac_y))) if len(facilities) else (np.array([]), np.array([], dtype=np.int64))
+    edge_component = graph.weak_labels[np.array([position[edge["from_node"]] for edge in graph.edges], dtype=np.int64)] if graph.edges else np.array([], dtype=np.int64)
+    road_metric = projector.to_metric(graph.edge_lines)
+    b_dist, b_edge = nearest_edges(buildings.centroid_x[populated], buildings.centroid_y[populated], road_metric)
+    f_dist, f_edge = nearest_edges(fac_x, fac_y, road_metric)
     context = {
         "config": config, "kind": kind, "created_at": created_at, "sources": sources, "region_parts": region_parts,
         "data": data, "buildings": buildings, "in_moscow": in_moscow, "in_mkad": in_mkad, "population": population,
         "graph": graph, "weak_label": weak_label, "weak_size": weak_size, "strong_size": strong_size,
         "network": network, "transit_components": (transit_count, transit_largest), "facilities": facilities,
         "zones": zones, "zone_pop": zone_pop, "zone_buildings": zone_buildings, "links": links,
-        "building_reach": (b_dist, graph.weak_labels[b_node] == weak_label if len(b_node) else np.array([], dtype=bool)),
-        "facility_reach": (f_dist, graph.weak_labels[f_node] == weak_label if len(f_node) else np.array([], dtype=bool)),
+        "building_reach": (b_dist, edge_component[b_edge] == weak_label if len(b_edge) else np.array([], dtype=bool)),
+        "facility_reach": (f_dist, edge_component[f_edge] == weak_label if len(f_edge) else np.array([], dtype=bool)),
         "building_zone": building_zone, "gateways": gateway_rows,
     }
     report = build_report(context)

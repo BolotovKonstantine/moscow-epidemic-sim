@@ -5,7 +5,7 @@ from shapely.geometry import box
 
 from shapely.geometry import LineString, MultiLineString
 
-from tools.city_pipeline.build import crossing_points
+from tools.city_pipeline.build import crossing_points, nearest_edges
 from tools.city_pipeline.geo import Projector
 from tools.city_pipeline.roads import build_graph
 
@@ -37,6 +37,16 @@ class RoadTests(unittest.TestCase):
         points = crossing_points(edge.intersection(region.boundary))
         self.assertEqual([tuple(map(float, p)) for p in points], [(37.03, 55.1), (37.07, 55.1)])
         self.assertEqual(len(crossing_points(MultiLineString([]))), 0)
+
+
+    def test_road_proximity_is_measured_to_edges(self):
+        # Здание в 50 м от середины ребра длиной 2 км: до узлов ~1000 м, до дороги — 50 м;
+        # ближе всего ребро 0, хотя короткое ребро 1 имеет узел ближе концов ребра 0.
+        lines = np.array([LineString([(0, 0), (2000, 0)]), LineString([(1000, 300), (1000, 400)])])
+        distance, edge = nearest_edges([1000.0], [50.0], lines)
+        self.assertAlmostEqual(float(distance[0]), 50.0)
+        self.assertEqual(int(edge[0]), 0)
+        self.assertEqual(len(nearest_edges([], [], lines)[0]), 0)
 
 
 if __name__ == "__main__":
