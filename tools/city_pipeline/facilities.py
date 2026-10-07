@@ -67,8 +67,13 @@ def _merge_duplicates(records, projector):
     return merged
 
 
-def collect(data, buildings, projector, config):
-    """Список учреждений с привязкой к зданиям. Возвращает (записи, метрические точки)."""
+def collect(data, buildings, projector, config, region_wgs84):
+    """Список учреждений с привязкой к зданиям. Возвращает (записи, метрические точки).
+
+    Как и здания, учреждение входит в пакет, только если его представительная точка
+    лежит в регионе; фильтр применяется до объединения дублей, чтобы участок за
+    границей не поглотил точку внутри региона.
+    """
     kinds = config["facilities"]["kinds"]
     records = []
     for osm_id, lon, lat, tags in data.pois:
@@ -86,6 +91,8 @@ def collect(data, buildings, projector, config):
         point = shapely.point_on_surface(polygon)
         source = "building" if osm_id in building_index else "site"
         records.append({"facility_id": osm_id, "kind": kind, "name": tags.get("name", ""), "source": source, "lon": point.x, "lat": point.y, "area": polygon})
+    shapely.prepare(region_wgs84)
+    records = [record for record in records if shapely.contains_xy(region_wgs84, record["lon"], record["lat"])]
     records = _merge_duplicates(records, projector)
 
     lon = np.array([record["lon"] for record in records], dtype=np.float64)

@@ -90,10 +90,11 @@ def build_graph(ways, region_wgs84, projector):
     inside_a = np.array([node_inside[position[edge["from_node"]]] for edge in edges], dtype=bool)
     inside_b = np.array([node_inside[position[edge["to_node"]]] for edge in edges], dtype=bool)
     geometry = shapely.linestrings(np.concatenate(lines), indices=np.repeat(np.arange(len(lines)), [len(c) for c in lines]))
-    # Ребро сохраняется, если любая его часть в регионе (концы могут быть оба снаружи).
+    # Ребро сохраняется, если часть его проходит по внутренности региона (концы могут быть
+    # оба снаружи). Касание или проход вдоль границы без входа внутрь не считается.
     touches = inside_a | inside_b
     outside = ~touches
-    touches[outside] = shapely.intersects(region_wgs84, geometry[outside])
+    touches[outside] = shapely.relate_pattern(region_wgs84, geometry[outside], "T********")
     # Вход — ребро, выходящее за границу, даже если оба его конца внутри.
     gateway = ~(inside_a & inside_b)
     both = inside_a & inside_b

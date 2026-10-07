@@ -158,6 +158,7 @@ class BuildTests(unittest.TestCase):
         rows = read_csv(self.out / "facilities.csv.gz")
         kinds = {row["kind"]: row for row in rows}
         self.assertEqual(sorted(row["kind"] for row in rows), ["clinic", "hospital", "school"])
+        self.assertNotIn("Больница за границей", {row["name"] for row in rows})   # точка вне региона
         self.assertTrue(kinds["hospital"]["building_ids"])
         # Точка больницы поглощена участком; точка и корпус школы — её концентрическим участком; имя — у точки.
         self.assertEqual(kinds["hospital"]["source"], "site")

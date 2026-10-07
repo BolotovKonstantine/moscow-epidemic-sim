@@ -184,7 +184,7 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
     transit_count, transit_largest, _ = transit_components(network)
 
     log("Учреждения…")
-    facilities, fac_x, fac_y = collect_facilities(data, buildings, projector, config)
+    facilities, fac_x, fac_y = collect_facilities(data, buildings, projector, config, region_wgs)
     fac_zone = zones.index_of(fac_x, fac_y)
 
     # ---------------------------------------------------------------- запись файлов

@@ -90,6 +90,7 @@ def build_city(directory: Path):
     b.square(lon0 + 0.006, lat0 + 0.006, 0.0004, {"building": "yes", "height": "15"})   # корпус больницы
     b.square(lon0 + 0.0312, lat0 - 0.0312, 0.0003, {"building": "yes"})                     # неизвестная функция
     b.node(lon0 - 0.0021, lat0 - 0.0021, {"amenity": "clinic", "name": "Поликлиника"})
+    b.node(lon0 + 1.0, lat0 + 0.01, {"amenity": "hospital", "name": "Больница за границей"})   # вне региона
     b.node(lon0 + 0.0065, lat0 + 0.0065, {"amenity": "hospital"})   # та же больница точкой на территории
     # Школа: контур здания с тегом и точка внутри — одно учреждение; высота в футах.
     b.square(lon0 - 0.006, lat0 + 0.006, 0.0003, {"building": "school", "amenity": "school", "height": "30 ft"})
