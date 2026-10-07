@@ -43,14 +43,26 @@ class PopulationResult:
     populated_cells_without_residential: int   # ячейки, ушедшие в пул зоны
 
 
+def outward_window(window, width, height):
+    """Целочисленное окно, содержащее дробное: начало вниз, конец вверх, в пределах растра.
+
+    Раздельное округление смещения и длины может потерять крайний столбец или строку,
+    чьи центры лежат в регионе.
+    """
+    col0 = max(int(np.floor(window.col_off)), 0)
+    row0 = max(int(np.floor(window.row_off)), 0)
+    col1 = min(int(np.ceil(window.col_off + window.width)), width)
+    row1 = min(int(np.ceil(window.row_off + window.height)), height)
+    return rasterio.windows.Window(col0, row0, max(col1 - col0, 0), max(row1 - row0, 0))
+
+
 def read_cells(raster_path, region_wgs84):
     """Ячейки сетки внутри региона: (lon, lat, population)."""
     with rasterio.open(raster_path) as dataset:
         minx, miny, maxx, maxy = region_wgs84.bounds
         bounds = dataset.bounds
         covers = bounds.left <= minx and bounds.right >= maxx and bounds.bottom <= miny and bounds.top >= maxy
-        window = rasterio.windows.from_bounds(minx, miny, maxx, maxy, dataset.transform).round_offsets().round_lengths()
-        window = window.intersection(rasterio.windows.Window(0, 0, dataset.width, dataset.height))
+        window = outward_window(rasterio.windows.from_bounds(minx, miny, maxx, maxy, dataset.transform), dataset.width, dataset.height)
         values = dataset.read(1, window=window, masked=True).astype(np.float64)
         transform = dataset.window_transform(window)
     data = values.filled(0.0)
