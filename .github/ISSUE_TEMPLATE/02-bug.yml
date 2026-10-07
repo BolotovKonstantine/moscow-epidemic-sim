@@ -1,0 +1,90 @@
+name: "Ошибка"
+description: "Воспроизведение, окружение и ожидаемое поведение"
+labels:
+  - "bug"
+body:
+  -
+    type: "markdown"
+    attributes:
+      value: "Правила: [ведение проекта](https://github.com/BolotovKonstantine/moscow-epidemic-sim/blob/main/docs/project-management.md). Одна Issue — один проверяемый результат. Неизвестные значения отмечай явно."
+  -
+    type: "dropdown"
+    id: "stage"
+    attributes:
+      label: "Этап"
+      options:
+        - "0. Техническая основа"
+        - "1. Городские данные"
+        - "2. Просмотр города"
+        - "3. Движение и масштаб"
+        - "4. Болезнь и медицина"
+        - "5. Решения мэра"
+        - "6. Обе стороны"
+        - "7. Проверка модели и игры"
+        - "8. Подготовка iOS"
+        - "Общее / этап требует решения"
+    validations:
+      required: true
+  -
+    type: "dropdown"
+    id: "module"
+    attributes:
+      label: "Основной модуль"
+      options:
+        - "game — интерфейс и отображение"
+        - "native — расчётное ядро и мост"
+        - "city_pipeline — данные"
+        - "tests / benchmarks — проверки"
+        - "docs — требования и документация"
+        - ".github — CI и процесс"
+        - "Несколько модулей (перечислить в описании)"
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "environment"
+    attributes:
+      label: "Версия и окружение"
+      description: "Commit/версия, ОС, устройство; для данных/симуляции — версия пакета и seed. Неприменимое отметь явно."
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "reproduction"
+    attributes:
+      label: "Воспроизведение"
+      description: "Шаги или минимальный пример. Для редкой ошибки — частота и доступные свидетельства."
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "expected"
+    attributes:
+      label: "Ожидаемый результат"
+      description: "Как должно быть согласно требованиям?"
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "actual"
+    attributes:
+      label: "Фактический результат"
+      description: "Что происходит? Приложи короткий лог/скриншот при наличии, без секретов и персональных данных."
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "impact"
+    attributes:
+      label: "Влияние"
+      description: "Что блокируется, какие сценарии/платформы затронуты, есть ли обход?"
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "verification"
+    attributes:
+      label: "Проверка исправления"
+      description: "Как подтвердить устранение ошибки?"
+    validations:
+      required: true

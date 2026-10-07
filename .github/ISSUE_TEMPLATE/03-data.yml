@@ -1,0 +1,91 @@
+name: "Источник данных"
+description: "Получение и проверка источника городских данных"
+labels:
+  - "enhancement"
+body:
+  -
+    type: "markdown"
+    attributes:
+      value: "Правила: [ведение проекта](https://github.com/BolotovKonstantine/moscow-epidemic-sim/blob/main/docs/project-management.md). Одна Issue — один проверяемый результат. Неизвестные значения отмечай явно."
+  -
+    type: "dropdown"
+    id: "stage"
+    attributes:
+      label: "Этап"
+      options:
+        - "0. Техническая основа"
+        - "1. Городские данные"
+        - "2. Просмотр города"
+        - "3. Движение и масштаб"
+        - "4. Болезнь и медицина"
+        - "5. Решения мэра"
+        - "6. Обе стороны"
+        - "7. Проверка модели и игры"
+        - "8. Подготовка iOS"
+        - "Общее / этап требует решения"
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "goal"
+    attributes:
+      label: "Назначение и границы"
+      description: "Какие слои/показатели нужны, для чего и какая часть работы входит сюда?"
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "source"
+    attributes:
+      label: "URL и владелец"
+      description: "Ссылка на источник и организация/автор. Не загружай большие данные в Issue."
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "coverage"
+    attributes:
+      label: "Даты, покрытие и формат"
+      description: "Дата данных, дата доступа, территория, детализация, формат. Если неизвестно — укажи это."
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "license"
+    attributes:
+      label: "Лицензия и условия"
+      description: "Название, ссылка на условия, атрибуция и ограничения. Неизвестную лицензию нужно исследовать до распространения."
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "quality"
+    attributes:
+      label: "Вид значений и качество"
+      description: "Наблюдаемые данные, оценка или игровая настройка? Пропуски и ограничения; для оценки — метод и неопределённость."
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "acceptance"
+    attributes:
+      label: "Критерии приёмки"
+      description: "Перечисли проверяемые условия завершения, желательно чек-листом. «Работает правильно» без конкретного результата недостаточно."
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "verification"
+    attributes:
+      label: "Способ проверки"
+      description: "Команды, тесты, сценарий или ручная проверка. Для исследования — какой отчёт подтверждает результат."
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "dependencies"
+    attributes:
+      label: "Зависимости и открытые вопросы"
+      description: "Ссылки на связанные Issues и документы. Если зависимостей нет — «нет»."
+    validations:
+      required: true
