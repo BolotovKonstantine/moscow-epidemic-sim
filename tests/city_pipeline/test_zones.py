@@ -41,6 +41,16 @@ class ZoneTests(unittest.TestCase):
         self.assertIn((min(b, c), max(b, c)), pairs)
         self.assertNotIn((min(a, c), max(a, c)), pairs)
 
+    def test_short_entry_into_region_is_clipped_before_linking(self):
+        # Ломаная почти целиком снаружи треугольника ныряет внутрь у линии y = 1000:
+        # средняя точка длинного интервала в квадрате (1,1) снаружи, но связь (1,1)–(1,0) реальна.
+        line = self.lines([(X0 + 1950, Y0 + 1150), (X0 + 1990, Y0 + 970), (X0 + 2060, Y0 + 1150)])
+        pairs = {pair for pair, _ in road_zone_crossings(line, self.projector, self.zones, self.region, np.array([False]))}
+        ids = {tuple(map(int, zone_id[1:].split("_"))): i for i, zone_id in enumerate(self.zones.ids)}
+        gx, gy = int(X0 // 1000), int(Y0 // 1000)
+        a, b, c = ids[(gx + 1, gy + 1)], ids[(gx + 1, gy)], ids[(gx + 2, gy)]
+        self.assertEqual(pairs, {(min(a, b), max(a, b)), (min(b, c), max(b, c))})
+
 
 if __name__ == "__main__":
     unittest.main()

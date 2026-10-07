@@ -73,15 +73,14 @@ class BuildTests(unittest.TestCase):
         by_kind = {}
         for row in rows.values():
             by_kind.setdefault((row["function_source"], row["dominant_function"]), []).append(row)
-        apartments = [row for row in rows.values() if row["levels_source"] == "tag"]
-        self.assertEqual(len(apartments), 1)
-        self.assertEqual(apartments[0]["levels"], "9")
+        tagged = sorted(row["levels"] for row in rows.values() if row["levels_source"] == "tag")
+        self.assertEqual(tagged, ["2.5", "9"])   # дробный тег сохраняется без округления
         self.assertEqual(len(by_kind[("poi", "retail")]), 1)
         self.assertEqual(len(by_kind[("site", "residential")]), 1)
         hospital = by_kind[("site", "medical")]
         self.assertEqual(len(hospital), 1)
         self.assertEqual((hospital[0]["levels"], hospital[0]["levels_source"]), ("5", "height"))
-        self.assertEqual(len(by_kind[("unknown", "unknown")]), 1)
+        self.assertEqual(len(by_kind[("unknown", "unknown")]), 2)   # здание без функции и здание с levels=2.5
         school = by_kind[("tag", "education")]
         self.assertEqual((school[0]["levels"], school[0]["levels_source"]), ("3", "height"))   # 30 ft ≈ 9.1 м
 
@@ -136,10 +135,11 @@ class BuildTests(unittest.TestCase):
 
     def test_transit_routes_segments_and_transfers(self):
         transit = self.report["transit"]
-        self.assertEqual(transit["routes"], 3)
+        self.assertEqual(transit["routes"], 5)
+        self.assertEqual(transit["routes_without_stops"], 0)   # старые и пустые роли распознаны
         self.assertEqual(transit["stops"], 5)            # включая линию-платформу и остановку за границей
         self.assertEqual(transit["stops_inside_region"], 4)
-        self.assertEqual(transit["segments"], 4)
+        self.assertEqual(transit["segments"], 6)
         self.assertEqual(transit["transfers"], 1)
         self.assertEqual(transit["unresolved_route_members"], 2)
         # Ненайденный член маршрута 1 не делает его пересекающим границу; маршруты 2 и 3 выходят наружу.

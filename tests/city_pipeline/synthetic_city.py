@@ -88,7 +88,8 @@ def build_city(directory: Path):
     b.square(lon0 - 0.006, lat0 - 0.006, 0.0003, {"building": "yes"})                    # в жилом квартале
     b.square(lon0 + 0.006, lat0 + 0.006, 0.002, {"amenity": "hospital", "name": "Больница"})
     b.square(lon0 + 0.006, lat0 + 0.006, 0.0004, {"building": "yes", "height": "15"})   # корпус больницы
-    b.square(lon0 + 0.0312, lat0 - 0.0312, 0.0003, {"building": "yes"})                     # неизвестная функция
+    b.square(lon0 + 0.0312, lat0 - 0.0312, 0.0003, {"building": "yes"})
+    b.square(lon0 + 0.035, lat0 + 0.035, 0.0002, {"building": "yes", "building:levels": "2.5"})   # дробная этажность                     # неизвестная функция
     b.node(lon0 - 0.0021, lat0 - 0.0021, {"amenity": "clinic", "name": "Поликлиника"})
     b.node(lon0 + 1.0, lat0 + 0.01, {"amenity": "hospital", "name": "Больница за границей"})   # вне региона
     b.node(lon0 + 0.0065, lat0 + 0.0065, {"amenity": "hospital"})   # та же больница точкой на территории
@@ -109,6 +110,10 @@ def build_city(directory: Path):
     b.relation(11, [("node", p3, "platform"), ("node", p1, "platform"), ("node", far, "platform")], {"type": "route", "route": "bus", "ref": "2", "name": "Автобус 2"})
     # Внутри → ненайденный член → снаружи: пропуск не делает остановку 2 входом.
     b.relation(12, [("node", p2, "platform"), ("node", 999998, "platform"), ("node", far, "platform")], {"type": "route", "route": "bus", "ref": "3", "name": "Автобус 3"})
+    # Старые номерные роли forward_stop_N/backward_stop_N и маршрут без ролей остановок
+    # (пустая роль и «bus_stop»); путь маршрута (way 1) остановкой не считается.
+    b.relation(13, [("node", p1, "forward_stop_1"), ("node", p2, "backward_stop_2")], {"type": "route", "route": "bus", "ref": "4", "name": "Автобус 4"})
+    b.relation(14, [("node", p2, ""), ("node", p3, "bus_stop"), ("way", 1, "")], {"type": "route", "route": "bus", "ref": "5", "name": "Автобус 5"})
     b.relation(20, [("node", p2, "platform"), ("node", p3, "platform")], {"type": "public_transport", "public_transport": "stop_area", "name": "Узел"})
 
     osm_path = directory / "mini.osm"

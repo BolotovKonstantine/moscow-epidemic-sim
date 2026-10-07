@@ -83,7 +83,7 @@ def clip_region(source_pbf: Path, region_wgs84, work_dir: Path) -> Path:
     return out
 
 
-def road_zone_crossings(edge_lines, projector, zones):
+def road_zone_crossings(edge_lines, projector, zones, region_metric=None, covered=None):
     """Пары соседних зон, границу между которыми пересекает ребро дороги.
 
     Ребро между перекрёстками может проходить через несколько зон. Для каждого
@@ -91,13 +91,24 @@ def road_zone_crossings(edge_lines, projector, zones):
     горизонтальных линий сетки; середины между соседними пересечениями лежат
     внутри одного квадрата и дают упорядоченную цепочку зон без пропусков, даже
     если отрезок задевает угол квадрата. Проход ровно через угол даёт диагональную
-    пару. Точки вне региона имеют зону -1 и связей не создают.
+    пару. Рёбра, не покрытые регионом целиком (covered=False), сначала обрезаются
+    region_metric; каждый кусок внутри региона обрабатывается отдельно, поэтому
+    участок снаружи не связывает зоны, а короткий заход внутрь не теряется.
     Возвращает отсортированные уникальные ((a, b), ребро), a < b.
     """
     if len(edge_lines) == 0:
         return []
     size = zones.cell_size
-    coords, owner = shapely.get_coordinates(projector.to_metric(edge_lines), return_index=True)
+    metric = projector.to_metric(edge_lines)
+    piece_edge = np.arange(len(metric))
+    if region_metric is not None and covered is not None and not np.all(covered):
+        partial = np.nonzero(~np.asarray(covered))[0]
+        clipped = shapely.intersection(metric[partial], region_metric)
+        parts, part_of = shapely.get_parts(clipped, return_index=True)
+        lines = shapely.get_type_id(parts) == shapely.GeometryType.LINESTRING
+        metric = np.concatenate((metric[np.asarray(covered)], parts[lines]))
+        piece_edge = np.concatenate((np.nonzero(covered)[0], partial[part_of[lines]]))
+    coords, owner = shapely.get_coordinates(metric, return_index=True)
     same = owner[1:] == owner[:-1]
     start, end, edge = coords[:-1][same], coords[1:][same], owner[:-1][same]
     crossing = np.nonzero((np.floor(start / size) != np.floor(end / size)).any(axis=1))[0]
@@ -124,7 +135,7 @@ def road_zone_crossings(edge_lines, projector, zones):
     zone = zones.index_of(points[:, 0], points[:, 1])
     change = (edge_of[1:] == edge_of[:-1]) & (zone[1:] != zone[:-1]) & (zone[1:] >= 0) & (zone[:-1] >= 0)
     a, b = zone[:-1][change], zone[1:][change]
-    rows = np.unique(np.column_stack((np.minimum(a, b), np.maximum(a, b), edge_of[:-1][change])), axis=0)
+    rows = np.unique(np.column_stack((np.minimum(a, b), np.maximum(a, b), piece_edge[edge_of[:-1][change]])), axis=0)
     return [((int(za), int(zb)), int(e)) for za, zb, e in rows]
 
 
@@ -214,7 +225,7 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
     write_csv(out_dir / "building_attributes.csv.gz",
               ["building_id", "zone_id", "territory", "inside_mkad", "lon", "lat", "footprint_m2", "levels", "levels_source", "floor_area_m2", "function_source", "dominant_function"] + [f"share_{name}" for name in FUNCTIONS],
               ([buildings.ids[row], zone_name[building_zone[row]], territory[row], fmt(bool(in_mkad[row])), fmt(buildings.lon[row], 7), fmt(buildings.lat[row], 7),
-                fmt(buildings.footprint_m2[row], 1), fmt(buildings.levels[row], 0), buildings.levels_source[row], fmt(buildings.floor_area_m2[row], 1),
+                fmt(buildings.footprint_m2[row], 1), fmt(buildings.levels[row], 2), buildings.levels_source[row], fmt(buildings.floor_area_m2[row], 1),
                 buildings.function_source[row], FUNCTIONS[dominant[row]] if dominant[row] >= 0 else "unknown"]
                + [fmt(value, 3) for value in buildings.shares[row]] for row in range(len(buildings.ids))))
     add("building-attributes", "buildings", "building_attributes.csv.gz", "csv+gzip", "estimated", ["osm"], {
@@ -331,7 +342,8 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
     })
 
     links = {}
-    for (za, zb), edge_index in road_zone_crossings(graph.edge_lines, projector, zones):
+    for (za, zb), edge_index in road_zone_crossings(graph.edge_lines, projector, zones, region_metric,
+                                                       np.array([not edge["gateway"] for edge in graph.edges], dtype=bool)):
         key = (za, zb, "road")
         count, length = links.get(key, (0, np.inf))
         links[key] = (count + 1, min(length, graph.edges[edge_index]["length_m"]))

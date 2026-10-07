@@ -185,6 +185,7 @@ def build_report(context):
         "transit": {
             "stops": len(network.stops), "stops_inside_region": int(stops_inside),
             "routes": len(network.routes), "routes_by_mode": dict(sorted(routes_by_mode.items())),
+            "routes_without_stops": sum(1 for route in network.routes if not route["stops"]),
             "segments": len(network.segments), "transfers": len(network.transfers),
             "routes_crossing_boundary": sum(route["crosses_boundary"] for route in network.routes),
             "unresolved_route_members": network.unresolved_members,

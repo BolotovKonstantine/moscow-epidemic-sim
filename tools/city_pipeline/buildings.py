@@ -180,7 +180,7 @@ def classify(ids, geometry, metric, tags, pois, sites, sites_metric, config):
     for row, item in enumerate(tags):
         value = _parse_levels(item.get("building:levels"))
         if value is not None and value <= maximum:
-            levels[row] = max(1.0, round(value))
+            levels[row] = value  # тег сохраняется как есть, включая дробные (2.5)
             levels_source[row] = "tag"
             continue
         height = _parse_height(item.get("height"))

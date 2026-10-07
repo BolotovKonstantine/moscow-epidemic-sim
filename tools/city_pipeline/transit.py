@@ -7,6 +7,8 @@
 
 from dataclasses import dataclass
 
+import re
+
 import numpy as np
 import shapely
 
@@ -18,6 +20,9 @@ class TransitNetwork:
     segments: list     # dict
     transfers: list    # dict
     unresolved_members: int
+
+
+_NUMBERED = re.compile(r"_\d+$")
 
 
 def _point(geometry):
@@ -43,9 +48,15 @@ def build_network(data, region_wgs84, projector, config):
     segments = []
     unresolved = 0
     for rel_id, tags, members in data.routes:
-        candidates = [(kind, ref) for kind, ref, role in members if role in stop_roles and kind in ("n", "w")]
+        # Номерные роли старой схемы («forward_stop_13», «stop_2») приводятся к базовой.
+        members = [(kind, ref, _NUMBERED.sub("", role)) for kind, ref, role in members if kind in ("n", "w")]
+        candidates = [(kind, ref) for kind, ref, role in members if role in stop_roles]
         if not candidates:
-            candidates = [(kind, ref) for kind, ref, role in members if role in platform_roles and kind in ("n", "w")]
+            candidates = [(kind, ref) for kind, ref, role in members if role in platform_roles]
+        if not candidates:
+            # Маршруты без ролей остановок (пустая роль, «bus_stop», «halt» и т. п.):
+            # члены, которые сами являются остановками или платформами.
+            candidates = [(kind, ref) for kind, ref, role in members if _member_id(kind, ref) in points]
         sequence = []
         missing = 0
         for kind, ref in candidates:
