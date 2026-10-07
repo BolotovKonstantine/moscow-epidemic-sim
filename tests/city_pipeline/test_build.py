@@ -107,13 +107,26 @@ class BuildTests(unittest.TestCase):
 
     def test_road_graph_splits_at_shared_nodes_and_reports_components(self):
         roads = self.report["roads"]
-        # Крест — 4 ребра, изолированная улица — 1, кольцо МКАД — 1 петля.
-        self.assertEqual(roads["edges"], 6)
-        self.assertEqual(roads["nodes"], 8)
-        self.assertEqual(roads["weak_components"], 3)
+        # Крест — 4 ребра, изолированная улица — 1, длинная улица — 1, кольцо МКАД — 1 петля.
+        self.assertEqual(roads["edges"], 7)
+        self.assertEqual(roads["nodes"], 10)
+        self.assertEqual(roads["weak_components"], 4)
         self.assertNotIn("footway", roads["length_km_by_class"])
         checks = {check["check"]: check["status"] for check in self.report["checks"]}
         self.assertEqual(checks["road_graph_mostly_connected"], "fail")
+
+    def test_road_links_cover_every_crossed_zone(self):
+        def grid(zone_id):
+            ix, iy = zone_id[1:].split("_")
+            return int(ix), int(iy)
+
+        links = [row for row in read_csv(self.out / "zone_links.csv.gz") if row["kind"] == "road"]
+        for row in links:
+            (ax, ay), (bx, by) = grid(row["zone_a"]), grid(row["zone_b"])
+            self.assertEqual(max(abs(ax - bx), abs(ay - by)), 1, row)
+        # Длинная улица ~3 км с востока на запад даёт цепочку не менее трёх связей в одном ряду зон.
+        long_edge = [row for row in links if grid(row["zone_a"])[1] == grid(row["zone_b"])[1] and float(row["min_length_m"]) > 2500]
+        self.assertGreaterEqual(len(long_edge), 3)
 
     def test_transit_routes_segments_and_transfers(self):
         transit = self.report["transit"]

@@ -16,7 +16,8 @@
     "mkad_area_km2_range": [850, 900]
   },
   "zones": {
-    "cell_size_m": 1000
+    "cell_size_m": 1000,
+    "crossing_step_m": 100
   },
   "roads": {
     "highways": [

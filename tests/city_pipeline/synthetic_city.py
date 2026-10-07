@@ -74,6 +74,8 @@ def build_city(directory: Path):
     b.way([south, center, north], {"highway": "secondary", "oneway": "yes", "name": "Вторая"})
     b.way([b.node(lon0 + 0.04, lat0 + 0.04), b.node(lon0 + 0.041, lat0 + 0.04)], {"highway": "service"})
     b.way([b.node(lon0 - 0.0105, lat0 + 0.0005), b.node(lon0 - 0.009, lat0 + 0.0005)], {"highway": "footway"})
+    # Длинное прямое ребро (~3 км) без промежуточных узлов: пересекает несколько зон.
+    b.way([b.node(lon0 - 0.025, lat0 + 0.03), b.node(lon0 + 0.025, lat0 + 0.03)], {"highway": "tertiary"})
 
     # Здания.
     b.square(lon0 + 0.002, lat0 + 0.002, 0.0003, {"building": "apartments", "building:levels": "9"})

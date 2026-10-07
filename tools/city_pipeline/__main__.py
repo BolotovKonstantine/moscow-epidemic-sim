@@ -8,6 +8,8 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from shapely.errors import ShapelyError
+
 from .manifest import ManifestError, read_json, validate_manifest
 from .sources import fetch, load_registry, manifest_source, verify
 
@@ -112,7 +114,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         return args.handler(args)
-    except (ManifestError, ValueError, OSError, subprocess.CalledProcessError) as error:
+    except (ManifestError, ValueError, OSError, ShapelyError, subprocess.CalledProcessError) as error:
         print(f"Ошибка пакета:\n{error}", file=sys.stderr)
         return 1
 
