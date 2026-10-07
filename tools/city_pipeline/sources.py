@@ -4,7 +4,9 @@
 `data/raw/`. Сборка использует только файлы, чей хеш совпадает с реестром.
 """
 
+import os
 import shutil
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -46,15 +48,20 @@ def fetch(source: dict, raw_dir: Path) -> tuple[Path, bool]:
     path = raw_dir / source["file"]
     if path.is_file() and sha256_file(path) == source["sha256"]:
         return path, False
-    partial = path.with_name(path.name + ".part")
-    request = urllib.request.Request(source["url"], headers={"User-Agent": "moscow-epidemic-sim-city-pipeline"})
-    with urllib.request.urlopen(request, timeout=60) as response, partial.open("wb") as stream:
-        shutil.copyfileobj(response, stream, length=1024 * 1024)
-    actual = sha256_file(partial)
-    if actual != source["sha256"]:
-        partial.unlink()
-        raise ManifestError(f"{source['source_id']}: скачанный файл имеет SHA256 {actual}, ожидался {source['sha256']}")
-    partial.replace(path)
+    # Уникальный временный файл: одновременные загрузки не пишут в один файл; замена атомарна.
+    handle, name = tempfile.mkstemp(prefix=f"{path.name}.", suffix=".part", dir=raw_dir)
+    partial = Path(name)
+    try:
+        request = urllib.request.Request(source["url"], headers={"User-Agent": "moscow-epidemic-sim-city-pipeline"})
+        with urllib.request.urlopen(request, timeout=60) as response, os.fdopen(handle, "wb") as stream:
+            shutil.copyfileobj(response, stream, length=1024 * 1024)
+        actual = sha256_file(partial)
+        if actual != source["sha256"]:
+            raise ManifestError(f"{source['source_id']}: скачанный файл имеет SHA256 {actual}, ожидался {source['sha256']}")
+        partial.chmod(0o644)  # mkstemp создаёт файл только для владельца
+        partial.replace(path)
+    finally:
+        partial.unlink(missing_ok=True)
     return path, True
 
 

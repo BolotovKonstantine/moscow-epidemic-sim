@@ -98,7 +98,7 @@ def _site_function(tags, site_functions):
     return None
 
 
-def classify(ids, geometry, metric, tags, pois, sites, sites_metric, config):
+def classify(ids, geometry, metric, tags, pois, sites, sites_metric, config, projector):
     """Определить доли функций и этажность.
 
     pois: список (lon, lat, function) уже в виде метрических координат x, y и функции.
@@ -196,11 +196,12 @@ def classify(ids, geometry, metric, tags, pois, sites, sites_metric, config):
             continue
         levels[row] = float(defaults.get(item.get("building"), defaults["*"]))
 
-    representative_wgs = shapely.point_on_surface(geometry)
+    # Та же точка, что и в метрах (point_on_surface не инвариантна к проекции).
+    rep_lon, rep_lat = projector.lonlat(cx, cy)
     return BuildingTable(
         ids=ids, geometry=geometry, metric=metric, tags=tags, footprint_m2=footprint,
         centroid_x=cx, centroid_y=cy,
-        lon=shapely.get_x(representative_wgs), lat=shapely.get_y(representative_wgs),
+        lon=np.asarray(rep_lon), lat=np.asarray(rep_lat),
         shares=shares, function_source=function_source,
         levels=levels, levels_source=levels_source, floor_area_m2=footprint * levels,
     )

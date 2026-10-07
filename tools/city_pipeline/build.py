@@ -235,7 +235,7 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     site_functions, site_wkbs = site_records(data.sites, config["buildings"]["site_functions"])
     sites_metric = projector.to_metric(shapely.from_wkb(site_wkbs)) if site_wkbs else np.array([])
     log("Классификация зданий…")
-    buildings = classify(building_ids, geometry, metric, building_tags, pois, site_functions, sites_metric, config)
+    buildings = classify(building_ids, geometry, metric, building_tags, pois, site_functions, sites_metric, config, projector)
     in_moscow = shapely.contains_xy(moscow_wgs, buildings.lon, buildings.lat)
     in_mkad = shapely.contains_xy(mkad_wgs, buildings.lon, buildings.lat)
 
@@ -379,7 +379,10 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     write_csv(out_dir / "facilities.csv.gz", ["facility_id", "kind", "name", "source", "osm_ids", "lon", "lat", "zone_id", "building_ids", "capacity"],
               ([f["facility_id"], f["kind"], f["name"], f["source"], ";".join(f["osm_ids"]), fmt(f["lon"], 7), fmt(f["lat"], 7), zone_name[fac_zone[i]], ";".join(f["building_ids"]), "unknown"]
                for i, f in enumerate(facilities)))
-    add("facilities", "facilities", "facilities.csv.gz", "csv+gzip", "observed", ["osm"])
+    add("facilities", "facilities", "facilities.csv.gz", "csv+gzip", "estimated", ["osm"], {
+        "method": "Вид, имя и координаты — из тегов OSM. Точки, корпуса и территории одного вида, вложенные друг в друга, объединены в одно учреждение (osm_ids) эвристически; building_ids — здания, чья представительная точка лежит в контуре или содержит точку учреждения.",
+        "uncertainty": "Объединение и привязка к зданиям — пространственная эвристика: соседние разные учреждения одного вида могут быть слиты, корпуса — не привязаны. Вместимость unknown.",
+    })
 
     # Зоны и связи между ними.
     zone_count = len(zones.ids)

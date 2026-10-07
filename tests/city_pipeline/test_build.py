@@ -60,6 +60,7 @@ class BuildTests(unittest.TestCase):
         kinds = {asset["asset_id"]: asset["data_kind"] for asset in manifest["assets"]}
         self.assertEqual(kinds["population"], "estimated")
         self.assertEqual(kinds["transit-service"], "game_setting")
+        self.assertEqual(kinds["facilities"], "estimated")   # объединение и привязка к зданиям — эвристика
 
     def test_build_is_reproducible(self):
         manifest, _ = self.build(self.root / "second")

@@ -70,11 +70,14 @@ def _stops_in_order(members, stop_roles, platform_roles, points, metric, pair_m,
             osm_id = _member_id(kind, ref)
             matches.append([i for i, other in enumerate(primary_ids) if paired(other, osm_id)])
         if any(matches):
+            # Сопоставление один к одному с сохранением порядка: каждая точка основы
+            # используется не более одного раза и только после предыдущей парной.
             inserts = {}
             last = -1
             for (kind, ref), match in zip(extra, matches):
-                if match:
-                    last = min(match, key=lambda i: (abs(i - last), i))
+                later = [i for i in match if i > last]
+                if later:
+                    last = min(later)
                     aliases.append((_member_id(kind, ref), primary_ids[last]))
                 else:
                     inserts.setdefault(last, []).append((kind, ref))

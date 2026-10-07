@@ -46,5 +46,26 @@ class ReplaceDirTests(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in root.iterdir()), ["pkg"])   # резервная копия удалена
 
 
+
+class FetchTests(unittest.TestCase):
+    def test_fetch_uses_unique_partial_and_verifies_hash(self):
+        import hashlib
+        from tools.city_pipeline.sources import fetch
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = root / "source.bin"
+            payload.write_bytes(b"city data")
+            source = {"source_id": "test", "url": payload.as_uri(), "file": "copy.bin", "sha256": hashlib.sha256(b"city data").hexdigest()}
+            raw = root / "raw"
+            path, downloaded = fetch(source, raw)
+            self.assertTrue(downloaded)
+            self.assertEqual(path.read_bytes(), b"city data")
+            self.assertEqual(fetch(source, raw)[1], False)
+            bad = dict(source, file="bad.bin", sha256="0" * 64)
+            with self.assertRaises(ManifestError):
+                fetch(bad, raw)
+            self.assertEqual(sorted(p.name for p in raw.iterdir()), ["copy.bin"])   # без *.part и плохого файла
+
+
 if __name__ == "__main__":
     unittest.main()

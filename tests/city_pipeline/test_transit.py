@@ -64,6 +64,15 @@ class StopOrderTests(unittest.TestCase):
         self.assertEqual(result, [("n", 2), ("n", 3)])
         self.assertEqual(aliases, [("n1", "n2")])
 
+    def test_grouped_pairing_is_one_to_one_in_order(self):
+        # Две точки в 50 м и две платформы рядом с каждой: обе платформы ближе 100 м к обеим точкам,
+        # но каждая точка используется один раз и по порядку — A↔S0, B↔S1.
+        result, aliases = order([("n", 1, "stop"), ("n", 2, "stop"), ("n", 3, "platform"), ("n", 4, "platform")],
+                                [("n1", 37.6000, 55.75, "", "stop_position"), ("n2", 37.6008, 55.75, "", "stop_position"),
+                                 ("n3", 37.6001, 55.75, "", "platform"), ("n4", 37.6007, 55.75, "", "platform")])
+        self.assertEqual(result, [("n", 1), ("n", 2)])
+        self.assertEqual(aliases, [("n3", "n1"), ("n4", "n2")])
+
 
 class AliasTests(unittest.TestCase):
     def test_reciprocal_aliases_share_one_root(self):
