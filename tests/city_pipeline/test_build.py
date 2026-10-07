@@ -47,6 +47,17 @@ class BuildTests(unittest.TestCase):
         self.assertFalse(region.contains(mkad.buffer(30_100)))
         self.assertGreater(mkad.area / 1e6, 10)
 
+    def test_boundary_reader_uses_configured_admin_keys(self):
+        # Отношение ищется по place=city, у которого нет тега boundary: фильтр берёт ключи из конфигурации.
+        from tools.city_pipeline.osm import read_boundary_sources
+        text = self.osm.read_text(encoding="utf-8").replace('<tag k="boundary" v="administrative"/>', '<tag k="place" v="city"/>')
+        path = self.root / "place.osm"
+        path.write_text(text, encoding="utf-8")
+        boundary = json.loads(json.dumps(self.config["boundary"]))
+        boundary["moscow_admin"] = {"place": "city", "name": "Москва"}
+        moscow, _ = read_boundary_sources(path, boundary)
+        self.assertEqual(len(moscow), 1)
+
     def test_broken_mkad_ring_is_rejected(self):
         config = json.loads(json.dumps(self.config))
         config["boundary"]["mkad_area_km2_range"] = [850, 900]

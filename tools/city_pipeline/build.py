@@ -345,7 +345,7 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
               ([buildings.ids[row], zone_name[building_zone[row]], int(population.residents[row]), population.method[row]]
                for row in np.nonzero(population.residents)[0]))
     add("population", "population", "population.csv.gz", "csv+gzip", "estimated", ["osm", "population"], {
-        "method": "Население ячеек GHS-POP внутри региона распределено по жилой площади (площадь × этажность × доля жилья); ячейки без жилья — через пул зоны; округление методом наибольших остатков с сохранением итога региона.",
+        "method": "Население ячеек GHS-POP внутри региона распределено по жилой площади (площадь × этажность × доля жилья); ячейки без жилья — через пул зоны и блок зон; округление методом наибольших остатков сохраняет распределённую сумму. Население блоков без подходящих зданий не распределяется и показано в quality_report (population.unallocated), поэтому сумма файла может быть меньше итога сетки.",
         "uncertainty": "Сетка сама является моделью (JRC). Точность на уровне отдельного дома низкая; итоги зон и региона надёжнее. Возраст и домохозяйства не определены.",
     })
 
@@ -381,8 +381,8 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     write_csv(out_dir / "transit_transfers.csv.gz", ["stop_area_id", "from_stop", "to_stop", "distance_m", "walk_s"],
               ([t["stop_area_id"], t["from_stop"], t["to_stop"], fmt(t["distance_m"], 1), fmt(t["walk_s"], 0)] for t in network.transfers))
     add("transit-transfers", "transport", "transit_transfers.csv.gz", "csv+gzip", "estimated", ["osm"], {
-        "method": "Пары остановок одного stop_area OSM; время = расстояние по прямой / transfer_walk_speed_mps + transfer_overhead_s из model_assumptions.",
-        "uncertainty": "Реальные переходы длиннее прямой; скорость и надбавка — модельные параметры.",
+        "method": "Пары остановок одного stop_area OSM после объединения точек остановок и платформ (эвристика transit-stops: пороги stop_platform_pair_m и stop_platform_pair_same_name_m, синонимы во всех маршрутах) — член stop_area заменяется представителем объединённой остановки. Время = расстояние по прямой / transfer_walk_speed_mps + transfer_overhead_s из model_assumptions.",
+        "uncertainty": "Реальные переходы длиннее прямой; скорость и надбавка — модельные параметры. Объединение может заменить конец пересадки или слить двух членов stop_area в одну остановку, и тогда пересадки между ними нет.",
     })
     model = config["model_assumptions"]
     write_json(out_dir / "transit_service.json", {

@@ -165,7 +165,9 @@ def read_boundary_sources(path, boundary_config):
     wkb = osmium.geom.WKBFactory()
     moscow = []
     mkad_lines = []
-    processor = osmium.FileProcessor(str(path)).with_areas().with_filter(osmium.filter.KeyFilter("boundary", "highway"))
+    # Ключи фильтра — из конфигурации: отношение Москвы может определяться не только тегом boundary.
+    keys = sorted(set(admin) | {"highway"})
+    processor = osmium.FileProcessor(str(path)).with_areas().with_filter(osmium.filter.KeyFilter(*keys))
     for obj in processor:
         tags = obj.tags
         if obj.is_area() and not obj.from_way() and all(tags.get(key) == value for key, value in admin.items()):
