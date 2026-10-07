@@ -126,6 +126,9 @@ def build_city(directory: Path):
     s2 = b.node(lon0 + 0.005, lat0 + 0.0001, {"public_transport": "stop_position", "name": "Остановка 2"})
     b.relation(15, [("node", s1, "stop"), ("node", p1, "platform"), ("node", p2, "platform"), ("node", s2, "stop"),
                     ("way", line_platform, "platform")], {"type": "route", "route": "bus", "ref": "6", "name": "Автобус 6"})
+    # Платформа 1 одна на маршруте 7, а на маршруте 15 она объединена с точкой s1: синоним
+    # применяется во всех маршрутах, и физическая остановка одна.
+    b.relation(16, [("node", p1, "platform"), ("node", p3, "platform")], {"type": "route", "route": "bus", "ref": "7", "name": "Автобус 7"})
     b.relation(20, [("node", p2, "platform"), ("node", p3, "platform")], {"type": "public_transport", "public_transport": "stop_area", "name": "Узел"})
 
     osm_path = directory / "mini.osm"

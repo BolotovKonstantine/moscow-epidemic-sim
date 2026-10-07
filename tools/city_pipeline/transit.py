@@ -123,20 +123,35 @@ def build_network(data, region_wgs84, projector, config):
     metric = {osm_id: (float(x), float(y)) for osm_id, x, y in zip(point_ids, np.atleast_1d(px), np.atleast_1d(py))}
     aliases = {}  # отброшенный при объединении пары элемент → оставленная остановка
 
-    used = {}
-    routes = []
-    segments = []
-    unresolved = 0
+    # Первый проход: остановки каждого маршрута и синонимы пар «платформа ↔ точка остановки».
+    per_route = []
     for rel_id, tags, members in data.routes:
         # Номерные роли старой схемы («forward_stop_13», «stop_2») приводятся к базовой.
         members = [(kind, ref, _NUMBERED.sub("", role)) for kind, ref, role in members if kind in ("n", "w")]
         candidates = _stops_in_order(members, stop_roles, platform_roles, points, metric,
                                      transit["stop_platform_pair_m"], transit["stop_platform_pair_same_name_m"], aliases)
+        per_route.append((rel_id, tags, candidates))
+
+    def canonical(osm_id):
+        """Синоним из любого маршрута применяется везде; цепочки сводятся к концу (без циклов)."""
+        seen = set()
+        while osm_id in aliases and osm_id not in seen:
+            seen.add(osm_id)
+            osm_id = aliases[osm_id]
+        return osm_id
+
+    # Второй проход: последовательности с каноническими ID остановок.
+    used = {}
+    routes = []
+    segments = []
+    unresolved = 0
+    for rel_id, tags, candidates in per_route:
         sequence = []
         missing = 0
         for kind, ref in candidates:
             osm_id = _member_id(kind, ref)
             if osm_id in points:
+                osm_id = canonical(osm_id)
                 if not sequence or sequence[-1] != osm_id:
                     sequence.append(osm_id)
             else:
@@ -161,7 +176,7 @@ def build_network(data, region_wgs84, projector, config):
     transfers_raw = []
     for rel_id, tags, members in data.stop_areas:
         # Платформа, объединённая с точкой остановки, представлена этой точкой.
-        resolved_ids = {aliases.get(_member_id(kind, ref), _member_id(kind, ref)) for kind, ref, _ in members}
+        resolved_ids = {canonical(_member_id(kind, ref)) for kind, ref, _ in members}
         members_in_use = sorted(osm_id for osm_id in resolved_ids if osm_id in used)
         for i, a in enumerate(members_in_use):
             for b in members_in_use[i + 1:]:

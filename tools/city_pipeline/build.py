@@ -4,6 +4,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -165,15 +166,23 @@ def road_zone_crossings(edge_lines, projector, zones, region_metric=None, covere
 
 def build_package(config, *, sources, source_roles, kind, region_parts, region_osm: Path, raster: Path, out_dir: Path, created_at: str, log=print):
     """Собрать пакет. sources — карточки для паспорта; source_roles — {"osm": id, "population": id}."""
-    projector = Projector(config["metric_crs"])
     # Проверяем заранее, что прежний каталог — пакет (с manifest.json) или пуст: чужие данные не трогаем.
     if out_dir.exists() and any(out_dir.iterdir()) and not (out_dir / "manifest.json").is_file():
         raise ValueError(f"{out_dir} не пуст и не является городским пакетом; удалите его вручную")
-    # Файлы пишутся во временный каталог рядом; прерванная сборка не портит прежний пакет.
-    final_dir, out_dir = out_dir, out_dir.with_name(out_dir.name + ".partial")
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
-    out_dir.mkdir(parents=True)
+    # Файлы пишутся в собственный уникальный временный каталог рядом (mkdtemp): чужие каталоги и
+    # параллельные сборки не затрагиваются; прерванная сборка не портит прежний пакет.
+    final_dir = out_dir
+    final_dir.parent.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(tempfile.mkdtemp(prefix=f"{final_dir.name}.", suffix=".partial", dir=final_dir.parent))
+    try:
+        return _build_into(config, sources, source_roles, kind, region_parts, region_osm, raster, out_dir, final_dir, created_at, log)
+    except BaseException:
+        shutil.rmtree(out_dir, ignore_errors=True)
+        raise
+
+
+def _build_into(config, sources, source_roles, kind, region_parts, region_osm, raster, out_dir, final_dir, created_at, log):
+    projector = Projector(config["metric_crs"])
 
     region_metric = region_parts["region"]
     wgs = write_boundary(out_dir / "boundary.geojson", region_parts, projector, config)
@@ -439,6 +448,7 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
     }
     write_json(out_dir / "manifest.json", manifest)
     validate_manifest(out_dir / "manifest.json")
+    out_dir.chmod(0o755)  # mkdtemp создаёт каталог только для владельца
     if final_dir.exists():
         shutil.rmtree(final_dir)
     out_dir.rename(final_dir)

@@ -140,12 +140,15 @@ class BuildTests(unittest.TestCase):
 
     def test_transit_routes_segments_and_transfers(self):
         transit = self.report["transit"]
-        self.assertEqual(transit["routes"], 6)
+        self.assertEqual(transit["routes"], 7)
         self.assertEqual(transit["routes_without_stops"], 0)   # старые и пустые роли распознаны
-        self.assertEqual(transit["stops"], 7)            # включая линию-платформу, остановку за границей и точки остановок PTv2
-        self.assertEqual(transit["stops_inside_region"], 6)
-        self.assertEqual(transit["segments"], 8)
+        # Платформы 1 и 2 объединены с точками остановок s1, s2 во всех маршрутах: остаются
+        # s1, s2, платформа 2а, линия-платформа и остановка за границей.
+        self.assertEqual(transit["stops"], 5)
+        self.assertEqual(transit["stops_inside_region"], 4)
+        self.assertEqual(transit["segments"], 9)
         routes = {row["route_id"]: row for row in read_csv(self.out / "transit_routes.csv.gz")}
+        self.assertEqual(routes["r16"]["stops"].split(";")[0], routes["r15"]["stops"].split(";")[0])   # одна физическая остановка
         # Смешанный PTv2: пары «точка остановки + платформа» схлопнуты, одиночная платформа сохранена.
         self.assertEqual(routes["r15"]["stop_count"], "3")
         stops = routes["r15"]["stops"].split(";")
@@ -194,10 +197,16 @@ class BuildTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.build(foreign)
         self.assertTrue((foreign / "keep.txt").is_file())
+        # Чужой каталог с именем прежней схемы «<пакет>.partial» тоже не трогается.
+        stray = self.root / "second.partial"
+        stray.mkdir(exist_ok=True)
+        (stray / "keep.txt").write_text("чужое")
+        self.build(self.root / "second")
+        self.assertTrue((stray / "keep.txt").is_file())
 
     def test_interrupted_build_leaves_no_package(self):
         # После успешной сборки временного каталога не остаётся, а прежний пакет заменяется целиком.
-        self.assertFalse((self.root / "first.partial").exists())
+        self.assertEqual(list(self.root.glob("*.partial")), [])
         self.assertTrue((self.out / "manifest.json").is_file())
 
     def test_manual_sample_is_marked_unverified(self):
