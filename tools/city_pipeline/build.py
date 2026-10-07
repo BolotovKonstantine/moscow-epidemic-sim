@@ -15,7 +15,7 @@ from . import BUILDER_NAME, BUILDER_VERSION
 from .buildings import FUNCTIONS, classify, poi_records, site_records
 from .facilities import collect as collect_facilities
 from .geo import Projector, build_region, round_wgs84
-from .manifest import sha256_file, validate_manifest
+from .manifest import ManifestError, read_json, sha256_file, validate_manifest
 from .osm import read_boundary_sources, read_osm
 from .population import allocate, cell_points, read_cells
 from .report import build_report, write_markdown
@@ -166,9 +166,15 @@ def road_zone_crossings(edge_lines, projector, zones, region_metric=None, covere
 
 def build_package(config, *, sources, source_roles, kind, region_parts, region_osm: Path, raster: Path, out_dir: Path, created_at: str, log=print):
     """Собрать пакет. sources — карточки для паспорта; source_roles — {"osm": id, "population": id}."""
-    # Проверяем заранее, что прежний каталог — пакет (с manifest.json) или пуст: чужие данные не трогаем.
-    if out_dir.exists() and any(out_dir.iterdir()) and not (out_dir / "manifest.json").is_file():
-        raise ValueError(f"{out_dir} не пуст и не является городским пакетом; удалите его вручную")
+    # Заранее: прежний каталог пуст или это тот же пакет (паспорт читается и совпадает по ID и версии).
+    if out_dir.exists() and any(out_dir.iterdir()):
+        try:
+            previous = read_json(out_dir / "manifest.json")
+        except ManifestError:
+            previous = None
+        same = isinstance(previous, dict) and previous.get("package_id") == config["package_id"] and previous.get("package_version") == config["package_version"]
+        if not same:
+            raise ValueError(f"{out_dir} не пуст и не является пакетом {config['package_id']} {config['package_version']}; удалите его вручную")
     # Файлы пишутся в собственный уникальный временный каталог рядом (mkdtemp): чужие каталоги и
     # параллельные сборки не затрагиваются; прерванная сборка не портит прежний пакет.
     final_dir = out_dir

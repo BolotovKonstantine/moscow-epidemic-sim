@@ -98,11 +98,11 @@ def build_graph(ways, region_wgs84, projector):
     outside = np.nonzero(~touches)[0]
     outside = outside[shapely.intersects(region_wgs84, geometry[outside])]
     touches[outside] = shapely.relate_pattern(region_wgs84, geometry[outside], "T********")
-    # Вход — ребро, выходящее за границу, даже если оба его конца внутри.
-    gateway = ~(inside_a & inside_b)
-    both = inside_a & inside_b
-    gateway[both] = ~shapely.covers(region_wgs84, geometry[both])
+    # Вход — ребро, часть которого лежит вне региона (оба конца могут быть внутри). Конец ровно
+    # на границе считается снаружи по contains_xy, поэтому решает covers по всей геометрии.
     keep = np.nonzero(touches)[0].tolist()
+    gateway = np.zeros(len(edges), dtype=bool)
+    gateway[keep] = ~shapely.covers(region_wgs84, geometry[keep])
     for index in keep:
         edges[index]["gateway"] = bool(gateway[index])
     edges = [edges[index] for index in keep]

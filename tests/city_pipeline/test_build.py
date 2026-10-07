@@ -140,13 +140,15 @@ class BuildTests(unittest.TestCase):
 
     def test_transit_routes_segments_and_transfers(self):
         transit = self.report["transit"]
-        self.assertEqual(transit["routes"], 7)
+        self.assertEqual(transit["routes"], 8)
         self.assertEqual(transit["routes_without_stops"], 0)   # старые и пустые роли распознаны
         # Платформы 1 и 2 объединены с точками остановок s1, s2 во всех маршрутах: остаются
         # s1, s2, платформа 2а, линия-платформа и остановка за границей.
-        self.assertEqual(transit["stops"], 5)
-        self.assertEqual(transit["stops_inside_region"], 4)
-        self.assertEqual(transit["segments"], 9)
+        # ... и платформа-мультиполигон r30.
+        self.assertEqual(transit["stops"], 6)
+        self.assertEqual(transit["stops_inside_region"], 5)
+        self.assertEqual(transit["segments"], 10)
+        self.assertIn("r30", {row["stop_id"] for row in read_csv(self.out / "transit_stops.csv.gz")})
         routes = {row["route_id"]: row for row in read_csv(self.out / "transit_routes.csv.gz")}
         self.assertEqual(routes["r16"]["stops"].split(";")[0], routes["r15"]["stops"].split(";")[0])   # одна физическая остановка
         # Смешанный PTv2: пары «точка остановки + платформа» схлопнуты, одиночная платформа сохранена.
@@ -197,6 +199,14 @@ class BuildTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.build(foreign)
         self.assertTrue((foreign / "keep.txt").is_file())
+        # Каталог с manifest.json другого пакета тоже не удаляется.
+        other = self.root / "other"
+        other.mkdir()
+        (other / "manifest.json").write_text('{"package_id": "another", "package_version": "9"}')
+        (other / "keep.txt").write_text("данные")
+        with self.assertRaises(ValueError):
+            self.build(other)
+        self.assertTrue((other / "keep.txt").is_file())
         # Чужой каталог с именем прежней схемы «<пакет>.partial» тоже не трогается.
         stray = self.root / "second.partial"
         stray.mkdir(exist_ok=True)

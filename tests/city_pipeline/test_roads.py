@@ -24,9 +24,10 @@ class RoadTests(unittest.TestCase):
             way(3, 300, [(36.9, 55.1), (37.2, 55.1)]),                   # вдоль границы, внутрь не входит
             way(4, 400, [(36.95, 55.15), (37.1, 55.1), (37.15, 55.15)]), # касается угла снаружи
         ]
+        ways.append(way(5, 500, [(37.05, 55.05), (37.05, 55.1)]))   # изнутри до узла ровно на границе
         graph = build_graph(ways, region, Projector("EPSG:32637"))
         kept = {edge["way_id"]: edge["gateway"] for edge in graph.edges}
-        self.assertEqual(kept, {1: False, 2: True})
+        self.assertEqual(kept, {1: False, 2: True, 5: False})
 
 
     def test_crossing_points_take_only_ends_of_boundary_overlap(self):

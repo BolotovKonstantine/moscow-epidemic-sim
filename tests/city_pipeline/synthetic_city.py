@@ -129,6 +129,10 @@ def build_city(directory: Path):
     # Платформа 1 одна на маршруте 7, а на маршруте 15 она объединена с точкой s1: синоним
     # применяется во всех маршрутах, и физическая остановка одна.
     b.relation(16, [("node", p1, "platform"), ("node", p3, "platform")], {"type": "route", "route": "bus", "ref": "7", "name": "Автобус 7"})
+    # Платформа-мультиполигон (отношение) как член маршрута.
+    ring = b.square(lon0 + 0.012, lat0 + 0.0002, 0.0001)
+    b.relation(30, [("way", ring, "outer")], {"type": "multipolygon", "public_transport": "platform", "name": "Платформа-отношение"})
+    b.relation(17, [("node", p2, "platform"), ("relation", 30, "platform")], {"type": "route", "route": "bus", "ref": "8", "name": "Автобус 8"})
     b.relation(20, [("node", p2, "platform"), ("node", p3, "platform")], {"type": "public_transport", "public_transport": "stop_area", "name": "Узел"})
 
     osm_path = directory / "mini.osm"

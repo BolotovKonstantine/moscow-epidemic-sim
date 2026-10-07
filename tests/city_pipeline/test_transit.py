@@ -1,7 +1,7 @@
 import unittest
 
 from tools.city_pipeline.geo import Projector
-from tools.city_pipeline.transit import _stops_in_order
+from tools.city_pipeline.transit import _alias_roots, _stops_in_order
 
 STOP_ROLES = {"stop"}
 PLATFORM_ROLES = {"platform"}
@@ -21,7 +21,7 @@ def points(*items):
 
 def order(members, items):
     pts, metric = points(*items)
-    aliases = {}
+    aliases = []
     return _stops_in_order(members, STOP_ROLES, PLATFORM_ROLES, pts, metric, 100, 400, aliases), aliases
 
 
@@ -31,7 +31,7 @@ class StopOrderTests(unittest.TestCase):
         result, aliases = order([("n", 1, "stop"), ("n", 2, "platform"), ("n", 3, "platform")],
                                 [("n1", 37.600, 55.75, "A", "stop_position"), ("n2", 37.6001, 55.75, "A", "platform"), ("n3", 37.610, 55.75, "B", "platform")])
         self.assertEqual(result, [("n", 2), ("n", 3)])
-        self.assertEqual(aliases, {"n1": "n2"})
+        self.assertEqual(aliases, [("n1", "n2")])
 
     def test_unpaired_stop_inserted_after_its_paired_neighbour(self):
         result, _ = order([("n", 1, "stop"), ("n", 2, "stop"), ("n", 3, "platform"), ("n", 4, "platform"), ("n", 5, "platform")],
@@ -50,7 +50,7 @@ class StopOrderTests(unittest.TestCase):
         result, aliases = order([("n", 1, "stop"), ("n", 2, "platform")],
                                 [("n1", 37.600, 55.75, "A", "stop_position"), ("n2", 37.610, 55.75, "B", "platform")])
         self.assertEqual(result, [("n", 1), ("n", 2)])
-        self.assertEqual(aliases, {})
+        self.assertEqual(aliases, [])
 
     def test_unroled_stop_on_partially_tagged_route_is_kept(self):
         # [stop A, платформа B с пустой ролью, точка C с ролью «bus_stop»] — все три остановки.
@@ -62,7 +62,20 @@ class StopOrderTests(unittest.TestCase):
         result, aliases = order([("n", 1, "platform"), ("n", 2, "stop"), ("n", 3, "platform")],
                                 [("n1", 37.600, 55.75, "A", "platform"), ("n2", 37.6001, 55.75, "A", "stop_position"), ("n3", 37.610, 55.75, "B", "platform")])
         self.assertEqual(result, [("n", 2), ("n", 3)])
-        self.assertEqual(aliases, {"n1": "n2"})
+        self.assertEqual(aliases, [("n1", "n2")])
+
+
+class AliasTests(unittest.TestCase):
+    def test_reciprocal_aliases_share_one_root(self):
+        # Один маршрут дал stop → platform, другой — platform → stop: одна остановка, точка остановки.
+        pts, _ = points(("n1", 37.600, 55.75, "A", "stop_position"), ("n2", 37.6001, 55.75, "A", "platform"))
+        roots = _alias_roots([("n1", "n2"), ("n2", "n1")], pts)
+        self.assertEqual(roots, {"n1": "n1", "n2": "n1"})
+
+    def test_chains_resolve_to_single_root(self):
+        pts, _ = points(("n1", 37.6, 55.75, "A", "platform"), ("n2", 37.6, 55.75, "A", "platform"), ("n3", 37.6, 55.75, "A", "stop_position"))
+        roots = _alias_roots([("n1", "n2"), ("n2", "n3")], pts)
+        self.assertEqual(set(roots.values()), {"n3"})
 
 
 if __name__ == "__main__":

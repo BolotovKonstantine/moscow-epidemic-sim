@@ -40,7 +40,7 @@ def _stops_in_order(members, stop_roles, platform_roles, points, metric, pair_m,
     пара найдена, это два параллельных списка: основой служит более полный (точки
     при равенстве), парные элементы второго отбрасываются, а непарные вставляются
     после последнего парного соседа. Без единой пары сохраняется исходный порядок.
-    Отброшенный элемент пары записывается в aliases → оставленный (для stop_area).
+    Найденные пары (отброшенный, оставленный) добавляются в список aliases.
     """
     def paired(a, b):
         if a not in metric or b not in metric:
@@ -75,7 +75,7 @@ def _stops_in_order(members, stop_roles, platform_roles, points, metric, pair_m,
             for (kind, ref), match in zip(extra, matches):
                 if match:
                     last = min(match, key=lambda i: (abs(i - last), i))
-                    aliases.setdefault(_member_id(kind, ref), primary_ids[last])
+                    aliases.append((_member_id(kind, ref), primary_ids[last]))
                 else:
                     inserts.setdefault(last, []).append((kind, ref))
             result = list(inserts.get(-1, []))
@@ -90,15 +90,51 @@ def _stops_in_order(members, stop_roles, platform_roles, points, metric, pair_m,
         osm_id = _member_id(kind, ref)
         if previous is not None and previous[2] != is_stop and paired(_member_id(previous[0], previous[1]), osm_id):
             if is_stop:          # платформа, затем её точка остановки: заменить платформу
-                aliases.setdefault(_member_id(previous[0], previous[1]), osm_id)
+                aliases.append((_member_id(previous[0], previous[1]), osm_id))
                 result[-1] = (kind, ref)
                 previous = (kind, ref, True)
             else:                # точка остановки, затем её платформа: пропустить платформу
-                aliases.setdefault(osm_id, _member_id(previous[0], previous[1]))
+                aliases.append((osm_id, _member_id(previous[0], previous[1])))
             continue
         result.append((kind, ref))
         previous = (kind, ref, is_stop)
     return result
+
+
+def _alias_roots(pairs, points):
+    """Объединение синонимов в группы (union-find) с однозначным представителем.
+
+    Пары из разных маршрутов могут указывать друг на друга (stop → platform и
+    platform → stop); группа сводится к одному представителю: точка остановки
+    предпочтительнее платформы, при равенстве — меньший ID. Циклов нет по построению.
+    """
+    parent = {}
+
+    def find(item):
+        parent.setdefault(item, item)
+        while parent[item] != item:
+            parent[item] = parent[parent[item]]
+            item = parent[item]
+        return item
+
+    for a, b in pairs:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+    groups = {}
+    for item in parent:
+        groups.setdefault(find(item), []).append(item)
+
+    def preference(osm_id):
+        is_platform = osm_id in points and _stop_kind(points[osm_id][1]) == "platform"
+        return (is_platform, osm_id)
+
+    roots = {}
+    for members in groups.values():
+        best = min(members, key=preference)
+        for item in members:
+            roots[item] = best
+    return roots
 
 
 def _point(geometry):
@@ -121,24 +157,23 @@ def build_network(data, region_wgs84, projector, config):
     point_ids = sorted(points)
     px, py = projector.xy(np.array([points[i][0][0] for i in point_ids]), np.array([points[i][0][1] for i in point_ids]))
     metric = {osm_id: (float(x), float(y)) for osm_id, x, y in zip(point_ids, np.atleast_1d(px), np.atleast_1d(py))}
-    aliases = {}  # отброшенный при объединении пары элемент → оставленная остановка
+    aliases = []  # пары (отброшенный, оставленный) из всех маршрутов
 
     # Первый проход: остановки каждого маршрута и синонимы пар «платформа ↔ точка остановки».
     per_route = []
     for rel_id, tags, members in data.routes:
         # Номерные роли старой схемы («forward_stop_13», «stop_2») приводятся к базовой.
-        members = [(kind, ref, _NUMBERED.sub("", role)) for kind, ref, role in members if kind in ("n", "w")]
+        members = [(kind, ref, _NUMBERED.sub("", role)) for kind, ref, role in members
+                   if kind in ("n", "w") or _member_id(kind, ref) in points]   # платформа-мультиполигон — отношение
         candidates = _stops_in_order(members, stop_roles, platform_roles, points, metric,
                                      transit["stop_platform_pair_m"], transit["stop_platform_pair_same_name_m"], aliases)
         per_route.append((rel_id, tags, candidates))
 
+    roots = _alias_roots(aliases, points)
+
     def canonical(osm_id):
-        """Синоним из любого маршрута применяется везде; цепочки сводятся к концу (без циклов)."""
-        seen = set()
-        while osm_id in aliases and osm_id not in seen:
-            seen.add(osm_id)
-            osm_id = aliases[osm_id]
-        return osm_id
+        """Синоним из любого маршрута применяется везде."""
+        return roots.get(osm_id, osm_id)
 
     # Второй проход: последовательности с каноническими ID остановок.
     used = {}
