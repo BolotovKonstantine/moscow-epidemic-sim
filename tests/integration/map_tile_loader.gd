@@ -21,6 +21,7 @@ func _initialize() -> void:
 	_test_fixture(fixture)
 	_test_rejections(fixture)
 	_test_views(fixture)
+	_test_overview_failure(fixture)
 	_test_real_export(root.path_join(REAL_EXPORT).simplify_path())
 	for name in DirAccess.get_files_at(_scratch):
 		DirAccess.remove_absolute(_scratch.path_join(name))
@@ -90,6 +91,14 @@ func _test_rejections(fixture: String) -> void:
 		bytes[16 + i] = patched[i]
 	_expect_error(bytes, {}, "тип f32 вместо i32", "индексы треугольников с типом f32 отклоняются")
 	_expect_header_patch(source, "\"level\":2", "\"level\":3", "вне 0..2", "уровень 3 отклоняется")
+	_expect_header_patch(source, "\"origin\":[0.0,0.0]", "\"origin\":[9.0,0.0]", "не совпадает с его местом",
+		"начало участка не по сетке отклоняется")
+	var specials := PackedFloat32Array([1.0, -2.5, 0.0])
+	check(MapTile._all_finite(specials.to_byte_array()), "конечные значения принимаются")
+	for bad: float in [NAN, INF, -INF, -NAN]:
+		var values := specials.duplicate()
+		values.append(bad)
+		check(not MapTile._all_finite(values.to_byte_array()), "%s отклоняется" % bad)
 	var attrs := _section_descriptor(source, "pick.attrs")
 	_expect_header_patch(source, "\"raw_size\":%d" % attrs.raw_size, "\"raw_size\":1e9",
 		"больше предела", "огромный raw_size отклоняется до распаковки")
@@ -114,7 +123,13 @@ func _test_rejections(fixture: String) -> void:
 	doc.format_version = 1
 	doc.tiles[0].path = "../../etc/passwd"
 	_expect_index_error(doc, "выходит за каталог", "путь участка за пределами каталога отклоняется")
+	doc.tiles[0].path = "..\\outside.mtile"
+	_expect_index_error(doc, "выходит за каталог", "путь с обратной косой чертой отклоняется")
 	doc.tiles[0].path = "z0/0_0.mtile"
+	var good_sha: String = doc.tiles[0].sha256
+	doc.tiles[0].sha256 = ""
+	_expect_index_error(doc, "64 шестнадцатеричных", "пустой sha256 отклоняется — проверку целостности не отключить")
+	doc.tiles[0].sha256 = good_sha
 	doc.tiles[0].tile = []
 	_expect_index_error(doc, "два числа", "пустой tile в индексе отклоняется")
 	doc.tiles[0].tile = [0, 0]
@@ -175,6 +190,29 @@ func _write(name: String, bytes: PackedByteArray) -> String:
 	file.store_buffer(bytes)
 	file.close()
 	return path
+
+
+func _test_overview_failure(fixture: String) -> void:
+	# Обзор не прошёл проверку, подробный участок загрузился: карта не показывается и не делит на ноль.
+	var dir := _scratch.path_join("no_overview")
+	DirAccess.make_dir_recursive_absolute(dir.path_join("z0"))
+	DirAccess.make_dir_recursive_absolute(dir.path_join("z2"))
+	for path in ["z0/0_0.mtile", "z2/0_0.mtile"]:
+		DirAccess.copy_absolute(fixture.path_join(path), dir.path_join(path))
+	var doc: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(fixture.path_join("index.json")))
+	doc.tiles[0].sha256 = "0".repeat(64)
+	var file := FileAccess.open(dir.path_join("index.json"), FileAccess.WRITE)
+	file.store_string(JSON.stringify(doc))
+	file.close()
+	var map := MapView.new()
+	root.add_child(map)
+	var problem := map.load_map(dir)
+	check("Обзор региона не загружен" in problem and map.tile_views().is_empty(), "без обзора карта не строится: %s" % problem)
+	map.free()
+	for path in ["z0/0_0.mtile", "z2/0_0.mtile", "index.json"]:
+		DirAccess.remove_absolute(dir.path_join(path))
+	for sub in ["z0", "z2", ""]:
+		DirAccess.remove_absolute(dir.path_join(sub))
 
 
 func _test_views(fixture: String) -> void:

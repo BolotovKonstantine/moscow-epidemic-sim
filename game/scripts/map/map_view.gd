@@ -64,7 +64,12 @@ func load_map(map_dir: String) -> String:
 		if tile.level == 0:
 			region_rect = entry.bbox if entry.bbox.has_area() else Rect2(Vector2.ZERO, Vector2.ONE * 1000.0)
 	if _tiles.is_empty() or _tiles[0].level != 0:
+		# Без обзора нет ни границ региона для камеры, ни подложки: подробные участки не показываем.
 		errors.insert(0, "Обзор региона не загружен")
+		for node: Node2D in _tiles + _backgrounds.values():
+			node.free()
+		_tiles.clear()
+		_backgrounds.clear()
 	load_stats = {
 		"usec": Time.get_ticks_usec() - started,
 		"static_bytes": OS.get_static_memory_usage() - static_before,

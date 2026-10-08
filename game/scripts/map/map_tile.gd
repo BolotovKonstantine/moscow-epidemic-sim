@@ -112,12 +112,16 @@ func _read_header(expected: Dictionary) -> String:
 	tile = Vector2i(int(header.tile[0]), int(header.tile[1]))
 	origin = Vector2(float(header.origin[0]), float(header.origin[1]))
 	var size: Variant = header.get("tile_size_m")
+	if level == 0 and (tile != Vector2i.ZERO or origin != Vector2.ZERO):
+		return "обзор региона должен быть участком (0, 0) с началом (0, 0)"
 	if level == 0:
 		if size != null:
 			return "у обзора региона (уровень 0) tile_size_m должен быть null"
 		tile_size_m = 0.0
 	elif is_numbers([size], 1) and is_finite(float(size)) and float(size) > 0.0:
 		tile_size_m = float(size)
+		if not origin.is_equal_approx(Vector2(tile) * tile_size_m):
+			return "начало участка %s не совпадает с его местом в сетке %s × %.0f м" % [origin, tile, tile_size_m]
 	else:
 		return "у участка уровня %d нет положительного tile_size_m" % level
 	var problem := MapTile.check_classes(header.classes)
@@ -184,6 +188,8 @@ func _read_section(bytes: PackedByteArray, data_start: int, item: Variant) -> St
 			return "раздел %s: некорректный JSON (%s)" % [name, json.get_error_message()]
 		sections[name] = json.data
 		return ""
+	if dtype == "f32" and not _all_finite(raw):
+		return "раздел %s: нечисловые значения (NaN или бесконечность)" % name
 	sections[name] = raw.to_float32_array() if dtype == "f32" else raw.to_int32_array()
 	return ""
 
@@ -211,6 +217,20 @@ func _check_layers() -> String:
 	if level == 0 and has_layer("building"):
 		return "в обзоре региона не должно быть зданий"
 	return ""
+
+
+## Все float32 конечны. Проверка по битам: как int32 значения с экспонентой из одних единиц
+## (NaN и ±∞) лежат в [0x7F800000, 0x7FFFFFFF] и [-0x800000, -1]. Нативная сортировка целых
+## и двоичный поиск быстрее обхода массива в GDScript, а сравнение целых, в отличие от NaN, корректно.
+static func _all_finite(raw: PackedByteArray) -> bool:
+	var bits := raw.to_int32_array()
+	if bits.is_empty():
+		return true
+	bits.sort()
+	if bits[-1] >= 0x7F800000:
+		return false
+	var first_negative_special := bits.bsearch(-0x800000)
+	return first_negative_special >= bits.size() or bits[first_negative_special] >= 0
 
 
 ## Тип раздела по имени: индексы — i32, данные карточки — json, остальное — f32; "" — неизвестный раздел.
