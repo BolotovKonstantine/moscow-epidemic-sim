@@ -143,6 +143,15 @@ def _alias_roots(pairs, points):
     return roots
 
 
+def _stop_name(stop, members, points):
+    """Название остановки: своё, иначе первое непустое среди объединённых объектов (по ID)."""
+    for osm_id in [stop] + sorted(members):
+        name = points[osm_id][1].get("name", "") if osm_id in points else ""
+        if name:
+            return name
+    return ""
+
+
 def _point(geometry):
     if isinstance(geometry, tuple):
         return geometry
@@ -237,7 +246,7 @@ def build_network(data, region_wgs84, projector, config):
     x, y = projector.xy(lon, lat)
     position = {stop: index for index, stop in enumerate(stop_ids)}
     stops = [{
-        "stop_id": stop, "osm_ids": members_of.get(stop, [stop]), "name": points[stop][1].get("name", ""), "lon": lon[index], "lat": lat[index],
+        "stop_id": stop, "osm_ids": members_of.get(stop, [stop]), "name": _stop_name(stop, members_of.get(stop, [stop]), points), "lon": lon[index], "lat": lat[index],
         "x": float(x[index]), "y": float(y[index]), "inside": bool(inside[index]), "modes": sorted(used[stop]),
         "kind": _stop_kind(points[stop][1]),
     } for index, stop in enumerate(stop_ids)]

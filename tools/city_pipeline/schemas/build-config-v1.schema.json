@@ -100,7 +100,7 @@
       "required": ["manual_sample_size", "sample_seed", "far_from_road_m", "max_plausible_residents_per_100m2"],
       "properties": {
         "manual_sample_size": {"type": "integer", "minimum": 0},
-        "sample_seed": {"type": "integer"},
+        "sample_seed": {"type": "integer", "minimum": 0},
         "far_from_road_m": {"$ref": "#/$defs/positive"},
         "max_plausible_residents_per_100m2": {"$ref": "#/$defs/positive"}
       }

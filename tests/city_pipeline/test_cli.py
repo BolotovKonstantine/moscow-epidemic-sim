@@ -92,6 +92,11 @@ class ConfigTests(unittest.TestCase):
             path.write_text(json.dumps(broken))
             with self.assertRaisesRegex(ManifestError, "zones.cell_size_m"):
                 load_config(path)
+            broken = json.loads(real.read_text(encoding="utf-8"))
+            broken["quality"]["sample_seed"] = -1   # numpy отверг бы его только в конце сборки
+            path.write_text(json.dumps(broken))
+            with self.assertRaisesRegex(ManifestError, "quality.sample_seed"):
+                load_config(path)
 
 
 

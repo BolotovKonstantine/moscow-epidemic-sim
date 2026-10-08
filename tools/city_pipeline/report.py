@@ -41,11 +41,15 @@ def _manual_sample(context):
     rng = np.random.default_rng(config["sample_seed"])
     size = config["manual_sample_size"]
     sample = []
-    for territory, mask in (("moscow", context["in_moscow"]), ("buffer", ~context["in_moscow"])):
-        rows = np.nonzero(mask)[0]
-        if rows.size == 0:
+    territories = (("moscow", np.nonzero(context["in_moscow"])[0]), ("buffer", np.nonzero(~context["in_moscow"])[0]))
+    # Поровну Москва/пояс; нечётный остаток и нехватку на одной стороне добирает другая.
+    first = min(territories[0][1].size, (size + 1) // 2)
+    second = min(territories[1][1].size, size - first)
+    first = min(territories[0][1].size, size - second)
+    for (territory, rows), quota in zip(territories, (first, second)):
+        if quota == 0:
             continue
-        chosen = np.sort(rng.choice(rows, size=min(size // 2, rows.size), replace=False))
+        chosen = np.sort(rng.choice(rows, size=quota, replace=False))
         for row in chosen:
             osm_id = buildings.ids[row]
             kind = {"w": "way", "r": "relation", "n": "node"}[osm_id[0]]
