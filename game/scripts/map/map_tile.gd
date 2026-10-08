@@ -98,6 +98,8 @@ func _read_header(expected: Dictionary) -> String:
 	for key: String in ["level", "tile", "origin", "classes", "counts", "sections", "attribution"]:
 		if not header.has(key):
 			return "в заголовке нет поля %s" % key
+	if not is_numbers(header.tile, 2) or not is_numbers(header.origin, 2) or not is_numbers([header.level], 1):
+		return "поля level, tile и origin должны быть числами (tile и origin — по два)"
 	level = int(header.level)
 	tile = Vector2i(int(header.tile[0]), int(header.tile[1]))
 	origin = Vector2(float(header.origin[0]), float(header.origin[1]))
@@ -179,6 +181,13 @@ func _check_layers() -> String:
 	if level == 0 and has_layer("building"):
 		return "в обзоре региона не должно быть зданий"
 	return ""
+
+
+## Значение — массив из count чисел (защита от искажённого JSON до обращения по индексу).
+static func is_numbers(value: Variant, count: int) -> bool:
+	if not value is Array or value.size() != count:
+		return false
+	return value.all(func(v): return typeof(v) == TYPE_FLOAT or typeof(v) == TYPE_INT)
 
 
 static func _indices_within(indices: PackedInt32Array, vertices: int) -> bool:

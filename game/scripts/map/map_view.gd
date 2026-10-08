@@ -19,6 +19,7 @@ var load_stats: Dictionary = {}   # usec, static_bytes, tiles, errors
 
 var _line_style: MapLineStyle
 var _tiles: Array[MapTileView] = []
+var _backgrounds: Dictionary = {}   # уровень → LevelBackground
 var _camera := Camera2D.new()
 var _dragging := false
 
@@ -54,6 +55,8 @@ func load_map(map_dir: String) -> String:
 		if not tile.error.is_empty():
 			errors.append(tile.error)
 			continue
+		if tile.level > 0:
+			_level_background(tile.level).add_square(tile.origin, tile.tile_size_m)
 		var view := MapTileView.new()
 		add_child(view)
 		view.setup(tile, style)
@@ -123,10 +126,35 @@ func _set_scale(mpp: float) -> void:
 	_line_style.set_meters_per_pixel(meters_per_pixel)
 	var level := level_for(meters_per_pixel)
 	var outlines := meters_per_pixel <= MapTheme.BUILDING_OUTLINE_MAX_MPP
+	for bg_level: int in _backgrounds:
+		_backgrounds[bg_level].visible = bg_level <= level
 	for view in _tiles:
 		view.visible = view.level <= level
 		view.building_outline.visible = outlines
 	view_changed.emit(meters_per_pixel, level)
+
+
+## Фон уровня — отдельный узел перед всеми участками уровня: участок подробнее обзора закрывает
+## упрощённую геометрию нижних уровней, но не здания соседнего участка, выступающие за край.
+func _level_background(level: int) -> LevelBackground:
+	if not _backgrounds.has(level):
+		var background := LevelBackground.new()
+		background.name = "Background_z%d" % level
+		add_child(background)
+		_backgrounds[level] = background
+	return _backgrounds[level]
+
+
+class LevelBackground extends Node2D:
+	var squares: Array[Rect2] = []
+
+	func add_square(origin: Vector2, size: float) -> void:
+		squares.append(Rect2(origin, Vector2.ONE * size))
+		queue_redraw()
+
+	func _draw() -> void:
+		for square in squares:
+			draw_rect(square, MapTheme.BACKGROUND)
 
 
 func _view_size() -> Vector2:

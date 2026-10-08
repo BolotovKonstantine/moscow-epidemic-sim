@@ -26,13 +26,6 @@ func setup(tile: MapTile, style: Dictionary) -> void:
 	var line_mesh := _line_mesh(tile)
 	_add("LineCasing", line_mesh).material = style.line_casing
 	_add("Lines", line_mesh).material = style.line_fill
-	queue_redraw()
-
-
-func _draw() -> void:
-	# Участок подробнее обзора закрывает под собой упрощённую геометрию нижних уровней.
-	if tile_size_m > 0.0:
-		draw_rect(Rect2(Vector2.ZERO, Vector2.ONE * tile_size_m), MapTheme.BACKGROUND)
 
 
 func _add(node_name: String, mesh: ArrayMesh) -> MeshInstance2D:

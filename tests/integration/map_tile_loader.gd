@@ -95,6 +95,12 @@ func _test_rejections(fixture: String) -> void:
 	doc.format_version = 1
 	doc.tiles[0].path = "../../etc/passwd"
 	_expect_index_error(doc, "выходит за каталог", "путь участка за пределами каталога отклоняется")
+	doc.tiles[0].path = "z0/0_0.mtile"
+	doc.tiles[0].tile = []
+	_expect_index_error(doc, "два числа", "пустой tile в индексе отклоняется")
+	doc.tiles[0].tile = [0, 0]
+	doc.tiles[0].bbox = [1, 2]
+	_expect_index_error(doc, "четыре числа", "короткий bbox в индексе отклоняется")
 
 
 func _expect_error(bytes: PackedByteArray, expected: Dictionary, fragment: String, message: String) -> void:
@@ -126,6 +132,10 @@ func _test_views(fixture: String) -> void:
 	for view in map.tile_views():
 		check(view.get_child_count() == MapTileView.NODE_COUNT, "%s: %d узлов вместо %d" % [
 			view.name, view.get_child_count(), MapTileView.NODE_COUNT])
+	# Фон уровня 2 стоит перед всеми участками уровня 2: соседний участок не закрывает выступающие здания.
+	var order := map.get_children().map(func(n): return String(n.name))
+	check(order.find("Background_z2") >= 0 and order.find("Background_z2") < order.find("Tile_z2_0_0"),
+		"фон уровня перед его участками: %s" % [order])
 	map.look_at_point(Vector2(2000, 2000), 4.0)
 	var cursor := Vector2(900, 200)
 	var under_cursor := map.screen_to_map(cursor)
