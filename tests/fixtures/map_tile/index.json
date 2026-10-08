@@ -26,6 +26,24 @@
       "control",
       "other"
     ],
+    "label": [
+      "capital",
+      "okrug",
+      "municipality",
+      "city",
+      "town",
+      "district",
+      "village",
+      "suburb",
+      "hamlet",
+      "river_major",
+      "river",
+      "water",
+      "street_major",
+      "street",
+      "metro",
+      "rail_station"
+    ],
     "line": [
       "stream",
       "river",
@@ -85,13 +103,14 @@
       ],
       "counts": {
         "areas": 3,
+        "labels": 4,
         "lines": 5,
         "triangles_dropped": 0
       },
       "level": 0,
       "path": "z0/0_0.mtile",
-      "sha256": "73a209404c90b34dbabe3fb8bb55e683f22f5398a21b901cf4420ee7a5aeea29",
-      "size_bytes": 1964,
+      "sha256": "84df1b9ddb15e7b04b61b518caaf4d950c91badd73904842e48489a3eee415a5",
+      "size_bytes": 2968,
       "tile": [
         0,
         0
@@ -107,13 +126,14 @@
       "counts": {
         "areas": 2,
         "buildings": 3,
+        "labels": 3,
         "lines": 4,
         "triangles_dropped": 0
       },
       "level": 2,
       "path": "z2/0_0.mtile",
-      "sha256": "159aaf736eb810e7bd9037457236cf59ddac84eeca48ee4eadc351c61e819ce5",
-      "size_bytes": 3152,
+      "sha256": "02bdca04a39b377c2a59b212fbfaa300cf54c97d991fbc3cf7ad8cf467a6b816",
+      "size_bytes": 4168,
       "tile": [
         0,
         0

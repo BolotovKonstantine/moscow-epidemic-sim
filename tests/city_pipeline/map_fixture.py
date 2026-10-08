@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 import shapely
 
+from tools.city_pipeline import maplabels as ml
 from tools.city_pipeline import maptiles as mt
 from tools.city_pipeline.mapbuild import Layer, tile_sections, write_index, write_tile
 
@@ -71,6 +72,25 @@ def fixture_layers():
     return areas, lines, (geometry, classes, attrs)
 
 
+def fixture_labels(level):
+    """Подписи: обзор — места, район, река и станция; участок 2 км — улицы вдоль линий."""
+    def row(x, y, angle, span, kind, weight, text):
+        point = _metric(shapely.Point(x, y))
+        return (point.x, point.y, angle, span, kind, weight, text)
+    if level == 0:
+        return ml.Labels.from_rows([
+            row(2000, 2000, 0.0, 0.0, "capital", 1e6, "Тестград"),
+            row(1500, 1500, 0.0, 0.0, "district", 1e5, "район Тестовый"),
+            row(2000, 3300, 0.0, 0.0, "river_major", 4000.0, "Тестовая"),
+            row(1200, 900, 0.0, 0.0, "metro", 0.0, "Станция"),
+        ])
+    return ml.Labels.from_rows([
+        row(1500, 1000, 0.0, 1500.0, "street_major", 7.0, "Главная улица"),
+        row(1000, 600, 1.5707963, 1000.0, "street", 4.0, "Поперечная улица"),
+        row(1250, 1500, 0.0, 100.0, "street", 2.0, "Очень длинное название короткого проезда"),
+    ])
+
+
 def write_fixture(out: Path):
     """Записать набор: обзор (уровень 0) и участок 2 км (уровень 2, 0_0)."""
     out.mkdir(parents=True, exist_ok=True)
@@ -80,7 +100,8 @@ def write_fixture(out: Path):
     tiles = []
     for level, building_data in ((0, None), (2, buildings)):
         box, origin = PLANE.tile_box(level, 0, 0, region_bounds)
-        sections, counts, bbox = tile_sections(PLANE, origin, box, areas, lines, building_data, pick=level == 2)
+        sections, counts, bbox = tile_sections(PLANE, origin, box, areas, lines, building_data, pick=level == 2,
+                                               labels=fixture_labels(level))
         tiles.append(write_tile(out, package, level, 0, 0, origin, sections, counts, bbox))
     return write_index(out, package, "EPSG:32637", PLANE, tiles, "Синтетический набор для теста загрузчика Godot (#12).")
 
