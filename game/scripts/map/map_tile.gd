@@ -11,6 +11,7 @@ const FORMAT_VERSION := 1
 const LEVEL_TILE_M := {1: 8000.0, 2: 2000.0}   # размеры участков уровней формата 1
 const MAX_DECODED_BYTES := 512 << 20   # всего данных участка после распаковки
 const MAX_COORD_M := 1.0e7   # |координата| плоскости карты: регион — сотни км; 1e7 точно помещается во float32
+const MAX_SAFE_INTEGER := 9007199254740992.0   # 2^53: целые JSON без потери точности и переполнения int
 const MAX_LEVEL := 2   # уровни 0–2 формата 1: обзор, участки 8 и 2 км
 const PREAMBLE := 16   # магия, u32 версия, u32 длина заголовка
 const MAX_HEADER_BYTES := 1 << 20
@@ -152,6 +153,11 @@ func _read_header(expected: Dictionary) -> String:
 		bbox = Rect2(origin + Vector2(box[0], box[1]), Vector2(box[2] - box[0], box[3] - box[1]))
 	if level == 0 and not bbox.has_area():
 		return "у обзора региона нет охвата bbox: камере не на что опереться"
+	var credits: Variant = header.attribution
+	if not credits is Array or not credits.all(func(c): return c is String):
+		return "attribution должна быть списком строк"
+	if expected.has("attribution") and PackedStringArray(credits) != expected.attribution:
+		return "атрибуция участка не совпадает с индексом: в индексе не хватает источников или они другие"
 	if expected.has("bbox") and expected.bbox is Rect2 and expected.bbox.has_area() \
 			and not expected.bbox.is_equal_approx(bbox):
 		return "охват участка %s не совпадает с индексом %s" % [bbox, expected.bbox]
@@ -185,7 +191,9 @@ func _read_section(bytes: PackedByteArray, data_start: int, item: Variant) -> St
 	var offset := int(item.offset)
 	var size := int(item.size)
 	var raw_size := int(item.raw_size)
-	if offset < data_start or size < 0 or raw_size < 0 or offset % 4 != 0 or offset + size > bytes.size():
+	# Без offset + size: сумма больших целых переполнилась бы; сравниваем с остатком файла.
+	if offset < data_start or offset > bytes.size() or size < 0 or raw_size < 0 or offset % 4 != 0 \
+			or size > bytes.size() - offset:
 		return "раздел %s выходит за пределы файла (смещение %d, размер %d из %d)" % [name, offset, size, bytes.size()]
 	if raw_size > MAX_SECTION_BYTES:
 		return "раздел %s: %d байт после распаковки, больше предела %d" % [name, raw_size, MAX_SECTION_BYTES]
@@ -317,7 +325,8 @@ static func check_classes(value: Variant) -> String:
 
 ## Значение — массив из count целых чисел (JSON отдаёт числа как float).
 static func is_integers(value: Variant, count: int) -> bool:
-	return is_numbers(value, count) and value.all(func(v): return is_finite(float(v)) and float(v) == floorf(float(v)))
+	return is_numbers(value, count) and value.all(func(v): return is_finite(float(v)) and float(v) == floorf(float(v)) \
+		and absf(float(v)) <= MAX_SAFE_INTEGER)
 
 
 ## Значение — массив из count конечных чисел.

@@ -141,6 +141,15 @@ func _test_rejections(fixture: String) -> void:
 	_expect_header_patch(overview, bbox_text, "\"bbox\":[0,0,1e100,1e100]", "bbox должен быть",
 		"охват за пределами float32 отклоняется")
 
+	var credits := MapTile.open(_write("credits.mtile", source), {"attribution": PackedStringArray([MapIndex.OSM_CREDIT])})
+	check("атрибуция участка не совпадает" in credits.error, "неполная атрибуция индекса отклоняется: " + credits.error)
+	var area_xy_at := _section_descriptor(source, "area.xy")
+	_expect_header_patch(source, "\"offset\":%d" % area_xy_at.offset, "\"offset\":9e15", "выходит за пределы",
+		"огромное смещение раздела отклоняется без переполнения")
+	check(not MapTile.is_integers([1e300], 1), "целые больше 2^53 отклоняются")
+	check(MapView._encloses(Rect2(0, 0, 10, 10), Rect2(1, 5, 8, 0)) and not MapView._encloses(Rect2(0, 0, 10, 10), Rect2(1, 5, 20, 0)),
+		"вырожденный охват (горизонтальная линия) сравнивается по краям")
+
 	var stale := MapTile.open(_write("stale_bbox.mtile", source), {"bbox": Rect2(0, 0, 1000, 1000)})
 	check("не совпадает с индексом" in stale.error, "устаревший bbox индекса отклоняется: " + stale.error)
 

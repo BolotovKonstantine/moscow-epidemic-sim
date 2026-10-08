@@ -32,18 +32,17 @@ func setup(tile: MapTile, style: Dictionary) -> void:
 	_add("Lines", line_mesh).material = style.line_fill
 
 
-## Охват вершин всех мешей в плоскости карты (AABB считает Godot при построении меша).
-func geometry_bounds() -> Rect2:
-	var bounds := Rect2()
-	var first := true
+## Охват вершин всех мешей в плоскости карты (AABB считает Godot при построении меша); null — мешей нет.
+## Охват может быть нулевой площади: одна горизонтальная линия.
+func geometry_bounds() -> Variant:
+	var bounds: Variant = null
 	for child in get_children():
 		var mesh: Mesh = (child as MeshInstance2D).mesh
 		if mesh == null:
 			continue
 		var aabb := mesh.get_aabb()
 		var rect := Rect2(position + Vector2(aabb.position.x, aabb.position.y), Vector2(aabb.size.x, aabb.size.y))
-		bounds = rect if first else bounds.merge(rect)
-		first = false
+		bounds = rect if bounds == null else (bounds as Rect2).merge(rect)
 	return bounds
 
 
