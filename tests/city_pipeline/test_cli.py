@@ -125,6 +125,12 @@ class RegistryTests(unittest.TestCase):
             path.write_text(json.dumps({"registry_version": 1, "sources": registry["sources"] + [twin]}, ensure_ascii=False))
             with self.assertRaisesRegex(ManifestError, "уже указан"):
                 load_registry(path)
+            # Пути в стиле Windows в имени файла не допускаются.
+            for bad in ("..\\outside.bin", "C:\\outside.bin", "C:outside.bin"):
+                card = dict(registry["sources"][0], file=bad)
+                path.write_text(json.dumps({"registry_version": 1, "sources": [card]}, ensure_ascii=False))
+                with self.assertRaisesRegex(ManifestError, "без каталогов"):
+                    load_registry(path)
             # Префикс build-config- зарезервирован для источника-конфигурации.
             reserved = dict(registry["sources"][0], source_id="build-config-moscow-2021", file="other.pbf")
             path.write_text(json.dumps({"registry_version": 1, "sources": [reserved]}, ensure_ascii=False))
@@ -245,6 +251,9 @@ class ConfigSnapshotTests(unittest.TestCase):
         config["sources"]["population"] = config["sources"]["osm"]   # PBF вместо растра
         with self.assertRaisesRegex(ManifestError, "для роли population"):
             _selected_sources(config, registry)
+
+    def test_huge_secondary_weight_rejected(self):
+        self.invalid(lambda c: c["buildings"].__setitem__("poi_secondary_weight", 1e308), "poi_secondary_weight")
 
     def test_blank_classification_keys_and_huge_density_rejected(self):
         self.invalid(lambda c: c["buildings"]["poi_functions"].__setitem__("", {"hospital": "medical"}), "buildings.poi_functions")

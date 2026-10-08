@@ -613,8 +613,12 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     report = build_report(context)
     write_json(out_dir / "quality_report.json", report)
     write_markdown(out_dir / "quality_report.md", report)
-    add("quality-report", "quality_report", "quality_report.json", "json", "observed", ["osm", "population"])
-    add("quality-report-md", "quality_report", "quality_report.md", "markdown", "observed", ["osm", "population"])
+    report_estimation = {
+        "method": "Сводка проверок и показателей пакета: счётчики по наблюдаемым данным OSM и сетки, показатели оценённых файлов (функции, население, остановки, учреждения) и пороги/выборка из конфигурации сборки (quality, model_assumptions).",
+        "uncertainty": "Значения меняются вместе с конфигурацией (пороги, seed выборки, граница, правила классификации); неопределённость оценённых показателей — как у соответствующих файлов пакета.",
+    }
+    add("quality-report", "quality_report", "quality_report.json", "json", "estimated", ["osm", "population", "config"], report_estimation)
+    add("quality-report-md", "quality_report", "quality_report.md", "markdown", "estimated", ["osm", "population", "config"], report_estimation)
 
     for asset in assets:
         path = out_dir / asset["path"]

@@ -55,8 +55,10 @@ def load_registry(path: Path) -> dict:
             raise ManifestError(f"{source['source_id']}: префикс build-config- зарезервирован для конфигурации сборки")
         if source["source_id"] in result:
             raise ManifestError(f"Повторяющийся source_id {source['source_id']}")
-        if "/" in source["file"] or source["file"] in ("", ".", ".."):
-            raise ManifestError(f"{source['source_id']}: имя файла должно быть без каталогов")
+        # Только простое имя файла на любой ОС: без разделителей / и \\, диска (C:) и особых имён.
+        name = source["file"]
+        if any(char in name for char in "/\\:") or name.strip() in ("", ".", "..") or name != name.strip():
+            raise ManifestError(f"{source['source_id']}: имя файла должно быть без каталогов, диска и пробелов по краям: {name!r}")
         result[source["source_id"]] = source
     return result
 

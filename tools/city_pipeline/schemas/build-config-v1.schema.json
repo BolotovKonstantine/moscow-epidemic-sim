@@ -47,7 +47,7 @@
         "tag_functions": {"type": "object", "propertyNames": {"$ref": "#/$defs/function"}, "additionalProperties": {"$ref": "#/$defs/strings"}},
         "poi_functions": {"type": "object", "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"$ref": "#/$defs/function"}}},
         "site_functions": {"type": "object", "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"$ref": "#/$defs/function"}}},
-        "poi_secondary_weight": {"type": "number", "minimum": 0},
+        "poi_secondary_weight": {"type": "number", "minimum": 0, "maximum": 1},
         "site_min_residential_footprint_m2": {"type": "number", "minimum": 0},
         "meters_per_level": {"type": "number", "minimum": 1, "maximum": 10},
         "default_levels": {"type": "object", "required": ["*"], "additionalProperties": {"type": "number", "exclusiveMinimum": 0, "maximum": 200}},

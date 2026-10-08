@@ -34,6 +34,19 @@ class LevelsTests(unittest.TestCase):
                 self.assertIsNone(_parse_levels(value))
 
 
+class LevelsCeilingTests(unittest.TestCase):
+    def test_rounded_height_levels_respect_fractional_max(self):
+        from tools.city_pipeline.buildings import classify
+        projector = Projector("EPSG:32637")
+        config = json.loads((Path(__file__).resolve().parents[2] / "data/manifests/moscow-2021.json").read_text(encoding="utf-8"))
+        config["buildings"]["max_levels"] = 2.6
+        square = Polygon([(37.60, 55.75), (37.601, 55.75), (37.601, 55.751), (37.60, 55.751)])
+        geometry = np.array([square])
+        table = classify(["w1"], geometry, projector.to_metric(geometry), [{"building": "yes", "height": "7.8"}],
+                         {"x": np.array([]), "y": np.array([]), "function": []}, [], np.array([]), config, projector)
+        self.assertLessEqual(table.levels[0], 2.6)   # 7.8 / 3 = 2.6 → round 3, но не выше предела
+
+
 class RepresentativePointTests(unittest.TestCase):
     def test_wgs84_point_is_the_metric_point(self):
         from tools.city_pipeline.buildings import classify

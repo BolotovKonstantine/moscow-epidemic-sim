@@ -195,7 +195,8 @@ def classify(ids, geometry, metric, tags, pois, sites, sites_metric, config, pro
             continue
         height = _parse_height(item.get("height"))
         if height is not None and height / meters <= maximum:
-            levels[row] = max(1.0, round(height / meters))
+            # После округления — снова не выше max_levels (при дробном пределе round может его превысить).
+            levels[row] = max(1.0, min(float(round(height / meters)), maximum))
             levels_source[row] = "height"
             continue
         levels[row] = float(defaults.get(item.get("building"), defaults["*"]))

@@ -94,7 +94,8 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(kinds["population"], "estimated")
         self.assertEqual(kinds["transit-service"], "game_setting")
         self.assertEqual(kinds["facilities"], "estimated")
-        self.assertEqual(kinds["road-nodes"], "estimated")   # inside, zone_id и компоненты зависят от конфигурации   # объединение и привязка к зданиям — эвристика
+        self.assertEqual(kinds["road-nodes"], "estimated")
+        self.assertEqual(kinds["quality-report"], "estimated")   # пороги и выборка — из конфигурации   # inside, zone_id и компоненты зависят от конфигурации   # объединение и привязка к зданиям — эвристика
         assets = {asset["asset_id"]: asset for asset in manifest["assets"]}
         # Модельные интервалы ссылаются на конфигурацию сборки, а не на OSM.
         self.assertEqual(assets["transit-service"]["source_ids"], ["build-config-synthetic-mini-city"])
