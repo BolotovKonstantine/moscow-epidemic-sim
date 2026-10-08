@@ -121,7 +121,7 @@ class RegistryTests(unittest.TestCase):
             self.assertEqual(len(load_registry(real)), 2)
             registry = json.loads(real.read_text(encoding="utf-8"))
             # Два источника с одним файлом: fetch перезаписывал бы один другим.
-            twin = dict(registry["sources"][0], source_id="osm-copy")
+            twin = dict(registry["sources"][0], source_id="osm-copy", file=registry["sources"][0]["file"].upper())   # другой регистр
             path.write_text(json.dumps({"registry_version": 1, "sources": registry["sources"] + [twin]}, ensure_ascii=False))
             with self.assertRaisesRegex(ManifestError, "уже указан"):
                 load_registry(path)
@@ -245,6 +245,11 @@ class ConfigSnapshotTests(unittest.TestCase):
         config["sources"]["population"] = config["sources"]["osm"]   # PBF вместо растра
         with self.assertRaisesRegex(ManifestError, "для роли population"):
             _selected_sources(config, registry)
+
+    def test_blank_classification_keys_and_huge_density_rejected(self):
+        self.invalid(lambda c: c["buildings"]["poi_functions"].__setitem__("", {"hospital": "medical"}), "buildings.poi_functions")
+        self.invalid(lambda c: c["buildings"]["site_functions"]["landuse"].__setitem__(" ", "work"), "buildings.site_functions.landuse")
+        self.invalid(lambda c: c["population"].__setitem__("max_residents_per_m2_floor", 1e308), "max_residents_per_m2_floor")
 
     def test_blank_facility_and_mkad_keys_and_huge_levels_rejected(self):
         self.invalid(lambda c: c["facilities"]["kinds"]["amenity"].__setitem__("hospital", ""), "facilities.kinds.amenity.hospital")

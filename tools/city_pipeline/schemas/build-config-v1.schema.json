@@ -45,8 +45,8 @@
       "properties": {
         "ignore_values": {"$ref": "#/$defs/strings"},
         "tag_functions": {"type": "object", "propertyNames": {"$ref": "#/$defs/function"}, "additionalProperties": {"$ref": "#/$defs/strings"}},
-        "poi_functions": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"$ref": "#/$defs/function"}}},
-        "site_functions": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"$ref": "#/$defs/function"}}},
+        "poi_functions": {"type": "object", "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"$ref": "#/$defs/function"}}},
+        "site_functions": {"type": "object", "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"$ref": "#/$defs/function"}}},
         "poi_secondary_weight": {"type": "number", "minimum": 0},
         "site_min_residential_footprint_m2": {"type": "number", "minimum": 0},
         "meters_per_level": {"type": "number", "minimum": 1, "maximum": 10},
@@ -59,7 +59,7 @@
       "required": ["zone_pool_fallback", "max_residents_per_m2_floor", "block_zones", "unknown_building_min_footprint_m2"],
       "properties": {
         "zone_pool_fallback": {"type": "boolean"},
-        "max_residents_per_m2_floor": {"$ref": "#/$defs/positive"},
+        "max_residents_per_m2_floor": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
         "block_zones": {"type": "integer", "minimum": 1},
         "unknown_building_min_footprint_m2": {"type": "number", "minimum": 0}
       }

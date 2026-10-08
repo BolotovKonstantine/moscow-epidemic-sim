@@ -48,7 +48,8 @@ def load_registry(path: Path) -> dict:
             raise ManifestError(f"{source['source_id']}: data_date должна быть датой ГГГГ-ММ-ДД или null, получено {source['data_date']!r}")
         # Карточка проверяется по схеме паспорта сразу: неверный ID, URL или пустой владелец не всплывут после сборки.
         validate_source_card(manifest_source(source, "registry-check"), f"{path}: {source['source_id']}")
-        if any(other["file"] == source["file"] for other in result.values()):
+        # Сравнение без учёта регистра: на macOS (регистронезависимая ФС) Source.bin и source.bin — один файл.
+        if any(other["file"].casefold() == source["file"].casefold() for other in result.values()):
             raise ManifestError(f"{source['source_id']}: файл {source['file']} уже указан у другого источника")
         if source["source_id"].startswith("build-config-"):
             raise ManifestError(f"{source['source_id']}: префикс build-config- зарезервирован для конфигурации сборки")

@@ -450,7 +450,10 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
         # gateway — вычисленный по границе флаг, не наблюдение OSM; он в gateways.csv.gz, а не здесь.
         {key: (round(value, 1) if key == "length_m" else value) for key, value in edge.items() if key != "gateway"} for edge in graph.edges
     ])
-    add("road-nodes", "roads", "road_nodes.csv.gz", "csv+gzip", "observed", ["osm"])
+    add("road-nodes", "roads", "road_nodes.csv.gz", "csv+gzip", "estimated", ["osm", "config"], {
+        "method": "Узлы и координаты — из OSM; inside (внутри региона по метрической границе), zone_id (сетка зон) и компоненты связности (граф из настроенных классов дорог) вычислены по конфигурации сборки.",
+        "uncertainty": "Поля inside, zone_id и компоненты меняются вместе с границей, проекцией, размером зон и классами дорог; координаты — наблюдение OSM.",
+    })
     add("roads", "roads", "roads.geojsonl.gz", "geojsonl+gzip", "observed", ["osm"])
 
     stop_x = np.array([stop["x"] for stop in network.stops])
