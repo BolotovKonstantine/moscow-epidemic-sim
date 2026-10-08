@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import shapely
 
+from tests.city_pipeline.map_fixture import FIXTURE_DIR, write_fixture
 from tests.city_pipeline.synthetic_city import CENTER, OsmBuilder, build_city, mini_city_config, synthetic_sources
 from tools.city_pipeline import maptiles as mt
 from tools.city_pipeline.build import build_package, make_boundary
@@ -219,6 +220,27 @@ class ExportTests(unittest.TestCase):
     def test_export_is_reproducible(self):
         again = export_test_tiles(self.package, self.basemap, self.crs, *CENTER, self.root / "again", log=lambda *_: None)
         self.assertEqual([tile["sha256"] for tile in again["tiles"]], [tile["sha256"] for tile in self.index["tiles"]])
+
+
+class GodotFixtureTests(unittest.TestCase):
+    """Набор tests/fixtures/map_tile читает headless-тест Godot; он должен совпадать с текущим кодом записи."""
+
+    def test_committed_fixture_is_current(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index = write_fixture(Path(tmp))
+            files = ["index.json"] + [tile["path"] for tile in index["tiles"]]
+            for name in files:
+                with self.subTest(name=name):
+                    self.assertEqual((Path(tmp) / name).read_bytes(), (FIXTURE_DIR / name).read_bytes(),
+                                     "пересоберите: .venv/bin/python -m tests.city_pipeline.map_fixture")
+            committed = sorted(p.relative_to(FIXTURE_DIR).as_posix() for p in FIXTURE_DIR.rglob("*") if p.is_file())
+            self.assertEqual(committed, sorted(files))
+
+    def test_fixture_covers_every_layer(self):
+        detail = mt.decode_tile((FIXTURE_DIR / "z2" / "0_0.mtile").read_bytes())[1]
+        self.assertEqual(len(detail["pick.ring"]), 3)
+        self.assertEqual(len(detail["building.outline"]), 16)   # три здания по 4 отрезка и двор первого
+        self.assertTrue(len(detail["area.tri"]) and len(detail["line.tri"]) and len(detail["building.tri"]))
 
 
 if __name__ == "__main__":

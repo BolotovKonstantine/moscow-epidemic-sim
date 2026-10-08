@@ -1,23 +1,68 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/app/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/map/map_view.gd" id="2_map"]
 
-[node name="Main" type="Control"]
-layout_mode = 3
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_credit"]
+content_margin_left = 6.0
+content_margin_top = 2.0
+content_margin_right = 6.0
+content_margin_bottom = 2.0
+bg_color = Color(1, 1, 1, 0.8)
+
+[node name="Main" type="Node"]
 script = ExtResource("1_main")
 
-[node name="Status" type="Label" parent="."]
-layout_mode = 1
+[node name="Map" type="Node2D" parent="."]
+script = ExtResource("2_map")
+
+[node name="Hud" type="CanvasLayer" parent="."]
+
+[node name="Status" type="Label" parent="Hud"]
+offset_left = 10.0
+offset_top = 8.0
+offset_right = 700.0
+offset_bottom = 50.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.2, 0.2, 0.2, 1)
+theme_override_colors/font_outline_color = Color(1, 1, 1, 0.85)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 13
+
+[node name="Message" type="Label" parent="Hud"]
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
+offset_left = -560.0
+offset_top = -120.0
+offset_right = 560.0
+offset_bottom = 120.0
 grow_horizontal = 2
 grow_vertical = 2
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.55, 0.1, 0.1, 1)
 horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 3
+
+[node name="Attribution" type="PanelContainer" parent="Hud"]
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -240.0
+offset_top = -24.0
+grow_horizontal = 0
+grow_vertical = 0
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_credit")
+
+[node name="Label" type="Label" parent="Hud/Attribution"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.2, 0.2, 0.2, 1)
+theme_override_font_sizes/font_size = 12
+text = "© участники OpenStreetMap, ODbL"

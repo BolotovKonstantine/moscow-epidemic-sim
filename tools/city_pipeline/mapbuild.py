@@ -377,26 +377,38 @@ def export_test_tiles(package: Path, region_pbf: Path, metric_crs: str, lon: flo
             buildings = (geometry, pkg.building_class[rows], attrs)
         log(f"Участок z{level} {ix}_{iy}…")
         sections, counts, bbox = tile_sections(plane, origin, box, areas, lines, buildings, pick=rules.pick)
-        header = {
-            "package_id": pkg.package_id, "package_version": pkg.package_version, "level": level, "tile": [ix, iy],
-            "tile_size_m": mt.LEVEL_TILE_M[level], "origin": list(origin), "bbox": bbox, "classes": mt.CLASSES,
-            "counts": counts, "attribution": pkg.credits,
-        }
-        data = mt.encode_tile(header, sections)
-        path = Path(f"z{level}") / f"{ix}_{iy}.mtile"
-        (out / path).parent.mkdir(parents=True, exist_ok=True)
-        (out / path).write_bytes(data)
-        map_bbox = None if bbox is None else [bbox[0] + origin[0], bbox[1] + origin[1], bbox[2] + origin[0], bbox[3] + origin[1]]
-        tiles.append({"level": level, "tile": [ix, iy], "path": path.as_posix(), "size_bytes": len(data),
-                      "sha256": mt.sha256_bytes(data), "bbox": map_bbox, "counts": counts})
+        tiles.append(write_tile(out, pkg, level, ix, iy, origin, sections, counts, bbox))
+    return write_index(out, pkg, metric_crs, plane, tiles, "Тестовый экспорт (#11): уровень 0 и по одному участку уровней 1 и 2.")
+
+
+def write_tile(out: Path, pkg, level, ix, iy, origin, sections, counts, bbox):
+    """Записать out/z<уровень>/<ix>_<iy>.mtile и вернуть его запись для индекса.
+
+    pkg — любой объект с package_id, package_version и credits (пакет или синтетическая фикстура).
+    """
+    header = {
+        "package_id": pkg.package_id, "package_version": pkg.package_version, "level": level, "tile": [ix, iy],
+        "tile_size_m": mt.LEVEL_TILE_M[level], "origin": list(origin), "bbox": bbox, "classes": mt.CLASSES,
+        "counts": counts, "attribution": pkg.credits,
+    }
+    data = mt.encode_tile(header, sections)
+    path = Path(f"z{level}") / f"{ix}_{iy}.mtile"
+    (out / path).parent.mkdir(parents=True, exist_ok=True)
+    (out / path).write_bytes(data)
+    map_bbox = None if bbox is None else [bbox[0] + origin[0], bbox[1] + origin[1], bbox[2] + origin[0], bbox[3] + origin[1]]
+    return {"level": level, "tile": [ix, iy], "path": path.as_posix(), "size_bytes": len(data),
+            "sha256": mt.sha256_bytes(data), "bbox": map_bbox, "counts": counts}
+
+
+def write_index(out: Path, pkg, metric_crs, plane: mt.MapPlane, tiles, note):
+    """Записать out/index.json и вернуть индекс. pkg также даёт source_ids."""
     index = {
         "format": mt.INDEX_FORMAT, "format_version": mt.FORMAT_VERSION,
         "package_id": pkg.package_id, "package_version": pkg.package_version, "source_ids": pkg.source_ids,
         "metric_crs": metric_crs, "attribution": pkg.credits,
         "plane": {"origin_metric": [plane.x0, plane.y0], "units": "m", "y_axis": "down"},
         "levels": [{"level": level, "tile_size_m": mt.LEVEL_TILE_M[level]} for level in sorted(mt.LEVEL_TILE_M)],
-        "classes": mt.CLASSES, "tiles": tiles,
-        "note": "Тестовый экспорт (#11): уровень 0 и по одному участку уровней 1 и 2.",
+        "classes": mt.CLASSES, "tiles": tiles, "note": note,
     }
     (out / "index.json").write_text(json.dumps(index, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return index

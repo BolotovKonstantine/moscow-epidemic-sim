@@ -13,6 +13,7 @@
 - `maptiles.py` — формат участков карты (`.mtile`), триангуляция площадей и ленты линий; `mapbuild.py` — подложка из OSM и сборка участков из пакета. Формат — в [docs/city-package.md](../../docs/city-package.md#участки-карты).
 - `__main__.py` — CLI `validate`, `fetch`, `build`, `map-tile`.
 - Конфигурация сборки — `data/manifests/moscow-2021.json`. Ключи OSM из `poi_functions`, `site_functions` и `facilities.kinds` автоматически добавляются в фильтр чтения; если объект подходит под несколько ключей, решает первый по алфавиту. Модельные параметры (интервалы транспорта, скорость пересадки) — в её разделе `model_assumptions`; их можно менять, они попадают в пакет как `game_setting`.
+- `tests/fixtures/map_tile/` — синтетический набор участков карты для теста загрузчика Godot; пишется `tests/city_pipeline/map_fixture.py` тем же кодом, что и экспорт (`.venv/bin/python -m tests.city_pipeline.map_fixture`), unit-тест требует, чтобы закоммиченные файлы совпадали с пересборкой: меняя формат или запись участков, пересобери фикстуру.
 - `tests/fixtures/city_package/` — синтетический пример паспорта; `tests/city_pipeline/synthetic_city.py` — синтетический мини-город для теста сборки. Ни то ни другое не является картой региона.
 - Большие файлы находятся в игнорируемых каталогах `data/raw/`, `data/processed/`, `data/packages/`.
 

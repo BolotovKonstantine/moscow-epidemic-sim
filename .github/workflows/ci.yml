@@ -58,3 +58,4 @@ jobs:
           echo "$RUNNER_TEMP/godot/Godot.app/Contents/MacOS" >> "$GITHUB_PATH"
       - run: Godot --headless --path game --import
       - run: Godot --headless --path game --script ../tests/integration/smoke_native.gd
+      - run: Godot --headless --path game --script ../tests/integration/map_tile_loader.gd
