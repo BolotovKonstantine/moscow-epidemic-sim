@@ -158,11 +158,13 @@ func _set_scale(mpp: float) -> void:
 	_line_style.set_meters_per_pixel(meters_per_pixel)
 	var level := level_for(meters_per_pixel)
 	var outlines := meters_per_pixel <= MapTheme.BUILDING_OUTLINE_MAX_MPP
+	var line_margin := _line_style.max_displacement_m(meters_per_pixel)
 	for bg_level: int in _backgrounds:
 		_backgrounds[bg_level].visible = bg_level <= level
 	for view in _tiles:
 		view.visible = view.level <= level
 		view.building_outline.visible = outlines
+		view.set_line_margin(line_margin)
 	view_changed.emit(meters_per_pixel, level)
 
 

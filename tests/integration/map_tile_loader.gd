@@ -147,6 +147,7 @@ func _test_rejections(fixture: String) -> void:
 	_expect_header_patch(source, "\"offset\":%d" % area_xy_at.offset, "\"offset\":9e15", "выходит за пределы",
 		"огромное смещение раздела отклоняется без переполнения")
 	check(not MapTile.is_integers([1e300], 1), "целые больше 2^53 отклоняются")
+	check(not MapTile.is_tile_index([4294967296, 0]) and MapTile.is_tile_index([26, 26]), "номер участка вне Vector2i отклоняется")
 	check(MapView._encloses(Rect2(0, 0, 10, 10), Rect2(1, 5, 8, 0)) and not MapView._encloses(Rect2(0, 0, 10, 10), Rect2(1, 5, 20, 0)),
 		"вырожденный охват (горизонтальная линия) сравнивается по краям")
 
@@ -352,6 +353,14 @@ func _test_views(fixture: String) -> void:
 	map.zoom_at(Vector2(0, 0), 1.5)
 	check(map.screen_to_map(map.get_viewport_rect().size / 2.0 if map.is_inside_tree() else Vector2(640, 360)).is_equal_approx(
 		map.region_rect.get_center()), "окно шире региона — камера по центру")
+	var line_node: MeshInstance2D = detail.get_node("Lines")
+	var centerline := line_node.mesh.get_aabb()
+	map.look_at_point(Vector2(2000, 2000), MapTheme.MIN_MPP)
+	var margin_low := (line_node.mesh as ArrayMesh).custom_aabb.size.x - centerline.size.x
+	map.look_at_point(Vector2(2000, 2000), map.max_meters_per_pixel)
+	var margin_high := (line_node.mesh as ArrayMesh).custom_aabb.size.x - centerline.size.x
+	check(margin_low > 0.0 and margin_high > margin_low,
+		"границы мешей линий расширены на ширину лент и растут при отдалении: %.1f → %.1f м" % [margin_low, margin_high])
 	map.look_at_point(Vector2(1000, 1000), 0.01)
 	check(is_equal_approx(map.meters_per_pixel, MapTheme.MIN_MPP), "приближение ограничено %.2f м/пикс." % MapTheme.MIN_MPP)
 	check(map.level_for(map.meters_per_pixel) == 2, "при сильном приближении — уровень 2")

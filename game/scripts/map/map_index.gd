@@ -90,7 +90,7 @@ func _read(index_path: String) -> String:
 			return "путь участка %s выходит за каталог карты" % rel_path
 		var bbox: Variant = item.get("bbox")
 		if not MapTile.is_integers([item.level], 1) or int(item.level) < 0 or int(item.level) > MapTile.MAX_LEVEL \
-				or not MapTile.is_integers(item.tile, 2) or not (bbox == null or MapTile.is_box(bbox)) \
+				or not MapTile.is_tile_index(item.tile) or not (bbox == null or MapTile.is_box(bbox)) \
 				or not item.sha256 is String \
 				or item.sha256.length() != 64 or not item.sha256.is_valid_hex_number():
 			return "запись участка %s: level — целое 0..2, tile — два целых, bbox — упорядоченные minx, miny, maxx, maxy или null, sha256 — 64 шестнадцатеричных символа" % rel_path
