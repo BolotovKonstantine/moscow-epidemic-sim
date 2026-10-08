@@ -93,6 +93,9 @@ func _read(index_path: String) -> String:
 				or not item.sha256 is String \
 				or item.sha256.length() != 64 or not item.sha256.is_valid_hex_number():
 			return "запись участка %s: level — целое 0..2, tile — два целых, bbox — упорядоченные minx, miny, maxx, maxy или null, sha256 — 64 шестнадцатеричных символа" % rel_path
+		var size_bytes: Variant = item.get("size_bytes", 0)
+		if not MapTile.is_integers([size_bytes], 1) or int(size_bytes) < 0:
+			return "запись участка %s: size_bytes — целое неотрицательное" % rel_path
 		var identity := Vector3i(int(item.level), int(item.tile[0]), int(item.tile[1]))
 		if identity in seen:
 			return "участок z%d %d_%d указан в индексе дважды" % [identity.x, identity.y, identity.z]
@@ -102,7 +105,7 @@ func _read(index_path: String) -> String:
 			"tile": Vector2i(int(item.tile[0]), int(item.tile[1])),
 			"path": rel_path,
 			"sha256": String(item.sha256),
-			"size_bytes": int(item.get("size_bytes", 0)),
+			"size_bytes": int(size_bytes),
 			"bbox": Rect2() if bbox == null else Rect2(bbox[0], bbox[1], bbox[2] - bbox[0], bbox[3] - bbox[1]),
 		})
 	var overview := tiles_of_level(0)

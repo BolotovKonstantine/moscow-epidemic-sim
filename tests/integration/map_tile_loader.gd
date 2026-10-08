@@ -111,13 +111,18 @@ func _test_rejections(fixture: String) -> void:
 	tile_ok.sections["pick.ring"][1] = 0
 	tile_ok.sections["pick.ring"][0] = 7
 	check("pick.ring" in tile_ok._check_pick(), "кольцо несуществующего здания отклоняется")
+	_expect_header_patch(source, "\"tile_size_m\":2000", "\"tile_size_m\":8000", "формат задаёт 2000",
+		"участок уровня 2 размером 8 км отклоняется")
+	var area_xy := _section_descriptor(source, "area.xy")
+	_expect_header_patch(source, "\"offset\":%d" % area_xy.offset, "\"offset\":%d.5" % (area_xy.offset / 100),
+		"нужны строки name", "дробное смещение раздела отклоняется")
 	var attrs := _section_descriptor(source, "pick.attrs")
 	_expect_header_patch(source, "\"raw_size\":%d" % attrs.raw_size, "\"raw_size\":1e9",
 		"больше предела", "огромный raw_size отклоняется до распаковки")
 	var counts_at := header_text.find("\"counts\":{")
 	var counts_text := header_text.substr(counts_at, header_text.find("}", counts_at) - counts_at + 1)
 	_expect_header_patch(source, counts_text, "\"counts\":0", "counts должен быть словарём", "counts не словарь отклоняется")
-	_expect_header_patch(source, "\"tile_size_m\":2000", "\"tile_size_m\":null", "нет положительного tile_size_m",
+	_expect_header_patch(source, "\"tile_size_m\":2000", "\"tile_size_m\":null", "формат задаёт 2000",
 		"участок уровня 2 без размера отклоняется")
 
 	check(MapTile._codes_within(PackedFloat32Array([0, 2, 1, 2, 0]), 3), "целые коды классов принимаются")
@@ -166,6 +171,12 @@ func _test_rejections(fixture: String) -> void:
 	doc.tiles[0].level = 0
 	doc.tiles[0].bbox = [10, 0, 5, 0]
 	_expect_index_error(doc, "упорядоченные", "неупорядоченный bbox отклоняется")
+	doc.tiles[0].bbox = null
+	doc.tiles[0].size_bytes = [1]
+	_expect_index_error(doc, "size_bytes", "нечисловой size_bytes отклоняется")
+	doc.tiles[0].size_bytes = -5
+	_expect_index_error(doc, "size_bytes", "отрицательный size_bytes отклоняется")
+	doc.tiles[0].erase("size_bytes")
 	doc.tiles[0].bbox = [1, 2]
 	_expect_index_error(doc, "упорядоченные", "короткий bbox в индексе отклоняется")
 	doc.tiles[0].bbox = null

@@ -8,6 +8,8 @@ extends RefCounted
 const MAGIC := "MESMTILE"
 const FORMAT := "mesim-map-tile"
 const FORMAT_VERSION := 1
+const LEVEL_TILE_M := {1: 8000.0, 2: 2000.0}   # размеры участков уровней формата 1
+const MAX_DECODED_BYTES := 512 << 20   # всего данных участка после распаковки
 const MAX_LEVEL := 2   # уровни 0–2 формата 1: обзор, участки 8 и 2 км
 const PREAMBLE := 16   # магия, u32 версия, u32 длина заголовка
 const MAX_HEADER_BYTES := 1 << 20
@@ -40,7 +42,8 @@ var tile_size_m := 0.0       # 0 — обзор региона (уровень 0
 var bbox := Rect2()          # охват геометрии в плоскости карты (из заголовка под SHA256), пустой — нет геометрии
 var classes: Dictionary = {}
 var counts: Dictionary = {}
-var sections: Dictionary = {}   # имя → PackedFloat32Array | PackedInt32Array | данные JSON
+var sections: Dictionary = {}
+var _decoded_bytes := 0   # сумма raw_size принятых разделов   # имя → PackedFloat32Array | PackedInt32Array | данные JSON
 
 
 ## Прочитать и проверить участок. expected — запись индекса и пакет:
@@ -132,12 +135,12 @@ func _read_header(expected: Dictionary) -> String:
 		if size != null:
 			return "у обзора региона (уровень 0) tile_size_m должен быть null"
 		tile_size_m = 0.0
-	elif is_numbers([size], 1) and is_finite(float(size)) and float(size) > 0.0:
+	elif is_numbers([size], 1) and float(size) == LEVEL_TILE_M[level]:
 		tile_size_m = float(size)
 		if not origin.is_equal_approx(Vector2(tile) * tile_size_m):
 			return "начало участка %s не совпадает с его местом в сетке %s × %.0f м" % [origin, tile, tile_size_m]
 	else:
-		return "у участка уровня %d нет положительного tile_size_m" % level
+		return "у участка уровня %d tile_size_m %s, а формат задаёт %.0f м" % [level, size, LEVEL_TILE_M[level]]
 	var box: Variant = header.get("bbox")
 	if not (box == null or is_box(box)):
 		return "bbox должен быть упорядоченными minx, miny, maxx, maxy или null"
@@ -169,7 +172,7 @@ func _read_section(bytes: PackedByteArray, data_start: int, item: Variant) -> St
 	# Описание раздела проверяется целиком до распаковки: размер после распаковки берётся из файла,
 	# и без проверки маленький испорченный участок мог бы запросить гигабайты памяти.
 	if not item is Dictionary or not item.get("name") is String or not item.get("dtype") is String \
-			or not is_numbers([item.get("offset"), item.get("size"), item.get("raw_size")], 3):
+			or not is_integers([item.get("offset"), item.get("size"), item.get("raw_size")], 3):
 		return "описание раздела: нужны строки name, dtype и числа offset, size, raw_size"
 	var name: String = item.name
 	var dtype: String = item.dtype
@@ -180,6 +183,9 @@ func _read_section(bytes: PackedByteArray, data_start: int, item: Variant) -> St
 		return "раздел %s выходит за пределы файла (смещение %d, размер %d из %d)" % [name, offset, size, bytes.size()]
 	if raw_size > MAX_SECTION_BYTES:
 		return "раздел %s: %d байт после распаковки, больше предела %d" % [name, raw_size, MAX_SECTION_BYTES]
+	_decoded_bytes += raw_size
+	if _decoded_bytes > MAX_DECODED_BYTES:
+		return "данные участка после распаковки больше предела %d байт" % MAX_DECODED_BYTES
 	var required := _required_dtype(name)
 	if required.is_empty():
 		return "неизвестный раздел %s" % name
@@ -188,8 +194,8 @@ func _read_section(bytes: PackedByteArray, data_start: int, item: Variant) -> St
 	if dtype != "json":
 		var count: Variant = item.get("count")
 		var shape: Variant = item.get("shape")
-		if not is_numbers([count], 1) or not shape is Array or not is_numbers(shape, shape.size()):
-			return "раздел %s: count и shape должны быть числами" % name
+		if not is_integers([count], 1) or not shape is Array or not is_integers(shape, shape.size()):
+			return "раздел %s: count и shape должны быть целыми" % name
 		var columns: int = COLUMNS[name]
 		var expected_shape := [int(count)] if columns == 1 else [int(count) / columns, columns]
 		if int(count) * 4 != raw_size or int(count) % columns != 0 or shape.map(func(v): return int(v)) != expected_shape:
