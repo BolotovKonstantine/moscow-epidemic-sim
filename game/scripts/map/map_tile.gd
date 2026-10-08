@@ -8,6 +8,7 @@ extends RefCounted
 const MAGIC := "MESMTILE"
 const FORMAT := "mesim-map-tile"
 const FORMAT_VERSION := 1
+const MAX_LEVEL := 2   # уровни 0–2 формата 1: обзор, участки 8 и 2 км
 const PREAMBLE := 16   # магия, u32 версия, u32 длина заголовка
 const MAX_HEADER_BYTES := 1 << 20
 
@@ -105,6 +106,8 @@ func _read_header(expected: Dictionary) -> String:
 	if not is_numbers(header.tile, 2) or not is_numbers(header.origin, 2) or not is_numbers([header.level], 1):
 		return "поля level, tile и origin должны быть числами (tile и origin — по два)"
 	level = int(header.level)
+	if level < 0 or level > MAX_LEVEL or float(header.level) != level:
+		return "уровень %s вне 0..%d" % [header.level, MAX_LEVEL]
 	tile = Vector2i(int(header.tile[0]), int(header.tile[1]))
 	origin = Vector2(float(header.origin[0]), float(header.origin[1]))
 	var size: Variant = header.get("tile_size_m")
@@ -116,6 +119,9 @@ func _read_header(expected: Dictionary) -> String:
 		tile_size_m = float(size)
 	else:
 		return "у участка уровня %d нет положительного tile_size_m" % level
+	var problem := MapTile.check_classes(header.classes)
+	if not problem.is_empty():
+		return problem
 	classes = header.classes
 	counts = header.counts
 	if expected.has("level") and int(expected.level) != level:
@@ -207,6 +213,17 @@ static func _required_dtype(name: String) -> String:
 	return "f32" if COLUMNS.has(name) else ""
 
 
+## Таблица классов: словарь, где каждый слой — список строк; нужны слои area и line.
+static func check_classes(value: Variant) -> String:
+	if not value is Dictionary or not value.has_all(["area", "line"]):
+		return "classes должен быть словарём со слоями area и line"
+	for layer: Variant in value:
+		var names: Variant = value[layer]
+		if not names is Array or not names.all(func(v): return v is String):
+			return "classes.%s должен быть списком строк" % layer
+	return ""
+
+
 ## Значение — массив из count чисел (защита от искажённого JSON до обращения по индексу).
 static func is_numbers(value: Variant, count: int) -> bool:
 	if not value is Array or value.size() != count:
@@ -228,4 +245,13 @@ static func _codes_within(codes: PackedFloat32Array, class_count: int) -> bool:
 		return true
 	var sorted := codes.duplicate()
 	sorted.sort()
-	return sorted[0] >= 0.0 and sorted[-1] < class_count
+	if not (sorted[0] >= 0.0 and sorted[-1] < class_count):
+		return false
+	# Коды — позиции в списке классов: только целые. Обходим лишь различные значения (двоичный поиск).
+	var i := 0
+	while i < sorted.size():
+		var value := sorted[i]
+		if not is_finite(value) or value != floorf(value):
+			return false
+		i = sorted.bsearch(value, false)
+	return true

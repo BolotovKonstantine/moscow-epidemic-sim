@@ -59,6 +59,9 @@ func _read(index_path: String) -> String:
 	if not doc.tiles is Array:
 		return "tiles должен быть списком участков"
 	attribution = PackedStringArray(doc.attribution)
+	var problem := MapTile.check_classes(doc.classes)
+	if not problem.is_empty():
+		return problem
 	classes = doc.classes
 	if attribution.is_empty() or attribution[0] != OSM_CREDIT:
 		return "первая строка атрибуции должна быть «%s» (ODbL)" % OSM_CREDIT

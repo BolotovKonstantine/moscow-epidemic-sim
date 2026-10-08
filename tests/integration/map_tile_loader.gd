@@ -89,8 +89,13 @@ func _test_rejections(fixture: String) -> void:
 	for i in patched.size():
 		bytes[16 + i] = patched[i]
 	_expect_error(bytes, {}, "тип f32 вместо i32", "индексы треугольников с типом f32 отклоняются")
+	_expect_header_patch(source, "\"level\":2", "\"level\":3", "вне 0..2", "уровень 3 отклоняется")
 	_expect_header_patch(source, "\"tile_size_m\":2000", "\"tile_size_m\":null", "нет положительного tile_size_m",
 		"участок уровня 2 без размера отклоняется")
+
+	check(MapTile._codes_within(PackedFloat32Array([0, 2, 1, 2, 0]), 3), "целые коды классов принимаются")
+	check(not MapTile._codes_within(PackedFloat32Array([0, 1.9, 1]), 3), "дробный код класса отклоняется")
+	check(not MapTile._codes_within(PackedFloat32Array([0, 3]), 3), "код вне списка классов отклоняется")
 
 	var tile := MapTile.open(_write("other_package.mtile", source), {"package_id": "moscow-2021"})
 	check("package_id" in tile.error, "участок другого пакета отклоняется: " + tile.error)
@@ -115,6 +120,11 @@ func _test_rejections(fixture: String) -> void:
 	doc.attribution = [MapIndex.OSM_CREDIT]
 	doc.tiles = null
 	_expect_index_error(doc, "tiles должен быть списком", "tiles: null отклоняется")
+	doc.tiles = []
+	doc.classes = {"area": [], "line": [0]}
+	_expect_index_error(doc, "classes.line должен быть списком строк", "классы не строками отклоняются")
+	doc.classes = null
+	_expect_index_error(doc, "classes должен быть словарём", "classes: null отклоняется")
 
 
 func _expect_error(bytes: PackedByteArray, expected: Dictionary, fragment: String, message: String) -> void:
