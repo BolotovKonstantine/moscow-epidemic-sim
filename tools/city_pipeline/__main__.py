@@ -99,6 +99,9 @@ def load_config(path: Path, data: bytes | None = None) -> dict:
     over = sorted(kind for kind, value in levels["default_levels"].items() if value > levels["max_levels"])
     if over:
         raise ManifestError(f"{path}: buildings.default_levels больше max_levels {levels['max_levels']}: {', '.join(over)}")
+    shared_roles = sorted(set(config["transit"]["stop_roles"]) & set(config["transit"]["platform_roles"]))
+    if shared_roles:
+        raise ManifestError(f"{path}: transit: роли {shared_roles} указаны и как остановка, и как платформа")
     low, high = config["boundary"]["mkad_area_km2_range"]
     if low > high:
         raise ManifestError(f"{path}: boundary.mkad_area_km2_range: нижняя граница {low} больше верхней {high}")

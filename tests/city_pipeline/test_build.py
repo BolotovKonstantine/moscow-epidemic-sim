@@ -95,6 +95,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(kinds["transit-service"], "game_setting")
         self.assertEqual(kinds["facilities"], "estimated")
         self.assertEqual(kinds["road-nodes"], "estimated")
+        self.assertEqual(kinds["roads"], "estimated")   # разбиение и длины зависят от классов дорог и проекции
         self.assertEqual(kinds["quality-report"], "estimated")   # пороги и выборка — из конфигурации   # inside, zone_id и компоненты зависят от конфигурации   # объединение и привязка к зданиям — эвристика
         assets = {asset["asset_id"]: asset for asset in manifest["assets"]}
         # Модельные интервалы ссылаются на конфигурацию сборки, а не на OSM.

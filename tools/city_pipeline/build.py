@@ -454,7 +454,10 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
         "method": "Узлы и координаты — из OSM; inside (внутри региона по метрической границе), zone_id (сетка зон) и компоненты связности (граф из настроенных классов дорог) вычислены по конфигурации сборки.",
         "uncertainty": "Поля inside, zone_id и компоненты меняются вместе с границей, проекцией, размером зон и классами дорог; координаты — наблюдение OSM.",
     })
-    add("roads", "roads", "roads.geojsonl.gz", "geojsonl+gzip", "observed", ["osm"])
+    add("roads", "roads", "roads.geojsonl.gz", "geojsonl+gzip", "estimated", ["osm", "config"], {
+        "method": "Геометрия и теги (класс, одностороннее движение, мост, тоннель, уровень, имя) — из линий OSM; рёбра — участки между узлами, общими для выбранных классов дорог (roads.highways); length_m — длина в метрической проекции metric_crs.",
+        "uncertainty": "Разбиение на рёбра, edge_id и длины меняются вместе с классами дорог и проекцией в конфигурации; теги — наблюдение OSM.",
+    })
 
     stop_x = np.array([stop["x"] for stop in network.stops])
     stop_y = np.array([stop["y"] for stop in network.stops])

@@ -252,6 +252,9 @@ class ConfigSnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "для роли population"):
             _selected_sources(config, registry)
 
+    def test_role_in_both_stop_and_platform_lists_rejected(self):
+        self.invalid(lambda c: c["transit"]["stop_roles"].append("platform"), "и как остановка, и как платформа")
+
     def test_huge_secondary_weight_rejected(self):
         self.invalid(lambda c: c["buildings"].__setitem__("poi_secondary_weight", 1e308), "poi_secondary_weight")
 
