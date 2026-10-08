@@ -20,7 +20,20 @@ import shapely
 from . import maptiles as mt
 from .geo import Projector
 
-ATTRIBUTION = "© участники OpenStreetMap, ODbL"
+MAP_CREDIT = "© участники OpenStreetMap, ODbL"   # короткая подпись, всегда видимая на карте
+
+
+def source_credits(manifest):
+    """Атрибуция: подпись OSM и все внешние источники пакета (владелец и лицензия из паспорта).
+
+    Участки несут не только геометрию OSM, но и производные данные других источников
+    (жители зданий — из сетки GHS-POP), поэтому их условия перечисляются вместе.
+    """
+    credits = [MAP_CREDIT]
+    for source in sorted(manifest["sources"], key=lambda item: item["source_id"]):
+        if source.get("source_type") == "external":
+            credits.append(f"{source['owner']} — {source['license']}")
+    return credits
 BASEMAP_KEYS = ("landuse", "natural", "leisure", "waterway", "railway")
 
 
@@ -131,6 +144,7 @@ class PackageLayers:
     package_id: str
     package_version: str
     source_ids: list
+    credits: list
     region: object                  # метрический полигон региона
     boundaries: Layer               # линии границ региона и Москвы
     roads: Layer
@@ -192,7 +206,7 @@ def read_package(package: Path, projector: Projector) -> PackageLayers:
     x, y = projector.xy([float(row["lon"]) for row in attributes], [float(row["lat"]) for row in attributes])
     classes = np.array([mt.BUILDING_CLASSES.index(kind) if kind in mt.BUILDING_CLASSES else 0 for kind in rows["function"]], np.int64)
     sources = sorted(source["source_id"] for source in manifest["sources"])
-    return PackageLayers(manifest["package_id"], manifest["package_version"], sources, region, boundaries, roads,
+    return PackageLayers(manifest["package_id"], manifest["package_version"], sources, source_credits(manifest), region, boundaries, roads,
                          rows, np.column_stack((x, y)), classes)
 
 
@@ -366,7 +380,7 @@ def export_test_tiles(package: Path, region_pbf: Path, metric_crs: str, lon: flo
         header = {
             "package_id": pkg.package_id, "package_version": pkg.package_version, "level": level, "tile": [ix, iy],
             "tile_size_m": mt.LEVEL_TILE_M[level], "origin": list(origin), "bbox": bbox, "classes": mt.CLASSES,
-            "counts": counts, "attribution": ATTRIBUTION,
+            "counts": counts, "attribution": pkg.credits,
         }
         data = mt.encode_tile(header, sections)
         path = Path(f"z{level}") / f"{ix}_{iy}.mtile"
@@ -378,7 +392,7 @@ def export_test_tiles(package: Path, region_pbf: Path, metric_crs: str, lon: flo
     index = {
         "format": mt.INDEX_FORMAT, "format_version": mt.FORMAT_VERSION,
         "package_id": pkg.package_id, "package_version": pkg.package_version, "source_ids": pkg.source_ids,
-        "metric_crs": metric_crs, "attribution": ATTRIBUTION,
+        "metric_crs": metric_crs, "attribution": pkg.credits,
         "plane": {"origin_metric": [plane.x0, plane.y0], "units": "m", "y_axis": "down"},
         "levels": [{"level": level, "tile_size_m": mt.LEVEL_TILE_M[level]} for level in sorted(mt.LEVEL_TILE_M)],
         "classes": mt.CLASSES, "tiles": tiles,

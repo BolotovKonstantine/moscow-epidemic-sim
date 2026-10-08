@@ -267,6 +267,11 @@ def command_map_tile(args) -> int:
     config = load_config(args.config)
     package = package_dir(args.packages, config.get("package_id"), config.get("package_version"))
     validate_manifest(package / "manifest.json", check_files=True)
+    # Пакет перезаписывается при той же версии, а вырезка OSM лежит по хешу конфигурации:
+    # другая конфигурация дала бы чужую вырезку и CRS к этому пакету.
+    packaged = load_config(package / "build_config.json")
+    if config_digest(packaged) != config_digest(config):
+        raise ManifestError(f"{args.config} не совпадает с конфигурацией, из которой собран {package} (build_config.json): пересоберите пакет командой build")
     region_pbf = work_dir(args.work, config["package_id"]) / f"{config['package_version']}-{config_digest(config)}" / "region.osm.pbf"
     if not region_pbf.is_file():
         raise ManifestError(f"Нет вырезки OSM {region_pbf}: сначала выполните build для этой конфигурации")

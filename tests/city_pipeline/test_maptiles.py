@@ -169,7 +169,21 @@ class ExportTests(unittest.TestCase):
             data = (self.out / tile["path"]).read_bytes()
             self.assertEqual(mt.sha256_bytes(data), tile["sha256"])
             self.assertEqual(len(data), tile["size_bytes"])
-        self.assertIn("OpenStreetMap", self.index["attribution"])
+        credits = " ".join(self.index["attribution"])
+        self.assertIn("OpenStreetMap", self.index["attribution"][0])
+        # Внешние источники пакета (у синтетического города их нет) не теряются; конфигурация — не источник данных.
+        self.assertNotIn("Moscow Epidemic Sim", credits)
+        _, (header, _) = self.tile(2)
+        self.assertEqual(header["attribution"], self.index["attribution"])
+
+    def test_credits_list_every_external_source(self):
+        from tools.city_pipeline.mapbuild import source_credits
+        manifest = {"sources": [
+            {"source_id": "osm", "source_type": "external", "owner": "OSM", "license": "ODbL"},
+            {"source_id": "ghs", "source_type": "external", "owner": "JRC (GHSL)", "license": "CC-BY-4.0"},
+            {"source_id": "cfg", "source_type": "synthetic", "owner": "Moscow Epidemic Sim", "license": "MIT"},
+        ]}
+        self.assertEqual(source_credits(manifest)[1:], ["JRC (GHSL) — CC-BY-4.0", "OSM — ODbL"])
 
     def test_buildings_keep_package_ids_without_duplicates(self):
         with gzip.open(self.package / "building_attributes.csv.gz", "rt", encoding="utf-8") as stream:
