@@ -135,7 +135,18 @@ func _test_rejections(fixture: String) -> void:
 	var doc: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(fixture.path_join("index.json")))
 	doc.format_version = 2
 	_expect_index_error(doc, "версии 2", "индекс чужой версии отклоняется")
+	doc.format_version = 1.5
+	_expect_index_error(doc, "версии 1.5", "дробная версия формата отклоняется")
 	doc.format_version = 1
+	var copy: Dictionary = doc.tiles[1].duplicate()
+	doc.tiles.append(copy)
+	_expect_index_error(doc, "дважды", "повторный участок отклоняется")
+	doc.tiles.pop_back()
+	var second: Dictionary = doc.tiles[0].duplicate()
+	second.tile = [1, 0]
+	doc.tiles.append(second)
+	_expect_index_error(doc, "ровно один обзор", "второй обзор региона отклоняется")
+	doc.tiles.pop_back()
 	doc.tiles[0].path = "../../etc/passwd"
 	_expect_index_error(doc, "выходит за каталог", "путь участка за пределами каталога отклоняется")
 	doc.tiles[0].path = "..\\outside.mtile"

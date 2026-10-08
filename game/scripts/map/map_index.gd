@@ -6,6 +6,7 @@ extends RefCounted
 
 const FORMAT := "mesim-map-index"
 const FORMAT_VERSION := 1
+const MAX_INDEX_BYTES := 64 << 20   # индекс всего региона — десятки тысяч записей, единицы МБ
 const OSM_CREDIT := "© участники OpenStreetMap, ODbL"   # обязательная первая строка атрибуции (ODbL)
 
 var error := ""
@@ -43,11 +44,18 @@ func load_tile(entry: Dictionary) -> MapTile:
 func _read(index_path: String) -> String:
 	if not FileAccess.file_exists(index_path):
 		return "файл не найден"
-	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(index_path))
+	var file := FileAccess.open(index_path, FileAccess.READ)
+	if file == null:
+		return "не удалось прочитать (%s)" % error_string(FileAccess.get_open_error())
+	if file.get_length() > MAX_INDEX_BYTES:
+		return "файл %d байт, больше предела %d" % [file.get_length(), MAX_INDEX_BYTES]
+	var parsed: Variant = JSON.parse_string(file.get_as_text())
+	file.close()
 	if not parsed is Dictionary:
 		return "не является объектом JSON"
 	var doc: Dictionary = parsed
-	if doc.get("format") != FORMAT or int(doc.get("format_version", -1)) != FORMAT_VERSION:
+	if doc.get("format") != FORMAT or not MapTile.is_integers([doc.get("format_version")], 1) \
+			or int(doc.format_version) != FORMAT_VERSION:
 		return "формат %s версии %s, игра читает только %s версии %d" % [
 			doc.get("format"), doc.get("format_version"), FORMAT, FORMAT_VERSION]
 	for key: String in ["package_id", "package_version", "attribution", "classes", "tiles"]:
@@ -68,6 +76,7 @@ func _read(index_path: String) -> String:
 	classes = doc.classes
 	if attribution.is_empty() or attribution[0] != OSM_CREDIT:
 		return "первая строка атрибуции должна быть «%s» (ODbL)" % OSM_CREDIT
+	var seen := {}
 	for item: Variant in doc.tiles:
 		if not item is Dictionary or not item.has_all(["level", "tile", "path", "sha256"]):
 			return "запись участка без level, tile, path или sha256"
@@ -84,6 +93,10 @@ func _read(index_path: String) -> String:
 				or not item.sha256 is String \
 				or item.sha256.length() != 64 or not item.sha256.is_valid_hex_number():
 			return "запись участка %s: level — целое 0..2, tile — два целых, bbox — упорядоченные minx, miny, maxx, maxy или null, sha256 — 64 шестнадцатеричных символа" % rel_path
+		var identity := Vector3i(int(item.level), int(item.tile[0]), int(item.tile[1]))
+		if identity in seen:
+			return "участок z%d %d_%d указан в индексе дважды" % [identity.x, identity.y, identity.z]
+		seen[identity] = true
 		tiles.append({
 			"level": int(item.level),
 			"tile": Vector2i(int(item.tile[0]), int(item.tile[1])),
@@ -92,6 +105,7 @@ func _read(index_path: String) -> String:
 			"size_bytes": int(item.get("size_bytes", 0)),
 			"bbox": Rect2() if bbox == null else Rect2(bbox[0], bbox[1], bbox[2] - bbox[0], bbox[3] - bbox[1]),
 		})
-	if tiles_of_level(0).is_empty():
-		return "нет обзора региона (участка уровня 0)"
+	var overview := tiles_of_level(0)
+	if overview.size() != 1 or overview[0].tile != Vector2i.ZERO:
+		return "нужен ровно один обзор региона — участок уровня 0 с номером (0, 0)"
 	return ""

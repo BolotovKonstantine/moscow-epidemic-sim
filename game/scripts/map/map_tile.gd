@@ -98,7 +98,8 @@ func _read(file_path: String, expected: Dictionary) -> String:
 	if not parsed is Dictionary:
 		return "заголовок не является объектом JSON"
 	header = parsed
-	if header.get("format") != FORMAT or int(header.get("format_version", -1)) != FORMAT_VERSION:
+	if header.get("format") != FORMAT or not is_integers([header.get("format_version")], 1) \
+			or int(header.format_version) != FORMAT_VERSION:
 		return "заголовок: формат %s версии %s вместо %s версии %d" % [
 			header.get("format"), header.get("format_version"), FORMAT, FORMAT_VERSION]
 	var problem := _read_header(expected)
