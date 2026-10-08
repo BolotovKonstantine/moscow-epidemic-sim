@@ -10,7 +10,8 @@
 - `osm.py` — чтение OSM за один проход pyosmium; `geo.py` — проекции и граница региона.
 - `buildings.py` (функции и этажность), `population.py` (сетка → здания), `roads.py` (дорожный граф), `transit.py` (маршруты, отрезки, пересадки), `facilities.py`, `zones.py` (сетка зон).
 - `build.py` — сборка пакета; `report.py` — отчёт качества; `writers.py` — детерминированная запись файлов.
-- `__main__.py` — CLI `validate`, `fetch`, `build`.
+- `maptiles.py` — формат участков карты (`.mtile`), триангуляция площадей и ленты линий; `mapbuild.py` — подложка из OSM и сборка участков из пакета. Формат — в [docs/city-package.md](../../docs/city-package.md#участки-карты).
+- `__main__.py` — CLI `validate`, `fetch`, `build`, `map-tile`.
 - Конфигурация сборки — `data/manifests/moscow-2021.json`. Ключи OSM из `poi_functions`, `site_functions` и `facilities.kinds` автоматически добавляются в фильтр чтения; если объект подходит под несколько ключей, решает первый по алфавиту. Модельные параметры (интервалы транспорта, скорость пересадки) — в её разделе `model_assumptions`; их можно менять, они попадают в пакет как `game_setting`.
 - `tests/fixtures/city_package/` — синтетический пример паспорта; `tests/city_pipeline/synthetic_city.py` — синтетический мини-город для теста сборки. Ни то ни другое не является картой региона.
 - Большие файлы находятся в игнорируемых каталогах `data/raw/`, `data/processed/`, `data/packages/`.
@@ -28,9 +29,13 @@
 .venv/bin/python -m tools.city_pipeline fetch data/manifests/moscow-2021.json
 .venv/bin/python -m tools.city_pipeline build data/manifests/moscow-2021.json
 .venv/bin/python -m tools.city_pipeline validate data/packages/moscow-2021-0.1.0/manifest.json
+.venv/bin/python -m tools.city_pipeline map-tile data/manifests/moscow-2021.json   # тестовые участки карты
+.venv/bin/python -m tools.city_pipeline map-tile data/manifests/moscow-2021.json --at 37.5,55.6 --out data/processed/map-test
 ```
 
 `fetch` скачивает около 735 МБ (OSM ЦФО на 2021-01-01 и тайл GHS-POP) и отказывается принимать файл с другим SHA256. `build` на эталонном Mac (M1, 16 ГБ) занимает ~2 мин 40 с (замер 7 октября 2026, вырезка OSM из кэша; первая вырезка добавляет ~30 с), пиковая память ~2–3 ГБ; результат — `data/packages/<package_id>-<version>/` с `manifest.json` и `quality_report.md`. Файлы пишутся в уникальный временный каталог `<пакет>.<случайное>.partial` рядом и подменяют прежний пакет только после проверки паспорта; при ошибке временный каталог удаляется, чужие каталоги не трогаются: прежний каталог заменяется, только если он пуст или его `manifest.json` читается и совпадает по `package_id` и `package_version`. Прежний пакет на время установки переименовывается в резервную копию и возвращается, если установка не удалась. Промежуточные файлы — в `data/processed/<package_id>/<version>-<хеш конфигурации>/`; одинаковые сборки, запущенные одновременно, ждут друг друга (блокировка `.lock`), а любые сборки в один каталог пакета устанавливают его по очереди (блокировка `data/packages/.<пакет>.lock`). Если процесс убит, временные каталоги `*.partial` и `*.previous` можно удалить вручную. `SOURCE_DATE_EPOCH` фиксирует `created_at`, чтобы повторная сборка совпала побайтно и по паспорту.
+
+`map-tile` требует собранного пакета и его вырезки OSM в `data/processed/` (её создаёт `build`). Он пишет обзор региона и участки уровней 1 и 2 вокруг точки `--at` (по умолчанию центр Москвы) в `data/processed/map-test/`: `index.json` и `z<уровень>/<ix>_<iy>.mtile`. На эталонном Mac — ~19 с, пиковая память ~1,7 ГБ; для центра Москвы обзор занимает 3,4 МБ, участок 8 км — 1,8 МБ, участок 2 км — 0,8 МБ (замер 8 октября 2026, `moscow-2021` 0.1.0). Повторный запуск даёт те же байты.
 
 Полная проверка включает существование файлов, размер и SHA256. `--metadata-only` проверяет структуру и связи ID, но не открывает файлы данных. Код возврата 0 — успех, 1 — некорректные данные или ошибка, 2 — неверные аргументы CLI.
 
