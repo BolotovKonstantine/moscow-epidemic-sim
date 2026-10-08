@@ -22,7 +22,10 @@ def _pct(part, whole):
 
 
 def _quantiles(values, qs=(50, 90, 99)):
-    if len(values) == 0:
+    """Процентили конечных значений; бесконечность (нет дороги) в них не входит — её число отдельно."""
+    values = np.asarray(values, dtype=np.float64)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
         return {}
     return {f"p{q}": round(float(np.percentile(values, q)), 1) for q in qs}
 
@@ -182,6 +185,7 @@ def build_report(context):
         "reachability": {
             "residential_nearest_road_m": _quantiles(b_dist),
             "residential_far_from_road": int((b_dist > far).sum()), "far_threshold_m": far,
+            "residential_without_road": int(np.isinf(b_dist).sum()), "facilities_without_road": int(np.isinf(f_dist).sum()),
             "residential_in_main_component_pct": _pct(int(b_ok.sum()), len(b_ok)),
             "facility_nearest_road_m": _quantiles(f_dist),
             "facility_in_main_component_pct": _pct(int(f_ok.sum()), len(f_ok)),
