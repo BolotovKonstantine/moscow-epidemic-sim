@@ -72,6 +72,11 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(kinds["population"], "estimated")
         self.assertEqual(kinds["transit-service"], "game_setting")
         self.assertEqual(kinds["facilities"], "estimated")   # объединение и привязка к зданиям — эвристика
+        assets = {asset["asset_id"]: asset for asset in manifest["assets"]}
+        # Модельные интервалы ссылаются на конфигурацию сборки, а не на OSM.
+        self.assertEqual(assets["transit-service"]["source_ids"], ["build-config-synthetic-mini-city"])
+        sources = {source["source_id"]: source for source in manifest["sources"]}
+        self.assertEqual(sources["build-config-synthetic-mini-city"]["source_type"], "synthetic")
 
     def test_build_is_reproducible(self):
         manifest, _ = self.build(self.root / "second")
@@ -102,6 +107,12 @@ class BuildTests(unittest.TestCase):
         # Внутри квадрата ±0.0002°, а не на его контуре.
         self.assertLess(abs(float(platform["lon"]) - lon0), 0.0002 - 1e-7)
         self.assertLess(abs(float(platform["lat"]) - lat0), 0.0002 - 1e-7)
+
+    def test_building_facility_keeps_absorbed_buildings(self):
+        rows = [row for row in read_csv(self.out / "facilities.csv.gz") if row["name"] == "Поликлиника-здание"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(len(rows[0]["building_ids"].split(";")), 2)   # само здание и корпус внутри
+        self.assertEqual(sorted(rows[0]["building_ids"].split(";")), sorted(rows[0]["osm_ids"].split(";")))
 
     def test_building_facility_uses_building_point(self):
         buildings = {row["building_id"]: row for row in read_csv(self.out / "building_attributes.csv.gz")}
@@ -225,8 +236,8 @@ class BuildTests(unittest.TestCase):
 
     def test_facilities_have_unknown_capacity_and_building_links(self):
         rows = read_csv(self.out / "facilities.csv.gz")
-        kinds = {row["kind"]: row for row in rows}
-        self.assertEqual(sorted(row["kind"] for row in rows), ["clinic", "doctors", "hospital", "school"])
+        kinds = {row["kind"]: row for row in rows if row["name"] != "Поликлиника-здание"}
+        self.assertEqual(sorted(row["kind"] for row in rows), ["clinic", "clinic", "doctors", "hospital", "school"])
         self.assertEqual(kinds["doctors"]["source"], "site")   # учреждение только контуром, без здания
         self.assertNotIn("Больница за границей", {row["name"] for row in rows})   # точка вне региона
         self.assertTrue(kinds["hospital"]["building_ids"])
@@ -235,7 +246,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(len(kinds["hospital"]["osm_ids"].split(";")), 2)
         self.assertEqual((kinds["school"]["source"], kinds["school"]["name"], len(kinds["school"]["osm_ids"].split(";"))), ("site", "Школа", 3))
         self.assertIn(kinds["school"]["facility_id"], kinds["school"]["osm_ids"].split(";"))
-        self.assertEqual(self.report["facilities"]["merged_osm_objects"], 3)
+        self.assertEqual(self.report["facilities"]["merged_osm_objects"], 4)   # + корпус поликлиники-здания
         checks = {check["check"]: check["status"] for check in self.report["checks"]}
         self.assertEqual(checks["facility_provenance_complete"], "pass")
         self.assertEqual(kinds["clinic"]["building_ids"], "")

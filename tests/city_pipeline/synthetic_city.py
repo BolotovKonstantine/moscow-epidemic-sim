@@ -103,6 +103,9 @@ def build_city(directory: Path):
     b.relation(41, [("way", fallback, "outer"), ("way", 999999, "outer")], {"type": "multipolygon", "building": "apartments"})
     # Гостиница с ключом tourism (только из конфигурации мини-города).
     b.square(lon0 - 0.02, lat0 + 0.04, 0.0003, {"building": "yes", "tourism": "hotel"})
+    # Поликлиника-здание с корпусом-зданием той же поликлиники внутри: оба — её building_ids.
+    b.square(lon0 - 0.03, lat0 - 0.02, 0.0005, {"building": "yes", "amenity": "clinic", "name": "Поликлиника-здание"})
+    b.square(lon0 - 0.03, lat0 - 0.0203, 0.0001, {"building": "yes", "amenity": "clinic"})
     # Врачебный кабинет, нанесённый только контуром без здания.
     b.square(lon0 - 0.03, lat0 + 0.03, 0.0003, {"amenity": "doctors", "name": "Кабинет"})                     # неизвестная функция
     b.node(lon0 - 0.0021, lat0 - 0.0021, {"amenity": "clinic", "name": "Поликлиника"})

@@ -250,8 +250,30 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
         raise
 
 
+def config_source(config, created_at):
+    """Карточка происхождения модельных параметров: сама конфигурация сборки (не наблюдение)."""
+    text = json.dumps(config, ensure_ascii=False, sort_keys=True).encode()
+    return {
+        "source_id": f"build-config-{config['package_id']}",
+        "source_type": "synthetic",
+        "url": "https://github.com/BolotovKonstantine/moscow-epidemic-sim/tree/main/data/manifests",
+        "owner": "Moscow Epidemic Sim",
+        "license": "MIT",
+        "data_date": None,
+        "acquired_at": created_at,
+        "coverage": "Модельные параметры конфигурации сборки (model_assumptions): интервалы движения, скорость и надбавка пересадки",
+        "format": "json",
+        "sha256": hashlib.sha256(text).hexdigest(),
+        "processing_version": f"config.{config_digest(config)}",
+    }
+
+
 def _build_into(config, sources, source_roles, kind, region_parts, region_osm, raster, out_dir, final_dir, created_at, log):
     projector = Projector(config["metric_crs"])
+    # Модельные параметры ссылаются на конфигурацию, а не на OSM.
+    model_source = config_source(config, created_at)
+    sources = sorted(sources + [model_source], key=lambda source: source["source_id"])
+    source_roles = dict(source_roles, config=model_source["source_id"])
 
     region_metric = region_parts["region"]
     wgs = write_boundary(out_dir / "boundary.geojson", region_parts, projector, config)
@@ -380,7 +402,7 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     add("transit-segments", "transport", "transit_segments.csv.gz", "csv+gzip", "estimated", ["osm"], transit_estimation)
     write_csv(out_dir / "transit_transfers.csv.gz", ["stop_area_id", "from_stop", "to_stop", "distance_m", "walk_s"],
               ([t["stop_area_id"], t["from_stop"], t["to_stop"], fmt(t["distance_m"], 1), fmt(t["walk_s"], 0)] for t in network.transfers))
-    add("transit-transfers", "transport", "transit_transfers.csv.gz", "csv+gzip", "estimated", ["osm"], {
+    add("transit-transfers", "transport", "transit_transfers.csv.gz", "csv+gzip", "estimated", ["osm", "config"], {
         "method": "Пары остановок одного stop_area OSM после объединения точек остановок и платформ (эвристика transit-stops: пороги stop_platform_pair_m и stop_platform_pair_same_name_m, синонимы во всех маршрутах) — член stop_area заменяется представителем объединённой остановки. Время = расстояние по прямой / transfer_walk_speed_mps + transfer_overhead_s из model_assumptions.",
         "uncertainty": "Реальные переходы длиннее прямой; скорость и надбавка — модельные параметры. Объединение может заменить конец пересадки или слить двух членов stop_area в одну остановку, и тогда пересадки между ними нет.",
     })
@@ -393,7 +415,7 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
         "transfer_walk_speed_mps": model["transfer_walk_speed_mps"],
         "transfer_overhead_s": model["transfer_overhead_s"],
     })
-    add("transit-service", "transport", "transit_service.json", "json", "game_setting", ["osm"])
+    add("transit-service", "transport", "transit_service.json", "json", "game_setting", ["config"])
 
     log("  внешние входы…")
     gateway_rows = []

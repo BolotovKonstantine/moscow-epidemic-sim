@@ -110,13 +110,13 @@ def collect(data, buildings, projector, config, region_wgs84):
     tree = shapely.STRtree(buildings.geometry)
     points = shapely.points(lon, lat)
     for row, record in enumerate(records):
-        if record["source"] == "building":
-            record["building_ids"] = [record["facility_id"]]
-        elif record["area"] is not None:
-            # Корпуса на территории: здания, чья представительная точка лежит в участке.
+        if record["area"] is not None:
+            # Корпуса в контуре (территории или здания-учреждения): здания, чья точка лежит в контуре,
+            # плюс здания, объединённые с учреждением (osm_ids); само здание-учреждение тоже среди них.
             candidates = tree.query(record["area"])
-            inside = [int(c) for c in candidates if shapely.contains_xy(record["area"], buildings.lon[c], buildings.lat[c])]
-            record["building_ids"] = sorted(buildings.ids[c] for c in inside)
+            inside = {buildings.ids[int(c)] for c in candidates if shapely.contains_xy(record["area"], buildings.lon[c], buildings.lat[c])}
+            inside |= {osm_id for osm_id in record["osm_ids"] if osm_id in building_index}
+            record["building_ids"] = sorted(inside)
         else:
             candidates = tree.query(points[row], predicate="within")
             record["building_ids"] = sorted(buildings.ids[int(c)] for c in candidates)
