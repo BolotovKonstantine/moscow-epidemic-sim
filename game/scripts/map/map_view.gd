@@ -140,6 +140,7 @@ func _level_background(level: int) -> LevelBackground:
 	if not _backgrounds.has(level):
 		var background := LevelBackground.new()
 		background.name = "Background_z%d" % level
+		background.z_index = level * MapTileView.LEVEL_Z_STEP
 		add_child(background)
 		_backgrounds[level] = background
 	return _backgrounds[level]

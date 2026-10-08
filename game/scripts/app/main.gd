@@ -24,7 +24,8 @@ func _ready() -> void:
 	var map_dir := map_dir_from_args(OS.get_cmdline_user_args())
 	var problem := _map.load_map(map_dir)
 	if _map.index != null and not _map.index.attribution.is_empty():
-		_credit.text = _map.index.attribution[0]
+		# Все источники: участки несут не только геометрию OSM, но и производные данные (жители — GHS-POP).
+		_credit.text = "\n".join(_map.index.attribution)
 	if not problem.is_empty():
 		push_error(problem)
 		_message.text = problem + ("\n\n" + EXPORT_HINT if _map.tile_views().is_empty() else "")

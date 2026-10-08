@@ -6,6 +6,9 @@ extends Node2D
 # участка заданы в метрах относительно этого угла.
 
 const NODE_COUNT := 5
+# Слои рисуются по z_index через все участки уровня, а не участок за участком: здание, выступающее
+# за край участка, не закрывается площадями соседнего. Шаг уровня оставляет место фону уровня (0).
+const LEVEL_Z_STEP := 10
 
 var level := -1
 var tile_size_m := 0.0
@@ -18,6 +21,7 @@ func setup(tile: MapTile, style: Dictionary) -> void:
 	level = tile.level
 	tile_size_m = tile.tile_size_m
 	position = tile.origin
+	z_index = tile.level * LEVEL_Z_STEP
 	_add("Areas", _area_mesh(tile, style.area_palette))
 	var fill := _add("Buildings", _building_mesh(tile, false))
 	fill.self_modulate = MapTheme.BUILDING_FILL
@@ -32,6 +36,7 @@ func _add(node_name: String, mesh: ArrayMesh) -> MeshInstance2D:
 	var node := MeshInstance2D.new()
 	node.name = node_name
 	node.mesh = mesh
+	node.z_index = get_child_count() + 1
 	add_child(node)
 	return node
 

@@ -18,6 +18,8 @@ const COLUMNS := {
 	"building.xy": 2, "building.cls": 1, "building.tri": 3, "building.outline": 2,
 	"pick.ring": 3, "pick.bbox": 4,
 }
+const INT_SECTIONS := ["area.tri", "line.tri", "building.tri", "building.outline", "pick.ring"]
+const JSON_SECTIONS := ["pick.attrs"]
 const PER_VERTEX := ["area.cls", "line.off", "line.cls", "building.cls"]
 const LAYERS := {
 	"area": ["area.xy", "area.cls", "area.tri"],
@@ -138,19 +140,22 @@ func _read_section(bytes: PackedByteArray, data_start: int, item: Variant) -> St
 			return "раздел %s: неизвестное сжатие %s" % [name, item.get("codec")]
 	if raw.size() != raw_size:
 		return "раздел %s: после распаковки %d байт вместо %d" % [name, raw.size(), raw_size]
+	var required := _required_dtype(name)
+	if required.is_empty():
+		return "неизвестный раздел %s" % name
+	if dtype != required:
+		return "раздел %s: тип %s вместо %s" % [name, dtype, required]
 	if dtype == "json":
 		var json := JSON.new()
 		if json.parse(raw.get_string_from_utf8()) != OK:
 			return "раздел %s: некорректный JSON (%s)" % [name, json.get_error_message()]
 		sections[name] = json.data
 		return ""
-	if dtype != "f32" and dtype != "i32":
-		return "раздел %s: неизвестный тип %s" % [name, dtype]
 	var count := int(item.get("count", -1))
-	var shape: Array = item.get("shape", [])
-	var columns: int = COLUMNS.get(name, 0)
-	if columns == 0:
-		return "неизвестный раздел %s" % name
+	var shape: Variant = item.get("shape", [])
+	if not shape is Array or not is_numbers(shape, shape.size()):
+		return "раздел %s: форма не является списком чисел" % name
+	var columns: int = COLUMNS[name]
 	var expected_shape := [count] if columns == 1 else [count / columns, columns]
 	if count * 4 != raw_size or count % columns != 0 or shape.map(func(v): return int(v)) != expected_shape:
 		return "раздел %s: форма %s и %d значений не согласуются (%d байт)" % [name, shape, count, raw_size]
@@ -181,6 +186,15 @@ func _check_layers() -> String:
 	if level == 0 and has_layer("building"):
 		return "в обзоре региона не должно быть зданий"
 	return ""
+
+
+## Тип раздела по имени: индексы — i32, данные карточки — json, остальное — f32; "" — неизвестный раздел.
+static func _required_dtype(name: String) -> String:
+	if name in JSON_SECTIONS:
+		return "json"
+	if name in INT_SECTIONS:
+		return "i32"
+	return "f32" if COLUMNS.has(name) else ""
 
 
 ## Значение — массив из count чисел (защита от искажённого JSON до обращения по индексу).

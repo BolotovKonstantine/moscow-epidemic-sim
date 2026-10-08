@@ -84,6 +84,12 @@ func _test_rejections(fixture: String) -> void:
 		bytes[16 + i] = patched[i]
 	_expect_error(bytes, {}, "версии 7", "чужая версия схемы в заголовке отклоняется")
 
+	bytes = source.duplicate()
+	patched = header_text.replace("\"dtype\":\"i32\",\"name\":\"area.tri\"", "\"dtype\":\"f32\",\"name\":\"area.tri\"").to_utf8_buffer()
+	for i in patched.size():
+		bytes[16 + i] = patched[i]
+	_expect_error(bytes, {}, "тип f32 вместо i32", "индексы треугольников с типом f32 отклоняются")
+
 	var tile := MapTile.open(_write("other_package.mtile", source), {"package_id": "moscow-2021"})
 	check("package_id" in tile.error, "участок другого пакета отклоняется: " + tile.error)
 	tile = MapTile.open(_scratch.path_join("missing.mtile"))
@@ -129,6 +135,12 @@ func _test_views(fixture: String) -> void:
 	root.add_child(map)
 	var problem := map.load_map(fixture)
 	check(problem.is_empty(), "MapView загружает фикстуру: " + problem)
+	var detail: MapTileView = map.tile_views()[-1]
+	var areas_z: int = detail.z_index + detail.get_node("Areas").z_index
+	var buildings_z: int = detail.z_index + detail.get_node("Buildings").z_index
+	var background: Node2D = map.get_node("Background_z2")
+	check(background.z_index < areas_z and areas_z < buildings_z,
+		"слои уровня упорядочены через все его участки: фон %d < площади %d < здания %d" % [background.z_index, areas_z, buildings_z])
 	for view in map.tile_views():
 		check(view.get_child_count() == MapTileView.NODE_COUNT, "%s: %d узлов вместо %d" % [
 			view.name, view.get_child_count(), MapTileView.NODE_COUNT])
