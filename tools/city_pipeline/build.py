@@ -314,6 +314,8 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     projector = Projector(config["metric_crs"])
     # Модельные параметры ссылаются на конфигурацию, а не на OSM.
     model_source = config_source(config, created_at, config_path, config_bytes)
+    if any(source["source_id"] == model_source["source_id"] for source in sources):
+        raise ValueError(f"ID {model_source['source_id']} зарезервирован для конфигурации сборки")
     sources = sorted(sources + [model_source], key=lambda source: source["source_id"])
     source_roles = dict(source_roles, config=model_source["source_id"])
 
@@ -353,7 +355,7 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     building_zone = zones.index_of(buildings.centroid_x, buildings.centroid_y)
 
     log("Население…")
-    cells = read_cells(raster, region_wgs)
+    cells = read_cells(raster, region_wgs, region_metric, projector)
     cx, cy = cell_points(cells, projector)
     cell_zone = zones.index_of(cx, cy)
     population = allocate(buildings, building_zone, cells, cell_zone, zones.ix, zones.iy, config, building_ids)
@@ -364,11 +366,11 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     node_zone = zones.index_of(node_x, node_y)
 
     log("Транспорт…")
-    network = build_network(data, region_wgs, projector, config)
+    network = build_network(data, region_wgs, projector, config, region_metric)
     transit_count, transit_largest, _ = transit_components(network)
 
     log("Учреждения…")
-    facilities, fac_x, fac_y = collect_facilities(data, buildings, projector, config, region_wgs)
+    facilities, fac_x, fac_y = collect_facilities(data, buildings, projector, config, region_wgs, region_metric)
     fac_zone = zones.index_of(fac_x, fac_y)
 
     # ---------------------------------------------------------------- запись файлов

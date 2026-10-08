@@ -170,7 +170,7 @@ def _member_id(kind, ref):
     return f"{kind}{ref}"
 
 
-def build_network(data, region_wgs84, projector, config):
+def build_network(data, region_wgs84, projector, config, region_metric=None):
     transit = config["transit"]
     stop_roles = set(transit["stop_roles"])
     platform_roles = set(transit["platform_roles"])
@@ -247,9 +247,12 @@ def build_network(data, region_wgs84, projector, config):
     stop_ids = sorted(used)
     lon = np.array([points[stop][0][0] for stop in stop_ids], dtype=np.float64)
     lat = np.array([points[stop][0][1] for stop in stop_ids], dtype=np.float64)
-    shapely.prepare(region_wgs84)
-    inside = shapely.contains_xy(region_wgs84, lon, lat) if stop_ids else np.array([], dtype=bool)
     x, y = projector.xy(lon, lat)
+    # Внутри ли остановка — по метрической границе (WGS84 только для хранения координат).
+    if region_metric is None:
+        region_metric = projector.to_metric(region_wgs84)
+    shapely.prepare(region_metric)
+    inside = shapely.contains_xy(region_metric, x, y) if stop_ids else np.array([], dtype=bool)
     position = {stop: index for index, stop in enumerate(stop_ids)}
     stops = [{
         "stop_id": stop, "osm_ids": members_of.get(stop, [stop]), "name": _stop_name(stop, members_of.get(stop, [stop]), points), "lon": lon[index], "lat": lat[index],

@@ -21,6 +21,7 @@ import numpy as np
 import rasterio
 import rasterio.features
 import rasterio.windows
+import shapely
 
 from .buildings import FUNCTIONS
 
@@ -58,7 +59,7 @@ def outward_window(window, width, height):
     return rasterio.windows.Window(col0, row0, max(col1 - col0, 0), max(row1 - row0, 0))
 
 
-def read_cells(raster_path, region_wgs84):
+def read_cells(raster_path, region_wgs84, region_metric=None, projector=None):
     """Ячейки сетки внутри региона: (lon, lat, population)."""
     with rasterio.open(raster_path) as dataset:
         if dataset.crs is None or dataset.crs.to_epsg() != 4326:
@@ -69,7 +70,17 @@ def read_cells(raster_path, region_wgs84):
         window = outward_window(rasterio.windows.from_bounds(minx, miny, maxx, maxy, dataset.transform), dataset.width, dataset.height)
         values = dataset.read(1, window=window, masked=True).astype(np.float64)
         transform = dataset.window_transform(window)
-    inside = rasterio.features.geometry_mask([region_wgs84], out_shape=values.shape, transform=transform, invert=True, all_touched=False)
+    if region_metric is None or projector is None:
+        inside = rasterio.features.geometry_mask([region_wgs84], out_shape=values.shape, transform=transform, invert=True, all_touched=False)
+    else:
+        # Окно и кандидаты — в градусах (с запасом, all_touched), решение по центру ячейки — в метрах.
+        candidate = rasterio.features.geometry_mask([region_wgs84], out_shape=values.shape, transform=transform, invert=True, all_touched=True)
+        rows, cols = np.nonzero(candidate)
+        cx, cy = rasterio.transform.xy(transform, rows, cols, offset="center")
+        mx, my = projector.xy(np.asarray(cx), np.asarray(cy))
+        shapely.prepare(region_metric)
+        inside = np.zeros(values.shape, dtype=bool)
+        inside[rows, cols] = shapely.contains_xy(region_metric, mx, my)
     # Ячейки без данных (nodata, NaN, отрицательные) — пропуск покрытия, а не ноль жителей.
     missing = (np.ma.getmaskarray(values) | ~np.isfinite(values.data) | (values.data < 0)) & inside
     data = values.filled(0.0)

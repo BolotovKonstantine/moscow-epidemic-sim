@@ -83,8 +83,12 @@ def build_graph(ways, region_wgs84, projector, region_metric=None):
     node_ids = np.array(sorted(coords), dtype=np.int64)
     node_lon = np.array([coords[node][0] for node in node_ids.tolist()])
     node_lat = np.array([coords[node][1] for node in node_ids.tolist()])
-    shapely.prepare(region_wgs84)
-    node_inside = shapely.contains_xy(region_wgs84, node_lon, node_lat)
+    # Все проверки принадлежности региону — в метрической проекции, включая концы рёбер.
+    if region_metric is None:
+        region_metric = projector.to_metric(region_wgs84)
+    shapely.prepare(region_metric)
+    node_x, node_y = projector.xy(node_lon, node_lat)
+    node_inside = shapely.contains_xy(region_metric, node_x, node_y)
 
     position = {node: index for index, node in enumerate(node_ids.tolist())}
     inside_a = np.array([node_inside[position[edge["from_node"]]] for edge in edges], dtype=bool)
@@ -92,9 +96,6 @@ def build_graph(ways, region_wgs84, projector, region_metric=None):
     geometry = shapely.linestrings(np.concatenate(lines), indices=np.repeat(np.arange(len(lines)), [len(c) for c in lines]))
     # Пересечение и покрытие проверяются в метрической проекции: хорды в градусах не прямые в метрах.
     geometry = projector.to_metric(geometry)
-    if region_metric is None:
-        region_metric = projector.to_metric(region_wgs84)
-    shapely.prepare(region_metric)
     # Ребро сохраняется, если часть его проходит по внутренности региона (концы могут быть
     # оба снаружи). Касание или проход вдоль границы без входа внутрь не считается.
     touches = inside_a | inside_b

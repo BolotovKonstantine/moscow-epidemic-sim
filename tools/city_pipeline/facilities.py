@@ -71,7 +71,7 @@ def _merge_duplicates(records, projector):
     return merged
 
 
-def collect(data, buildings, projector, config, region_wgs84):
+def collect(data, buildings, projector, config, region_wgs84, region_metric=None):
     """Список учреждений с привязкой к зданиям. Возвращает (записи, метрические точки).
 
     Как и здания, учреждение входит в пакет, только если его представительная точка
@@ -101,11 +101,18 @@ def collect(data, buildings, projector, config, region_wgs84):
             row = building_index[osm_id]
             source, lon, lat = "building", float(buildings.lon[row]), float(buildings.lat[row])
         else:
-            point = shapely.point_on_surface(polygon)
-            source, lon, lat = "site", point.x, point.y
+            # Точка участка выбирается в метрах (как у зданий) и переводится обратно в WGS84.
+            point = shapely.point_on_surface(projector.to_metric(polygon))
+            point_lon, point_lat = projector.lonlat(point.x, point.y)
+            source, lon, lat = "site", float(point_lon), float(point_lat)
         records.append({"facility_id": osm_id, "kind": kind, "name": tags.get("name", ""), "source": source, "lon": lon, "lat": lat, "area": polygon})
-    shapely.prepare(region_wgs84)
-    records = [record for record in records if shapely.contains_xy(region_wgs84, record["lon"], record["lat"])]
+    if region_metric is None:
+        region_metric = projector.to_metric(region_wgs84)
+    shapely.prepare(region_metric)
+    if records:
+        rx, ry = projector.xy(np.array([r["lon"] for r in records]), np.array([r["lat"] for r in records]))
+        keep = shapely.contains_xy(region_metric, np.atleast_1d(rx), np.atleast_1d(ry))
+        records = [record for record, flag in zip(records, keep) if flag]
     records = _merge_duplicates(records, projector)
 
     lon = np.array([record["lon"] for record in records], dtype=np.float64)

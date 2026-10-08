@@ -119,6 +119,17 @@ class RegistryTests(unittest.TestCase):
                         load_registry(path)
             real = Path(__file__).resolve().parents[2] / "data" / "manifests" / "sources.json"
             self.assertEqual(len(load_registry(real)), 2)
+            registry = json.loads(real.read_text(encoding="utf-8"))
+            # Два источника с одним файлом: fetch перезаписывал бы один другим.
+            twin = dict(registry["sources"][0], source_id="osm-copy")
+            path.write_text(json.dumps({"registry_version": 1, "sources": registry["sources"] + [twin]}, ensure_ascii=False))
+            with self.assertRaisesRegex(ManifestError, "уже указан"):
+                load_registry(path)
+            # Префикс build-config- зарезервирован для источника-конфигурации.
+            reserved = dict(registry["sources"][0], source_id="build-config-moscow-2021", file="other.pbf")
+            path.write_text(json.dumps({"registry_version": 1, "sources": [reserved]}, ensure_ascii=False))
+            with self.assertRaisesRegex(ManifestError, "зарезервирован"):
+                load_registry(path)
 
 
 
@@ -217,6 +228,9 @@ class ConfigSnapshotTests(unittest.TestCase):
             path.write_text(config, encoding="utf-8")
             with self.assertRaisesRegex(ManifestError, "1e400"):
                 load_config(path)
+
+    def test_empty_mkad_match_values_rejected(self):
+        self.invalid(lambda c: c["boundary"]["mkad"]["match"].__setitem__("ref", []), "boundary.mkad.match.ref")
 
     def test_mkad_classes_crs_and_transfer_bounds_rejected(self):
         self.invalid(lambda c: c["boundary"]["mkad"].__setitem__("highways", []), "boundary.mkad.highways")

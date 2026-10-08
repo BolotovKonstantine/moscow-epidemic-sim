@@ -22,7 +22,7 @@
         "mkad": {
           "type": "object", "additionalProperties": false, "required": ["match", "highways"],
           "properties": {
-            "match": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/strings"}},
+            "match": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/strings", "minItems": 1}},
             "highways": {"$ref": "#/$defs/strings", "minItems": 1}
           }
         },
