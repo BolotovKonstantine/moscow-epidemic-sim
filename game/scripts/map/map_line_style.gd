@@ -6,7 +6,7 @@ extends RefCounted
 
 const SHADER := preload("res://shaders/map_line.gdshader")
 const MAX_CLASSES := 16   # размер массивов в map_line.gdshader
-const MAX_OFFSET := 4.0   # |UV| ленты: стык не длиннее 3 полуширин (MITER_LIMIT экспорта) плюс квадратный конец
+const MAX_OFFSET := 4.0   # предел каждой компоненты UV ленты: стык ≤ 3 полуширин (MITER_LIMIT экспорта) + конец; проверяет MapTile
 
 var casing := ShaderMaterial.new()
 var fill := ShaderMaterial.new()
@@ -57,4 +57,4 @@ func max_displacement_m(mpp: float) -> float:
 	var half := 0.0
 	for code in MAX_CLASSES:
 		half = maxf(half, 0.5 * maxf(_width_m[code], _min_px[code] * mpp) + _casing_px[code] * mpp)
-	return half * MAX_OFFSET
+	return half * MAX_OFFSET * sqrt(2.0)   # обе компоненты до MAX_OFFSET — длина смещения до MAX_OFFSET·√2

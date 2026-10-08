@@ -254,6 +254,8 @@ func _check_layers() -> String:
 		var cls_name: String = layer + ".cls"
 		if not _codes_within(sections[cls_name], class_list.size()):
 			return "раздел %s: код класса вне списка из %d классов" % [cls_name, class_list.size()]
+	if has_layer("line") and not _within(sections["line.off"], MapLineStyle.MAX_OFFSET):
+		return "line.off: смещение ленты больше %.0f полуширин — шейдер вынес бы её за границы отсечения" % MapLineStyle.MAX_OFFSET
 	if level == 0 and has_layer("building"):
 		return "в обзоре региона не должно быть зданий"
 	return _check_pick()
@@ -359,6 +361,15 @@ static func _indices_within(indices: PackedInt32Array, vertices: int) -> bool:
 	var sorted := indices.duplicate()
 	sorted.sort()
 	return sorted[0] >= 0 and sorted[-1] < vertices
+
+
+## Все значения в [-limit, limit] (значения уже проверены на конечность).
+static func _within(values: PackedFloat32Array, limit: float) -> bool:
+	if values.is_empty():
+		return true
+	var sorted := values.duplicate()
+	sorted.sort()
+	return sorted[0] >= -limit and sorted[-1] <= limit
 
 
 static func _codes_within(codes: PackedFloat32Array, class_count: int) -> bool:

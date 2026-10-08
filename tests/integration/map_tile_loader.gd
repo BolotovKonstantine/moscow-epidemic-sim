@@ -107,6 +107,9 @@ func _test_rejections(fixture: String) -> void:
 	var rings := _section_descriptor(source, "pick.ring")
 	check(rings.codec == "none" or rings.codec == "deflate", "у pick.ring известное сжатие")
 	var tile_ok := MapTile.open(_write("pick.mtile", source))
+	tile_ok.sections["line.off"][0] = 100.0
+	check("line.off" in tile_ok._check_layers(), "смещение ленты за пределом отклоняется")
+	tile_ok.sections["line.off"][0] = 0.0
 	tile_ok.sections["pick.ring"][1] = 999
 	check("pick.ring" in tile_ok._check_pick(), "кольцо с вершинами вне building.xy отклоняется")
 	tile_ok.sections["pick.ring"][1] = 0
