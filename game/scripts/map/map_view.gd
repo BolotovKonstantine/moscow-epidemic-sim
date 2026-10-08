@@ -63,7 +63,7 @@ func load_map(map_dir: String) -> String:
 		_tiles.append(view)
 		if tile.level == 0:
 			# Охват — из заголовка обзора, защищённого SHA256 (с индексом он сверен при загрузке).
-			region_rect = tile.bbox if tile.bbox.has_area() else Rect2(Vector2.ZERO, Vector2.ONE * 1000.0)
+			region_rect = tile.bbox   # у обзора охват обязателен (MapTile)
 	if _tiles.is_empty() or _tiles[0].level != 0:
 		# Без обзора нет ни границ региона для камеры, ни подложки: подробные участки не показываем.
 		errors.insert(0, "Обзор региона не загружен")
