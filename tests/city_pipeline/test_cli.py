@@ -246,6 +246,26 @@ class ConfigSnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "для роли population"):
             _selected_sources(config, registry)
 
+    def test_tiny_cells_and_blank_moscow_selectors_rejected(self):
+        self.invalid(lambda c: c["zones"].__setitem__("cell_size_m", 1e-320), "zones.cell_size_m")
+        self.invalid(lambda c: c["boundary"].__setitem__("moscow_admin", {"name": " "}), "boundary.moscow_admin")
+
+    def test_population_raster_found_inside_archive(self):
+        import zipfile
+        from tools.city_pipeline.__main__ import population_raster
+        source = Path(__file__).resolve().parents[2] / "data" / "raw"
+        with tempfile.TemporaryDirectory() as directory:
+            from tests.city_pipeline.synthetic_city import build_city
+            _, tif = build_city(Path(directory))
+            archive = Path(directory) / "population.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.write(tif, "nested/tile_2020.tif")   # имя не совпадает с именем архива
+            self.assertTrue(population_raster(archive).endswith("!/nested/tile_2020.tif"))
+            with zipfile.ZipFile(archive, "a") as bundle:
+                bundle.write(tif, "second.tif")
+            with self.assertRaisesRegex(ManifestError, "ровно один GeoTIFF"):
+                population_raster(archive)
+
     def test_float_encoded_integers_rejected(self):
         self.invalid(lambda c: c["quality"].__setitem__("manual_sample_size", 60.0), "quality.manual_sample_size")
         self.invalid(lambda c: c["quality"].__setitem__("sample_seed", 20210101.0), "quality.sample_seed")

@@ -57,5 +57,15 @@ class RoadTests(unittest.TestCase):
         self.assertEqual(expressions, ["r/admin_level=4", "r/boundary=administrative", "w/highway=motorway,trunk,primary"])
 
 
+    def test_gateways_only_at_side_transitions(self):
+        from tools.city_pipeline.build import side_transitions
+        region = box(0, 0, 100, 100)
+        # Входит снизу (x=50, y=0), касается правой границы в точке (100, 50) изнутри и выходит сверху.
+        line = LineString([(50, -20), (50, 20), (100, 50), (60, 80), (60, 120)])
+        candidates = crossing_points(line.intersection(region.boundary))
+        kept = side_transitions(line, candidates, region)
+        self.assertEqual(sorted(map(tuple, kept)), [(50.0, 0.0), (60.0, 100.0)])   # касание не вход
+
+
 if __name__ == "__main__":
     unittest.main()

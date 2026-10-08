@@ -18,7 +18,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["moscow_admin", "mkad", "mkad_edge_offset_m", "buffer_meters", "mkad_area_km2_range"],
       "properties": {
-        "moscow_admin": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string"}},
+        "moscow_admin": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"$ref": "#/$defs/text"}},
         "mkad": {
           "type": "object", "additionalProperties": false, "required": ["match", "highways"],
           "properties": {
@@ -33,7 +33,7 @@
     },
     "zones": {
       "type": "object", "additionalProperties": false, "required": ["cell_size_m"],
-      "properties": {"cell_size_m": {"$ref": "#/$defs/positive"}}
+      "properties": {"cell_size_m": {"type": "number", "minimum": 100, "maximum": 10000}}
     },
     "roads": {
       "type": "object", "additionalProperties": false, "required": ["highways"],

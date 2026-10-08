@@ -147,6 +147,29 @@ def _selected_sources(config, registry):
     return selected
 
 
+def population_raster(archive: Path) -> str:
+    """Путь rasterio к единственному GeoTIFF в архиве, проверенный до тяжёлых этапов сборки."""
+    import zipfile
+
+    import rasterio
+
+    try:
+        with zipfile.ZipFile(archive) as bundle:
+            members = sorted(name for name in bundle.namelist() if name.lower().endswith((".tif", ".tiff")))
+    except (OSError, zipfile.BadZipFile) as error:
+        raise ManifestError(f"{archive}: не удалось открыть архив сетки населения: {error}") from error
+    if len(members) != 1:
+        raise ManifestError(f"{archive}: в архиве должен быть ровно один GeoTIFF, найдено {members}")
+    path = f"zip://{archive}!/{members[0]}"
+    try:
+        with rasterio.open(path) as dataset:
+            if dataset.crs is None or dataset.crs.to_epsg() != 4326:
+                raise ManifestError(f"{path}: сетка населения должна быть в EPSG:4326, получено {dataset.crs}")
+    except rasterio.errors.RasterioError as error:
+        raise ManifestError(f"{path}: не удалось открыть растр: {error}") from error
+    return path
+
+
 def _minutes(clock):
     hours, minutes = map(int, clock.split(":"))
     return hours * 60 + minutes
@@ -195,6 +218,7 @@ def command_build(args) -> int:
     selected = _selected_sources(config, registry)
     osm = verify(selected["osm"], args.raw)
     raster_zip = verify(selected["population"], args.raw)
+    raster = population_raster(raster_zip)   # архив и растр проверяются до границы и вырезки
     work.mkdir(parents=True, exist_ok=True)
     # Одинаковые сборки, запущенные одновременно, ждут друг друга, а не пишут одни файлы.
     lock = (work / ".lock").open("w")
@@ -214,8 +238,6 @@ def command_build(args) -> int:
     print("Вырезка OSM…")
     region_osm = clip_region(osm, region_wgs, work)
 
-    raster_name = selected["population"]["file"].removesuffix(".zip") + ".tif"
-    raster = f"zip://{raster_zip}!/{raster_name}"
     processing = f"city_pipeline-{config['package_id']}-{config['package_version']}"
     sources = [manifest_source(selected[role], processing) for role in sorted(selected)]
     manifest, report = build_package(

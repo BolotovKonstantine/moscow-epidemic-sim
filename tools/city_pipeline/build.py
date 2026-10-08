@@ -147,6 +147,26 @@ def crossing_points(crossing):
     return np.unique(np.vstack(points), axis=0)
 
 
+def side_transitions(line, candidates, region_metric, step_m=0.5):
+    """Оставить только кандидаты, где путь вдоль ребра меняет сторону (снаружи ↔ внутри).
+
+    Сторона берётся по точкам чуть до и чуть после кандидата вдоль линии; точка на самой
+    границе считается снаружи, поэтому касание и проход вдоль границы без захода внутрь
+    переходом не являются, а вход в участок вдоль границы изнутри — является один раз.
+    """
+    if len(candidates) == 0:
+        return candidates
+    length = line.length
+    keep = []
+    for x, y in candidates:
+        distance = line.project(shapely.Point(x, y))
+        before = line.interpolate(max(distance - step_m, 0.0))
+        after = line.interpolate(min(distance + step_m, length))
+        if region_metric.contains(before) != region_metric.contains(after):
+            keep.append((x, y))
+    return np.array(keep, dtype=np.float64).reshape(-1, 2)
+
+
 def road_zone_crossings(edge_lines, projector, zones, region_metric=None, covered=None):
     """Пары соседних зон, границу между которыми пересекает ребро дороги.
 
@@ -303,7 +323,7 @@ def config_source(config, created_at, config_path: Path | None = None, config_by
         "license": license_,
         "data_date": None,
         "acquired_at": created_at,
-        "coverage": f"Модельные параметры конфигурации сборки (model_assumptions): интервалы движения, скорость и надбавка пересадки; {origin}",
+        "coverage": f"Конфигурация сборки целиком: правило и параметры границы, классы дорог, классификация зданий и учреждений, распределение населения, сетка зон, пороги объединения остановок и модельные параметры (model_assumptions); {origin}",
         "format": "json",
         "sha256": hashlib.sha256(data).hexdigest(),
         "processing_version": f"config.{config_digest(config)}",
@@ -386,7 +406,7 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
             record["estimation"] = estimation
         assets.append(record)
 
-    add("region-boundary", "boundary", "boundary.geojson", "geojson", "game_setting", ["osm"])
+    add("region-boundary", "boundary", "boundary.geojson", "geojson", "game_setting", ["osm", "config"])
     (out_dir / "build_config.json").write_bytes(config_snapshot(config, config_path, config_bytes))
     add("build-config", "config", "build_config.json", "json", "game_setting", ["config"])
 
@@ -405,7 +425,7 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
                 fmt(buildings.footprint_m2[row], 1), fmt(buildings.levels[row], 2), buildings.levels_source[row], fmt(buildings.floor_area_m2[row], 1),
                 buildings.function_source[row], FUNCTIONS[dominant[row]] if dominant[row] >= 0 else "unknown"]
                + [fmt(value, 3) for value in buildings.shares[row]] for row in range(len(buildings.ids))))
-    add("building-attributes", "buildings", "building_attributes.csv.gz", "csv+gzip", "estimated", ["osm"], {
+    add("building-attributes", "buildings", "building_attributes.csv.gz", "csv+gzip", "estimated", ["osm", "config"], {
         "method": "Функции по тегам здания, точкам организаций внутри контура и участкам landuse/территорий; этажность из building:levels, height или значения по типу здания. Источник каждого значения — в колонках function_source и levels_source.",
         "uncertainty": "Для function_source=poi/site и levels_source=default значения являются оценкой; доля вторичных функций — модельный вес poi_secondary_weight.",
     })
@@ -413,7 +433,7 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     write_csv(out_dir / "population.csv.gz", ["building_id", "zone_id", "residents", "method"],
               ([buildings.ids[row], zone_name[building_zone[row]], int(population.residents[row]), population.method[row]]
                for row in np.nonzero(population.residents)[0]))
-    add("population", "population", "population.csv.gz", "csv+gzip", "estimated", ["osm", "population"], {
+    add("population", "population", "population.csv.gz", "csv+gzip", "estimated", ["osm", "population", "config"], {
         "method": "Население ячеек GHS-POP внутри региона распределено по жилой площади (площадь × этажность × доля жилья); ячейки без жилья — через пул зоны и блок зон; округление методом наибольших остатков сохраняет распределённую сумму. Население блоков без подходящих зданий не распределяется и показано в quality_report (population.unallocated), поэтому сумма файла может быть меньше итога сетки.",
         "uncertainty": "Сетка сама является моделью (JRC). Точность на уровне отдельного дома низкая; итоги зон и региона надёжнее. Возраст и домохозяйства не определены.",
     })
@@ -444,9 +464,9 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
         "method": "Остановки, маршруты и их порядок — из отношений OSM. Точка остановки и платформа объединяются в одну остановку эвристически: соседние в маршруте ближе stop_platform_pair_m или с одним именем ближе stop_platform_pair_same_name_m; синонимы применяются ко всем маршрутам. Отрезки — по прямой между соседними остановками.",
         "uncertainty": "Пороги объединения — параметры конфигурации: разные близкие остановки могут быть слиты, пары с ошибками порядка в OSM — не найдены. stop_id — ID представителя объединённой остановки; все исходные ID OSM, вошедшие в неё, — в колонке osm_ids файла transit_stops.",
     }
-    add("transit-stops", "transport", "transit_stops.csv.gz", "csv+gzip", "estimated", ["osm"], transit_estimation)
-    add("transit-routes", "transport", "transit_routes.csv.gz", "csv+gzip", "estimated", ["osm"], transit_estimation)
-    add("transit-segments", "transport", "transit_segments.csv.gz", "csv+gzip", "estimated", ["osm"], transit_estimation)
+    add("transit-stops", "transport", "transit_stops.csv.gz", "csv+gzip", "estimated", ["osm", "config"], transit_estimation)
+    add("transit-routes", "transport", "transit_routes.csv.gz", "csv+gzip", "estimated", ["osm", "config"], transit_estimation)
+    add("transit-segments", "transport", "transit_segments.csv.gz", "csv+gzip", "estimated", ["osm", "config"], transit_estimation)
     write_csv(out_dir / "transit_transfers.csv.gz", ["stop_area_id", "from_stop", "to_stop", "distance_m", "walk_s"],
               ([t["stop_area_id"], t["from_stop"], t["to_stop"], fmt(t["distance_m"], 1), fmt(t["walk_s"], 0)] for t in network.transfers))
     add("transit-transfers", "transport", "transit_transfers.csv.gz", "csv+gzip", "estimated", ["osm", "config"], {
@@ -470,13 +490,14 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     gateway_index = [i for i, edge in enumerate(graph.edges) if edge["gateway"]]
     # Пересечения считаются в метрической проекции (как требует data.md), затем точки переводятся в WGS84.
     border = shapely.boundary(region_metric)
-    crossings = shapely.intersection(projector.to_metric(graph.edge_lines[gateway_index]), border) if gateway_index else []
-    for index, crossing in zip(gateway_index, crossings):
+    gateway_metric = projector.to_metric(graph.edge_lines[gateway_index]) if gateway_index else []
+    crossings = shapely.intersection(gateway_metric, border) if gateway_index else []
+    for index, crossing, line in zip(gateway_index, crossings, gateway_metric):
         edge = graph.edges[index]
         a, b = position[edge["from_node"]], position[edge["to_node"]]
         inner = [int(graph.node_ids[n]) for n in (a, b) if graph.node_inside[n]]
         outer = [int(graph.node_ids[n]) for n in (a, b) if not graph.node_inside[n]]
-        metric_points = crossing_points(crossing)
+        metric_points = side_transitions(line, crossing_points(crossing), region_metric)
         point_zone = zones.index_near(metric_points[:, 0], metric_points[:, 1])
         lon, lat = projector.lonlat(metric_points[:, 0], metric_points[:, 1])
         points = np.column_stack((np.atleast_1d(lon), np.atleast_1d(lat)))
@@ -492,7 +513,7 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
             i = stop_position[end]
             gateway_rows.append(["transit", route["route_id"], route["mode"], end, "", zone_name[stop_zone[i]], fmt(network.stops[i]["lon"], 7), fmt(network.stops[i]["lat"], 7)])
     write_csv(out_dir / "gateways.csv.gz", ["kind", "ref", "class", "inside_ref", "outside_ref", "zone_id", "lon", "lat"], gateway_rows)
-    add("gateways", "transport", "gateways.csv.gz", "csv+gzip", "estimated", ["osm"], {
+    add("gateways", "transport", "gateways.csv.gz", "csv+gzip", "estimated", ["osm", "config"], {
         "method": "road — пересечения рёбер дорог OSM с границей региона; transit — остановки внутри региона, соседние по маршруту с остановкой снаружи (после объединения остановок, см. transit-stops).",
         "uncertainty": "Входы маршрутов наследуют эвристику объединения остановок; при ненайденном члене маршрута между остановками вход не публикуется.",
     })
@@ -501,7 +522,7 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     write_csv(out_dir / "facilities.csv.gz", ["facility_id", "kind", "name", "source", "osm_ids", "lon", "lat", "zone_id", "building_ids", "capacity"],
               ([f["facility_id"], f["kind"], f["name"], f["source"], ";".join(f["osm_ids"]), fmt(f["lon"], 7), fmt(f["lat"], 7), zone_name[fac_zone[i]], ";".join(f["building_ids"]), "unknown"]
                for i, f in enumerate(facilities)))
-    add("facilities", "facilities", "facilities.csv.gz", "csv+gzip", "estimated", ["osm"], {
+    add("facilities", "facilities", "facilities.csv.gz", "csv+gzip", "estimated", ["osm", "config"], {
         "method": "Вид и имя — из тегов OSM. Координаты: у точек — координаты узла OSM; у учреждения-здания — представительная точка здания (point_on_surface в метрической проекции); у учреждения-территории — point_on_surface её контура, то есть вычисленная точка, а не наблюдение. Точки, корпуса и территории одного вида, вложенные друг в друга, объединены в одно учреждение (osm_ids) эвристически; building_ids — здания, чья представительная точка лежит в контуре или содержит точку учреждения.",
         "uncertainty": "Объединение и привязка к зданиям — пространственная эвристика: соседние разные учреждения одного вида могут быть слиты, корпуса — не привязаны. Точка контура лежит внутри него, но не обязательно у входа или главного корпуса. Вместимость unknown.",
     })
@@ -530,7 +551,7 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
         "residential_floor_area_m2": round(float(res_area[z]), 1), "transit_stops": int(zone_stops[z]),
         "facilities": dict(sorted(zone_fac.get(z, {}).items())),
     } for z in range(zone_count)])
-    add("zones", "zones", "zones.geojsonl.gz", "geojsonl+gzip", "estimated", ["osm", "population"], {
+    add("zones", "zones", "zones.geojsonl.gz", "geojsonl+gzip", "estimated", ["osm", "population", "config"], {
         "method": f"Квадратная сетка {int(zones.cell_size)} м в {config['metric_crs']}, обрезанная границей региона; жители — сумма population.csv.gz по зонам.",
         "uncertainty": "Граница зоны — расчётное деление, не административная единица; неопределённость населения та же, что у population.",
     })
@@ -550,7 +571,7 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
             links[key] = (count + 1, min(length, segment["distance_m"]))
     write_csv(out_dir / "zone_links.csv.gz", ["zone_a", "zone_b", "kind", "connections", "min_length_m"],
               ([zones.ids[a], zones.ids[b], kind, count, fmt(length, 1)] for (a, b, kind), (count, length) in sorted(links.items(), key=lambda item: (zones.ids[item[0][0]], zones.ids[item[0][1]], item[0][2]))))
-    add("zone-links", "zones", "zone_links.csv.gz", "csv+gzip", "estimated", ["osm"], {
+    add("zone-links", "zones", "zone_links.csv.gz", "csv+gzip", "estimated", ["osm", "config"], {
         "method": "road — пересечения рёбер дорог OSM с границами квадратов сетки внутри региона; виды транспорта — зоны соседних остановок маршрута после объединения остановок (см. transit-stops).",
         "uncertainty": "Связи по дорогам точны относительно данных OSM; связи по транспорту наследуют эвристику объединения остановок.",
     })
