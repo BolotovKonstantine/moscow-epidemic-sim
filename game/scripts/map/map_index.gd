@@ -38,6 +38,7 @@ func load_tile(entry: Dictionary) -> MapTile:
 		"sha256": entry.sha256, "level": entry.level, "tile": entry.tile, "bbox": entry.bbox,
 		"size_bytes": entry.size_bytes,
 		"package_id": package_id, "package_version": package_version, "classes": classes,
+		"attribution": attribution,
 	})
 
 

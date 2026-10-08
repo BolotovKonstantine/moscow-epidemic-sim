@@ -60,8 +60,8 @@ func load_map(map_dir: String) -> String:
 		add_child(view)
 		view.setup(tile, style)
 		# Заявленный охват должен покрывать геометрию: по нему ограничивается камера.
-		var geometry := view.geometry_bounds()
-		if geometry.has_area() and not tile.bbox.grow(BBOX_TOLERANCE_M).encloses(geometry):
+		var geometry: Variant = view.geometry_bounds()
+		if geometry != null and not _encloses(tile.bbox.grow(BBOX_TOLERANCE_M), geometry):
 			errors.append("%s: охват %s не покрывает геометрию %s" % [entry.path, tile.bbox, geometry])
 			view.free()
 			continue
@@ -170,6 +170,13 @@ class LevelBackground extends Node2D:
 	func _draw() -> void:
 		for square in squares:
 			draw_rect(square, MapTheme.BACKGROUND)
+
+
+## Прямоугольник покрывает другой по краям; в отличие от Rect2.encloses, работает и для вырожденной
+## геометрии (одна горизонтальная или вертикальная линия даёт охват нулевой площади).
+static func _encloses(outer: Rect2, inner: Rect2) -> bool:
+	return inner.position.x >= outer.position.x and inner.position.y >= outer.position.y \
+		and inner.end.x <= outer.end.x and inner.end.y <= outer.end.y
 
 
 func _view_size() -> Vector2:
