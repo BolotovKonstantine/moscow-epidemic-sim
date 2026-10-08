@@ -5,7 +5,6 @@ extends Node
 # data/processed/map-test/ рядом с проектом (его пишет `city_pipeline map-tile`).
 
 const DEFAULT_MAP_DIR := "../data/processed/map-test"
-const OSM_CREDIT := "© участники OpenStreetMap, ODbL"
 const EXPORT_HINT := "Соберите участки: .venv/bin/python -m tools.city_pipeline map-tile data/manifests/moscow-2021.json\nили укажите каталог: godot --path game -- --map-dir=<путь>"
 
 @onready var _map: MapView = $Map
@@ -19,7 +18,7 @@ var _core_text := ""
 func _ready() -> void:
 	RenderingServer.set_default_clear_color(MapTheme.BACKGROUND)
 	_core_text = _core_status()
-	_credit.text = OSM_CREDIT
+	_credit.text = MapIndex.OSM_CREDIT
 	_map.view_changed.connect(_on_view_changed)
 	var map_dir := map_dir_from_args(OS.get_cmdline_user_args())
 	var problem := _map.load_map(map_dir)

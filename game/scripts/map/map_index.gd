@@ -6,6 +6,7 @@ extends RefCounted
 
 const FORMAT := "mesim-map-index"
 const FORMAT_VERSION := 1
+const OSM_CREDIT := "© участники OpenStreetMap, ODbL"   # обязательная первая строка атрибуции (ODbL)
 
 var error := ""
 var dir := ""
@@ -53,10 +54,14 @@ func _read(index_path: String) -> String:
 			return "нет поля %s" % key
 	package_id = doc.package_id
 	package_version = doc.package_version
+	if not doc.attribution is Array or not doc.attribution.all(func(v): return v is String):
+		return "attribution должна быть списком строк"
+	if not doc.tiles is Array:
+		return "tiles должен быть списком участков"
 	attribution = PackedStringArray(doc.attribution)
 	classes = doc.classes
-	if attribution.is_empty():
-		return "пустая атрибуция: подпись OpenStreetMap обязательна"
+	if attribution.is_empty() or attribution[0] != OSM_CREDIT:
+		return "первая строка атрибуции должна быть «%s» (ODbL)" % OSM_CREDIT
 	for item: Variant in doc.tiles:
 		if not item is Dictionary or not item.has_all(["level", "tile", "path", "sha256"]):
 			return "запись участка без level, tile, path или sha256"

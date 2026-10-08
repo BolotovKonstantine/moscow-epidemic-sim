@@ -89,7 +89,9 @@ func _read(file_path: String, expected: Dictionary) -> String:
 	var problem := _read_header(expected)
 	if not problem.is_empty():
 		return problem
-	for item: Variant in header.get("sections", []):
+	if not header.sections is Array:
+		return "sections должен быть списком разделов"
+	for item: Variant in header.sections:
 		problem = _read_section(bytes, PREAMBLE + head_len, item)
 		if not problem.is_empty():
 			return problem
@@ -105,7 +107,15 @@ func _read_header(expected: Dictionary) -> String:
 	level = int(header.level)
 	tile = Vector2i(int(header.tile[0]), int(header.tile[1]))
 	origin = Vector2(float(header.origin[0]), float(header.origin[1]))
-	tile_size_m = 0.0 if header.get("tile_size_m") == null else float(header.tile_size_m)
+	var size: Variant = header.get("tile_size_m")
+	if level == 0:
+		if size != null:
+			return "у обзора региона (уровень 0) tile_size_m должен быть null"
+		tile_size_m = 0.0
+	elif is_numbers([size], 1) and is_finite(float(size)) and float(size) > 0.0:
+		tile_size_m = float(size)
+	else:
+		return "у участка уровня %d нет положительного tile_size_m" % level
 	classes = header.classes
 	counts = header.counts
 	if expected.has("level") and int(expected.level) != level:

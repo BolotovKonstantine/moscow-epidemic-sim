@@ -89,6 +89,8 @@ func _test_rejections(fixture: String) -> void:
 	for i in patched.size():
 		bytes[16 + i] = patched[i]
 	_expect_error(bytes, {}, "тип f32 вместо i32", "индексы треугольников с типом f32 отклоняются")
+	_expect_header_patch(source, "\"tile_size_m\":2000", "\"tile_size_m\":null", "нет положительного tile_size_m",
+		"участок уровня 2 без размера отклоняется")
 
 	var tile := MapTile.open(_write("other_package.mtile", source), {"package_id": "moscow-2021"})
 	check("package_id" in tile.error, "участок другого пакета отклоняется: " + tile.error)
@@ -107,11 +109,31 @@ func _test_rejections(fixture: String) -> void:
 	doc.tiles[0].tile = [0, 0]
 	doc.tiles[0].bbox = [1, 2]
 	_expect_index_error(doc, "четыре числа", "короткий bbox в индексе отклоняется")
+	doc.tiles[0].bbox = null
+	doc.attribution = ["Custom map"]
+	_expect_index_error(doc, "первая строка атрибуции", "атрибуция без подписи OSM отклоняется")
+	doc.attribution = [MapIndex.OSM_CREDIT]
+	doc.tiles = null
+	_expect_index_error(doc, "tiles должен быть списком", "tiles: null отклоняется")
 
 
 func _expect_error(bytes: PackedByteArray, expected: Dictionary, fragment: String, message: String) -> void:
 	var tile := MapTile.open(_write("broken.mtile", bytes), expected)
 	check(fragment in tile.error and tile.sections.is_empty(), "%s (ошибка: «%s»)" % [message, tile.error])
+
+
+## Подменить фрагмент JSON-заголовка (дополнив пробелами до прежней длины) и ждать ошибки.
+func _expect_header_patch(source: PackedByteArray, from: String, to: String, fragment: String, message: String) -> void:
+	var head_len := source.decode_u32(12)
+	var text := source.slice(16, 16 + head_len).get_string_from_utf8()
+	check(from in text, "в заголовке фикстуры есть %s" % from)
+	var patched := text.replace(from, to)
+	patched += " ".repeat(head_len - patched.to_utf8_buffer().size())
+	var bytes := source.duplicate()
+	var encoded := patched.to_utf8_buffer()
+	for i in encoded.size():
+		bytes[16 + i] = encoded[i]
+	_expect_error(bytes, {}, fragment, message)
 
 
 func _expect_index_error(doc: Dictionary, fragment: String, message: String) -> void:
