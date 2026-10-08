@@ -11,6 +11,7 @@ const FORMAT_VERSION := 1
 const MAX_LEVEL := 2   # уровни 0–2 формата 1: обзор, участки 8 и 2 км
 const PREAMBLE := 16   # магия, u32 версия, u32 длина заголовка
 const MAX_HEADER_BYTES := 1 << 20
+const MAX_SECTION_BYTES := 256 << 20   # предел раздела после распаковки; участок 2 км центра — ~3 МБ
 
 # Раздел → число столбцов (1 — плоский массив). Индексные разделы проверяются по числу вершин.
 const COLUMNS := {
@@ -123,6 +124,8 @@ func _read_header(expected: Dictionary) -> String:
 	if not problem.is_empty():
 		return problem
 	classes = header.classes
+	if not header.counts is Dictionary:
+		return "counts должен быть словарём"
 	counts = header.counts
 	if expected.has("level") and int(expected.level) != level:
 		return "уровень %d, а в индексе %d" % [level, expected.level]
@@ -137,15 +140,34 @@ func _read_header(expected: Dictionary) -> String:
 
 
 func _read_section(bytes: PackedByteArray, data_start: int, item: Variant) -> String:
-	if not item is Dictionary:
-		return "описание раздела не является объектом"
-	var name: String = item.get("name", "")
-	var dtype: String = item.get("dtype", "")
-	var offset := int(item.get("offset", -1))
-	var size := int(item.get("size", -1))
-	var raw_size := int(item.get("raw_size", -1))
+	# Описание раздела проверяется целиком до распаковки: размер после распаковки берётся из файла,
+	# и без проверки маленький испорченный участок мог бы запросить гигабайты памяти.
+	if not item is Dictionary or not item.get("name") is String or not item.get("dtype") is String \
+			or not is_numbers([item.get("offset"), item.get("size"), item.get("raw_size")], 3):
+		return "описание раздела: нужны строки name, dtype и числа offset, size, raw_size"
+	var name: String = item.name
+	var dtype: String = item.dtype
+	var offset := int(item.offset)
+	var size := int(item.size)
+	var raw_size := int(item.raw_size)
 	if offset < data_start or size < 0 or raw_size < 0 or offset % 4 != 0 or offset + size > bytes.size():
 		return "раздел %s выходит за пределы файла (смещение %d, размер %d из %d)" % [name, offset, size, bytes.size()]
+	if raw_size > MAX_SECTION_BYTES:
+		return "раздел %s: %d байт после распаковки, больше предела %d" % [name, raw_size, MAX_SECTION_BYTES]
+	var required := _required_dtype(name)
+	if required.is_empty():
+		return "неизвестный раздел %s" % name
+	if dtype != required:
+		return "раздел %s: тип %s вместо %s" % [name, dtype, required]
+	if dtype != "json":
+		var count: Variant = item.get("count")
+		var shape: Variant = item.get("shape")
+		if not is_numbers([count], 1) or not shape is Array or not is_numbers(shape, shape.size()):
+			return "раздел %s: count и shape должны быть числами" % name
+		var columns: int = COLUMNS[name]
+		var expected_shape := [int(count)] if columns == 1 else [int(count) / columns, columns]
+		if int(count) * 4 != raw_size or int(count) % columns != 0 or shape.map(func(v): return int(v)) != expected_shape:
+			return "раздел %s: форма %s и %d значений не согласуются (%d байт)" % [name, shape, int(count), raw_size]
 	var raw := bytes.slice(offset, offset + size)
 	match item.get("codec"):
 		"none":
@@ -156,25 +178,12 @@ func _read_section(bytes: PackedByteArray, data_start: int, item: Variant) -> St
 			return "раздел %s: неизвестное сжатие %s" % [name, item.get("codec")]
 	if raw.size() != raw_size:
 		return "раздел %s: после распаковки %d байт вместо %d" % [name, raw.size(), raw_size]
-	var required := _required_dtype(name)
-	if required.is_empty():
-		return "неизвестный раздел %s" % name
-	if dtype != required:
-		return "раздел %s: тип %s вместо %s" % [name, dtype, required]
 	if dtype == "json":
 		var json := JSON.new()
 		if json.parse(raw.get_string_from_utf8()) != OK:
 			return "раздел %s: некорректный JSON (%s)" % [name, json.get_error_message()]
 		sections[name] = json.data
 		return ""
-	var count := int(item.get("count", -1))
-	var shape: Variant = item.get("shape", [])
-	if not shape is Array or not is_numbers(shape, shape.size()):
-		return "раздел %s: форма не является списком чисел" % name
-	var columns: int = COLUMNS[name]
-	var expected_shape := [count] if columns == 1 else [count / columns, columns]
-	if count * 4 != raw_size or count % columns != 0 or shape.map(func(v): return int(v)) != expected_shape:
-		return "раздел %s: форма %s и %d значений не согласуются (%d байт)" % [name, shape, count, raw_size]
 	sections[name] = raw.to_float32_array() if dtype == "f32" else raw.to_int32_array()
 	return ""
 

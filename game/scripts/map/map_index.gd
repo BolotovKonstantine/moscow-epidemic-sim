@@ -52,6 +52,8 @@ func _read(index_path: String) -> String:
 	for key: String in ["package_id", "package_version", "attribution", "classes", "tiles"]:
 		if not doc.has(key):
 			return "нет поля %s" % key
+	if not doc.package_id is String or not doc.package_version is String:
+		return "package_id и package_version должны быть строками"
 	package_id = doc.package_id
 	package_version = doc.package_version
 	if not doc.attribution is Array or not doc.attribution.all(func(v): return v is String):

@@ -53,7 +53,8 @@ def fixture_layers():
         ("residential", shapely.LineString([(1000, 0), (1000, 2400)])),
         ("service", shapely.LineString([(1000, 1500), (1500, 1500), (1500, 1800)])),
         ("rail", shapely.LineString([(0, 2300), (4000, 2200)])),
-        ("boundary_region", shapely.LinearRing([(1, 1), (3999, 1), (3999, 3999), (1, 3999)])),
+        # Замкнутая LineString, а не LinearRing: экспорт берёт только LineString (как boundary() полигона).
+        ("boundary_region", shapely.LineString([(1, 1), (3999, 1), (3999, 3999), (1, 3999), (1, 1)])),
     ], mt.LINE_CLASSES)
     courtyard = shapely.Polygon([(1100, 1100), (1200, 1100), (1200, 1200), (1100, 1200)],
                                 [[(1130, 1130), (1170, 1130), (1170, 1170), (1130, 1170)]])

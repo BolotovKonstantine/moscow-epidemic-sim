@@ -81,7 +81,7 @@
         0.0,
         0.0,
         4000.0,
-        2800.0
+        3999.0
       ],
       "counts": {
         "areas": 3,
@@ -90,8 +90,8 @@
       },
       "level": 0,
       "path": "z0/0_0.mtile",
-      "sha256": "5336560ffbdf5d811419ed384add28016eb9d5a8e77ae9fe6cbd447916ea5d8a",
-      "size_bytes": 1916,
+      "sha256": "73a209404c90b34dbabe3fb8bb55e683f22f5398a21b901cf4420ee7a5aeea29",
+      "size_bytes": 1964,
       "tile": [
         0,
         0

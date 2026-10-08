@@ -90,6 +90,12 @@ func _test_rejections(fixture: String) -> void:
 		bytes[16 + i] = patched[i]
 	_expect_error(bytes, {}, "тип f32 вместо i32", "индексы треугольников с типом f32 отклоняются")
 	_expect_header_patch(source, "\"level\":2", "\"level\":3", "вне 0..2", "уровень 3 отклоняется")
+	var attrs := _section_descriptor(source, "pick.attrs")
+	_expect_header_patch(source, "\"raw_size\":%d" % attrs.raw_size, "\"raw_size\":1e9",
+		"больше предела", "огромный raw_size отклоняется до распаковки")
+	var counts_at := header_text.find("\"counts\":{")
+	var counts_text := header_text.substr(counts_at, header_text.find("}", counts_at) - counts_at + 1)
+	_expect_header_patch(source, counts_text, "\"counts\":0", "counts должен быть словарём", "counts не словарь отклоняется")
 	_expect_header_patch(source, "\"tile_size_m\":2000", "\"tile_size_m\":null", "нет положительного tile_size_m",
 		"участок уровня 2 без размера отклоняется")
 
@@ -118,6 +124,9 @@ func _test_rejections(fixture: String) -> void:
 	doc.attribution = ["Custom map"]
 	_expect_index_error(doc, "первая строка атрибуции", "атрибуция без подписи OSM отклоняется")
 	doc.attribution = [MapIndex.OSM_CREDIT]
+	doc.package_id = null
+	_expect_index_error(doc, "должны быть строками", "package_id: null отклоняется")
+	doc.package_id = "fixture-map"
 	doc.tiles = null
 	_expect_index_error(doc, "tiles должен быть списком", "tiles: null отклоняется")
 	doc.tiles = []
@@ -132,13 +141,19 @@ func _expect_error(bytes: PackedByteArray, expected: Dictionary, fragment: Strin
 	check(fragment in tile.error and tile.sections.is_empty(), "%s (ошибка: «%s»)" % [message, tile.error])
 
 
-## Подменить фрагмент JSON-заголовка (дополнив пробелами до прежней длины) и ждать ошибки.
+func _section_descriptor(source: PackedByteArray, section: String) -> Dictionary:
+	var header: Dictionary = JSON.parse_string(source.slice(16, 16 + source.decode_u32(12)).get_string_from_utf8())
+	return header.sections.filter(func(item): return item.name == section)[0]
+
+
+## Подменить фрагмент JSON-заголовка (дополнив пробелами до его длины) и ждать ошибки.
 func _expect_header_patch(source: PackedByteArray, from: String, to: String, fragment: String, message: String) -> void:
 	var head_len := source.decode_u32(12)
 	var text := source.slice(16, 16 + head_len).get_string_from_utf8()
 	check(from in text, "в заголовке фикстуры есть %s" % from)
-	var patched := text.replace(from, to)
-	patched += " ".repeat(head_len - patched.to_utf8_buffer().size())
+	# Замена не длиннее исходного фрагмента, остаток — пробелы внутри JSON: длина заголовка и смещения те же.
+	check(to.to_utf8_buffer().size() <= from.to_utf8_buffer().size(), "замена %s не длиннее исходного" % to)
+	var patched := text.replace(from, to + " ".repeat(from.to_utf8_buffer().size() - to.to_utf8_buffer().size()))
 	var bytes := source.duplicate()
 	var encoded := patched.to_utf8_buffer()
 	for i in encoded.size():
