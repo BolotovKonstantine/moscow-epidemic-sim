@@ -10,6 +10,7 @@ signal view_changed(meters_per_pixel: float, level: int)
 const ZOOM_STEP := 1.25
 const PAN_GESTURE_PX := 10.0   # пикселей на единицу delta жеста прокрутки трекпада
 const FIT_MARGIN := 1.05
+const BBOX_TOLERANCE_M := 1.0   # охват в заголовке считается в float64, вершины — во float32
 
 var index: MapIndex
 var meters_per_pixel := 1.0
@@ -62,11 +63,17 @@ func load_map(map_dir: String) -> String:
 		if not tile.error.is_empty():
 			errors.append(tile.error)
 			continue
-		if tile.level > 0:
-			_level_background(tile.level).add_square(tile.origin, tile.tile_size_m)
 		var view := MapTileView.new()
 		add_child(view)
 		view.setup(tile, style)
+		# Заявленный охват должен покрывать геометрию: по нему ограничивается камера.
+		var geometry := view.geometry_bounds()
+		if geometry.has_area() and not tile.bbox.grow(BBOX_TOLERANCE_M).encloses(geometry):
+			errors.append("%s: охват %s не покрывает геометрию %s" % [entry.path, tile.bbox, geometry])
+			view.free()
+			continue
+		if tile.level > 0:
+			_level_background(tile.level).add_square(tile.origin, tile.tile_size_m)
 		_tiles.append(view)
 		_labels.add_tile(tile)
 		if tile.level == 0:

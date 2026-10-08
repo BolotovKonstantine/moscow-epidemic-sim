@@ -22,6 +22,7 @@ func _initialize() -> void:
 	_test_rejections(fixture)
 	_test_views(fixture)
 	_test_overview_failure(fixture)
+	_test_undersized_bbox(fixture)
 	_test_real_export(root.path_join(REAL_EXPORT).simplify_path())
 	for name in DirAccess.get_files_at(_scratch):
 		DirAccess.remove_absolute(_scratch.path_join(name))
@@ -270,6 +271,48 @@ func _test_overview_failure(fixture: String) -> void:
 		DirAccess.remove_absolute(dir.path_join(sub))
 
 
+func _test_undersized_bbox(fixture: String) -> void:
+	# Индекс и заголовок обзора согласно заявляют охват меньше геометрии: участок отклоняется.
+	var dir := _scratch.path_join("small_bbox")
+	DirAccess.make_dir_recursive_absolute(dir.path_join("z0"))
+	var source := FileAccess.get_file_as_bytes(fixture.path_join("z0/0_0.mtile"))
+	var head := source.slice(16, 16 + source.decode_u32(12)).get_string_from_utf8()
+	var at := head.find("\"bbox\":[")
+	var from := head.substr(at, head.find("]", at) - at + 1)
+	var to := "\"bbox\":[0,0,10,10]"
+	var patched := head.replace(from, to + " ".repeat(from.length() - to.length())).to_utf8_buffer()
+	var bytes := source.duplicate()
+	for i in patched.size():
+		bytes[16 + i] = patched[i]
+	var file := FileAccess.open(dir.path_join("z0/0_0.mtile"), FileAccess.WRITE)
+	file.store_buffer(bytes)
+	file.close()
+	var doc: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(fixture.path_join("index.json")))
+	doc.tiles = [doc.tiles[0]]
+	doc.tiles[0].bbox = [0, 0, 10, 10]
+	doc.tiles[0].sha256 = _sha256(bytes)
+	doc.tiles[0].size_bytes = bytes.size()
+	file = FileAccess.open(dir.path_join("index.json"), FileAccess.WRITE)
+	file.store_string(JSON.stringify(doc))
+	file.close()
+	var map := MapView.new()
+	root.add_child(map)
+	var problem := map.load_map(dir)
+	check("не покрывает геометрию" in problem and map.tile_views().is_empty(), "заниженный охват отклоняется: %s" % problem)
+	map.free()
+	DirAccess.remove_absolute(dir.path_join("z0/0_0.mtile"))
+	DirAccess.remove_absolute(dir.path_join("index.json"))
+	DirAccess.remove_absolute(dir.path_join("z0"))
+	DirAccess.remove_absolute(dir)
+
+
+func _sha256(bytes: PackedByteArray) -> String:
+	var hashing := HashingContext.new()
+	hashing.start(HashingContext.HASH_SHA256)
+	hashing.update(bytes)
+	return hashing.finish().hex_encode()
+
+
 func _test_views(fixture: String) -> void:
 	var map := MapView.new()
 	root.add_child(map)
@@ -284,10 +327,7 @@ func _test_views(fixture: String) -> void:
 	for view in map.tile_views():
 		check(view.get_child_count() == MapTileView.NODE_COUNT, "%s: %d узлов вместо %d" % [
 			view.name, view.get_child_count(), MapTileView.NODE_COUNT])
-	# Фон уровня 2 стоит перед всеми участками уровня 2: соседний участок не закрывает выступающие здания.
-	var order := map.get_children().map(func(n): return String(n.name))
-	check(order.find("Background_z2") >= 0 and order.find("Background_z2") < order.find("Tile_z2_0_0"),
-		"фон уровня перед его участками: %s" % [order])
+	# Фон уровня рисуется под его участками по z_index (проверка ниже), порядок в дереве не важен.
 	map.look_at_point(Vector2(2000, 2000), 4.0)
 	var cursor := Vector2(900, 200)
 	var under_cursor := map.screen_to_map(cursor)
