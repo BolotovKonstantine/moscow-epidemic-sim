@@ -46,7 +46,7 @@ def _layer(tags):
         return 0
 
 
-def build_graph(ways, region_wgs84, projector):
+def build_graph(ways, region_wgs84, projector, region_metric=None):
     if not ways:
         raise ValueError("Нет дорог для графа")
     all_nodes = np.concatenate([way[1] for way in ways])
@@ -90,19 +90,24 @@ def build_graph(ways, region_wgs84, projector):
     inside_a = np.array([node_inside[position[edge["from_node"]]] for edge in edges], dtype=bool)
     inside_b = np.array([node_inside[position[edge["to_node"]]] for edge in edges], dtype=bool)
     geometry = shapely.linestrings(np.concatenate(lines), indices=np.repeat(np.arange(len(lines)), [len(c) for c in lines]))
+    # Пересечение и покрытие проверяются в метрической проекции: хорды в градусах не прямые в метрах.
+    geometry = projector.to_metric(geometry)
+    if region_metric is None:
+        region_metric = projector.to_metric(region_wgs84)
+    shapely.prepare(region_metric)
     # Ребро сохраняется, если часть его проходит по внутренности региона (концы могут быть
     # оба снаружи). Касание или проход вдоль границы без входа внутрь не считается.
     touches = inside_a | inside_b
     # Быстрый отбор по подготовленному контуру, затем точная проверка внутренности (relate
     # не использует подготовку, поэтому применяется только к немногим кандидатам).
     outside = np.nonzero(~touches)[0]
-    outside = outside[shapely.intersects(region_wgs84, geometry[outside])]
-    touches[outside] = shapely.relate_pattern(region_wgs84, geometry[outside], "T********")
+    outside = outside[shapely.intersects(region_metric, geometry[outside])]
+    touches[outside] = shapely.relate_pattern(region_metric, geometry[outside], "T********")
     # Вход — ребро, часть которого лежит вне региона (оба конца могут быть внутри). Конец ровно
     # на границе считается снаружи по contains_xy, поэтому решает covers по всей геометрии.
     keep = np.nonzero(touches)[0].tolist()
     gateway = np.zeros(len(edges), dtype=bool)
-    gateway[keep] = ~shapely.covers(region_wgs84, geometry[keep])
+    gateway[keep] = ~shapely.covers(region_metric, geometry[keep])
     for index in keep:
         edges[index]["gateway"] = bool(gateway[index])
     edges = [edges[index] for index in keep]

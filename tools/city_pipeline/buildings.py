@@ -73,7 +73,9 @@ def _parse_levels(value):
 
 
 def _poi_function(tags, poi_functions):
-    for key, mapping in poi_functions.items():
+    # При совпадении нескольких ключей решает ключ, первый по алфавиту: результат не зависит
+    # от порядка ключей в JSON (config_digest тоже сортирует ключи).
+    for key, mapping in sorted(poi_functions.items()):
         value = tags.get(key)
         if value is None:
             continue
@@ -91,7 +93,9 @@ def _tag_function(building_value, tag_functions):
 
 
 def _site_function(tags, site_functions):
-    for key, mapping in site_functions.items():
+    # При совпадении нескольких ключей решает ключ, первый по алфавиту: результат не зависит
+    # от порядка ключей в JSON (config_digest тоже сортирует ключи).
+    for key, mapping in sorted(site_functions.items()):
         function = mapping.get(tags.get(key))
         if function:
             return function

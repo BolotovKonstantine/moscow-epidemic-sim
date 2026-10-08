@@ -254,25 +254,45 @@ REPOSITORY_URL = "https://github.com/BolotovKonstantine/moscow-epidemic-sim"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _committed_blob(relative: str, data: bytes):
+    """Коммит, в котором файл relative совпадает с data; None, если файл не закоммичен или изменён."""
+    try:
+        commit = subprocess.run(["git", "-C", str(REPOSITORY_ROOT), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        committed = subprocess.run(["git", "-C", str(REPOSITORY_ROOT), "show", f"{commit}:{relative}"], capture_output=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return commit if committed == data else None
+
+
+def config_snapshot(config, config_path: Path | None = None, config_bytes: bytes | None = None) -> bytes:
+    """Точные байты конфигурации, из которых собран пакет (или нормализованный JSON без файла)."""
+    if config_path is not None:
+        return config_bytes if config_bytes is not None else Path(config_path).read_bytes()
+    return json.dumps(config, ensure_ascii=False, sort_keys=True).encode()
+
+
 def config_source(config, created_at, config_path: Path | None = None, config_bytes: bytes | None = None):
     """Карточка происхождения модельных параметров: сама конфигурация сборки (не наблюдение).
 
-    SHA256 — от точных байтов файла конфигурации. Файл внутри репозитория указывается
-    ссылкой на его путь; файл вне репозитория — ссылкой на репозиторий с пометкой, что
-    источник — локальный файл. Без файла (вызов из кода) хешируется нормализованный JSON.
+    SHA256 — от тех байтов, из которых разобрана конфигурация; они же лежат в пакете как
+    build_config.json. URL неизменяем: ссылка на файл в конкретном коммите, если файл в
+    репозитории совпадает с закоммиченной версией; иначе — на репозиторий, а точная копия
+    доступна только в пакете (это отражено в coverage).
     """
-    if config_path is not None:
-        # Хешируются байты, из которых разобрана конфигурация, а не перечитанный позже файл.
-        data = config_bytes if config_bytes is not None else Path(config_path).read_bytes()
-        resolved = Path(config_path).resolve()
-        if resolved.is_relative_to(REPOSITORY_ROOT):
-            relative = resolved.relative_to(REPOSITORY_ROOT).as_posix()
-            url, owner, origin = f"{REPOSITORY_URL}/blob/main/{relative}", "Moscow Epidemic Sim", f"файл {relative} репозитория"
-        else:
-            url, owner, origin = REPOSITORY_URL, "Автор сборки (локальный файл конфигурации)", f"локальный файл {resolved.name} вне репозитория"
+    data = config_snapshot(config, config_path, config_bytes)
+    url, owner = REPOSITORY_URL, "Moscow Epidemic Sim"
+    if config_path is None:
+        origin = "нормализованный JSON конфигурации, переданной из кода; копия — build_config.json пакета"
     else:
-        data = json.dumps(config, ensure_ascii=False, sort_keys=True).encode()
-        url, owner, origin = REPOSITORY_URL, "Moscow Epidemic Sim", "нормализованный JSON конфигурации, переданной из кода"
+        resolved = Path(config_path).resolve()
+        relative = resolved.relative_to(REPOSITORY_ROOT).as_posix() if resolved.is_relative_to(REPOSITORY_ROOT) else None
+        commit = _committed_blob(relative, data) if relative else None
+        if commit:
+            url, origin = f"{REPOSITORY_URL}/blob/{commit}/{relative}", f"файл {relative} в коммите {commit[:12]}; копия — build_config.json пакета"
+        elif relative:
+            origin = f"незакоммиченная версия {relative}; точная копия — только build_config.json пакета"
+        else:
+            owner, origin = "Автор сборки (локальный файл конфигурации)", f"локальный файл {resolved.name} вне репозитория; копия — build_config.json пакета"
     return {
         "source_id": f"build-config-{config['package_id']}",
         "source_type": "synthetic",
@@ -336,7 +356,7 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     population = allocate(buildings, building_zone, cells, cell_zone, zones.ix, zones.iy, config, building_ids)
 
     log("Дороги…")
-    graph = build_graph(data.roads, region_wgs, projector)
+    graph = build_graph(data.roads, region_wgs, projector, region_metric)
     node_x, node_y = projector.xy(graph.node_lon, graph.node_lat)
     node_zone = zones.index_of(node_x, node_y)
 
@@ -362,6 +382,8 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
         assets.append(record)
 
     add("region-boundary", "boundary", "boundary.geojson", "geojson", "game_setting", ["osm"])
+    (out_dir / "build_config.json").write_bytes(config_snapshot(config, config_path, config_bytes))
+    add("build-config", "config", "build_config.json", "json", "game_setting", ["config"])
 
     zone_name = np.array(zones.ids + [""], dtype=object)
     territory = np.where(in_moscow, "moscow", "buffer")

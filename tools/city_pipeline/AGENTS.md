@@ -11,7 +11,7 @@
 - `buildings.py` (функции и этажность), `population.py` (сетка → здания), `roads.py` (дорожный граф), `transit.py` (маршруты, отрезки, пересадки), `facilities.py`, `zones.py` (сетка зон).
 - `build.py` — сборка пакета; `report.py` — отчёт качества; `writers.py` — детерминированная запись файлов.
 - `__main__.py` — CLI `validate`, `fetch`, `build`.
-- Конфигурация сборки — `data/manifests/moscow-2021.json`. Ключи OSM из `poi_functions`, `site_functions` и `facilities.kinds` автоматически добавляются в фильтр чтения. Модельные параметры (интервалы транспорта, скорость пересадки) — в её разделе `model_assumptions`; их можно менять, они попадают в пакет как `game_setting`.
+- Конфигурация сборки — `data/manifests/moscow-2021.json`. Ключи OSM из `poi_functions`, `site_functions` и `facilities.kinds` автоматически добавляются в фильтр чтения; если объект подходит под несколько ключей, решает первый по алфавиту. Модельные параметры (интервалы транспорта, скорость пересадки) — в её разделе `model_assumptions`; их можно менять, они попадают в пакет как `game_setting`.
 - `tests/fixtures/city_package/` — синтетический пример паспорта; `tests/city_pipeline/synthetic_city.py` — синтетический мини-город для теста сборки. Ни то ни другое не является картой региона.
 - Большие файлы находятся в игнорируемых каталогах `data/raw/`, `data/processed/`, `data/packages/`.
 

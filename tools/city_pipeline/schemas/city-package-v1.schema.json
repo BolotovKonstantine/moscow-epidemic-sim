@@ -56,7 +56,7 @@
       "required": ["asset_id", "role", "path", "format", "size_bytes", "sha256", "source_ids", "data_kind"],
       "properties": {
         "asset_id": {"$ref": "#/$defs/id"},
-        "role": {"enum": ["boundary", "buildings", "roads", "transport", "facilities", "population", "zones", "quality_report"]},
+        "role": {"enum": ["boundary", "buildings", "roads", "transport", "facilities", "population", "zones", "config", "quality_report"]},
         "path": {"$ref": "#/$defs/text"},
         "format": {"$ref": "#/$defs/text"},
         "size_bytes": {"type": "integer", "minimum": 0},

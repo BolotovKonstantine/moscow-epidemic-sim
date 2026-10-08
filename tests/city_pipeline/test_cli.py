@@ -147,7 +147,9 @@ class ConfigProvenanceTests(unittest.TestCase):
         config = json.loads(real.read_text(encoding="utf-8"))
         card = config_source(config, "2026-10-08T00:00:00Z", real)
         self.assertEqual(card["sha256"], hashlib.sha256(real.read_bytes()).hexdigest())
-        self.assertTrue(card["url"].endswith("/blob/main/data/manifests/moscow-2021.json"))
+        # URL неизменяем: коммит (если файл закоммичен без правок) или репозиторий с пометкой в coverage.
+        self.assertNotIn("/blob/main/", card["url"])
+        self.assertTrue("/blob/" in card["url"] or "незакоммиченная" in card["coverage"])
         with tempfile.TemporaryDirectory() as directory:
             outside = Path(directory) / "my.json"
             outside.write_bytes(real.read_bytes() + b"\n")

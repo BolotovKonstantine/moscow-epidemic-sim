@@ -67,7 +67,11 @@ class BuildTests(unittest.TestCase):
     def test_manifest_is_valid_and_lists_all_roles(self):
         manifest = validate_manifest(self.out / "manifest.json")
         roles = {asset["role"] for asset in manifest["assets"]}
-        self.assertEqual(roles, {"boundary", "buildings", "roads", "transport", "facilities", "population", "zones", "quality_report"})
+        self.assertEqual(roles, {"boundary", "buildings", "roads", "transport", "facilities", "population", "zones", "config", "quality_report"})
+        # Снимок конфигурации в пакете совпадает с хешем источника build-config.
+        source = next(s for s in manifest["sources"] if s["source_id"].startswith("build-config-"))
+        import hashlib
+        self.assertEqual(hashlib.sha256((self.out / "build_config.json").read_bytes()).hexdigest(), source["sha256"])
         kinds = {asset["asset_id"]: asset["data_kind"] for asset in manifest["assets"]}
         self.assertEqual(kinds["population"], "estimated")
         self.assertEqual(kinds["transit-service"], "game_setting")

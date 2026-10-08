@@ -9,7 +9,9 @@ import shapely
 
 
 def _kind(tags, kinds):
-    for key, mapping in kinds.items():
+    # При совпадении нескольких ключей решает ключ, первый по алфавиту: результат не зависит
+    # от порядка ключей в JSON (config_digest тоже сортирует ключи).
+    for key, mapping in sorted(kinds.items()):
         kind = mapping.get(tags.get(key))
         if kind:
             return kind
