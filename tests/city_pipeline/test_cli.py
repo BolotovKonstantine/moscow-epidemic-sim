@@ -138,5 +138,38 @@ class ClipCacheTests(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in work.iterdir()), ["region-clip.geojson", "region.osm.pbf", "source.osm.pbf"])
 
 
+
+class ConfigProvenanceTests(unittest.TestCase):
+    def test_config_source_hashes_exact_file_bytes(self):
+        import hashlib
+        from tools.city_pipeline.build import config_source
+        real = Path(__file__).resolve().parents[2] / "data" / "manifests" / "moscow-2021.json"
+        config = json.loads(real.read_text(encoding="utf-8"))
+        card = config_source(config, "2026-10-08T00:00:00Z", real)
+        self.assertEqual(card["sha256"], hashlib.sha256(real.read_bytes()).hexdigest())
+        self.assertTrue(card["url"].endswith("/blob/main/data/manifests/moscow-2021.json"))
+        with tempfile.TemporaryDirectory() as directory:
+            outside = Path(directory) / "my.json"
+            outside.write_bytes(real.read_bytes() + b"\n")
+            card = config_source(config, "2026-10-08T00:00:00Z", outside)
+            self.assertEqual(card["sha256"], hashlib.sha256(outside.read_bytes()).hexdigest())
+            self.assertIn("вне репозитория", card["coverage"])
+
+    def test_headways_cover_every_mode_and_period(self):
+        real = Path(__file__).resolve().parents[2] / "data" / "manifests" / "moscow-2021.json"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            config = json.loads(real.read_text(encoding="utf-8"))
+            del config["model_assumptions"]["headway_minutes"]["by_mode"]["bus"]
+            path.write_text(json.dumps(config))
+            with self.assertRaisesRegex(ManifestError, "нет интервалов для вида bus"):
+                load_config(path)
+            config = json.loads(real.read_text(encoding="utf-8"))
+            del config["model_assumptions"]["headway_minutes"]["by_mode"]["tram"]["night"]
+            path.write_text(json.dumps(config))
+            with self.assertRaisesRegex(ManifestError, "tram: периоды"):
+                load_config(path)
+
+
 if __name__ == "__main__":
     unittest.main()

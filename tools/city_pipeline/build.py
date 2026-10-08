@@ -227,7 +227,7 @@ def replace_dir(new: Path, final: Path):
 
 # ---------------------------------------------------------------- основная сборка
 
-def build_package(config, *, sources, source_roles, kind, region_parts, region_osm: Path, raster: Path, out_dir: Path, created_at: str, log=print):
+def build_package(config, *, sources, source_roles, kind, region_parts, region_osm: Path, raster: Path, out_dir: Path, created_at: str, log=print, config_path: Path | None = None):
     """Собрать пакет. sources — карточки для паспорта; source_roles — {"osm": id, "population": id}."""
     # Заранее: прежний каталог пуст или это тот же пакет (паспорт читается и совпадает по ID и версии).
     if out_dir.exists() and any(out_dir.iterdir()):
@@ -244,34 +244,53 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
     final_dir.parent.mkdir(parents=True, exist_ok=True)
     out_dir = Path(tempfile.mkdtemp(prefix=f"{final_dir.name}.", suffix=".partial", dir=final_dir.parent))
     try:
-        return _build_into(config, sources, source_roles, kind, region_parts, region_osm, raster, out_dir, final_dir, created_at, log)
+        return _build_into(config, sources, source_roles, kind, region_parts, region_osm, raster, out_dir, final_dir, created_at, log, config_path)
     except BaseException:
         shutil.rmtree(out_dir, ignore_errors=True)
         raise
 
 
-def config_source(config, created_at):
-    """Карточка происхождения модельных параметров: сама конфигурация сборки (не наблюдение)."""
-    text = json.dumps(config, ensure_ascii=False, sort_keys=True).encode()
+REPOSITORY_URL = "https://github.com/BolotovKonstantine/moscow-epidemic-sim"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+
+def config_source(config, created_at, config_path: Path | None = None):
+    """Карточка происхождения модельных параметров: сама конфигурация сборки (не наблюдение).
+
+    SHA256 — от точных байтов файла конфигурации. Файл внутри репозитория указывается
+    ссылкой на его путь; файл вне репозитория — ссылкой на репозиторий с пометкой, что
+    источник — локальный файл. Без файла (вызов из кода) хешируется нормализованный JSON.
+    """
+    if config_path is not None:
+        data = Path(config_path).read_bytes()
+        resolved = Path(config_path).resolve()
+        if resolved.is_relative_to(REPOSITORY_ROOT):
+            relative = resolved.relative_to(REPOSITORY_ROOT).as_posix()
+            url, owner, origin = f"{REPOSITORY_URL}/blob/main/{relative}", "Moscow Epidemic Sim", f"файл {relative} репозитория"
+        else:
+            url, owner, origin = REPOSITORY_URL, "Автор сборки (локальный файл конфигурации)", f"локальный файл {resolved.name} вне репозитория"
+    else:
+        data = json.dumps(config, ensure_ascii=False, sort_keys=True).encode()
+        url, owner, origin = REPOSITORY_URL, "Moscow Epidemic Sim", "нормализованный JSON конфигурации, переданной из кода"
     return {
         "source_id": f"build-config-{config['package_id']}",
         "source_type": "synthetic",
-        "url": "https://github.com/BolotovKonstantine/moscow-epidemic-sim/tree/main/data/manifests",
-        "owner": "Moscow Epidemic Sim",
+        "url": url,
+        "owner": owner,
         "license": "MIT",
         "data_date": None,
         "acquired_at": created_at,
-        "coverage": "Модельные параметры конфигурации сборки (model_assumptions): интервалы движения, скорость и надбавка пересадки",
+        "coverage": f"Модельные параметры конфигурации сборки (model_assumptions): интервалы движения, скорость и надбавка пересадки; {origin}",
         "format": "json",
-        "sha256": hashlib.sha256(text).hexdigest(),
+        "sha256": hashlib.sha256(data).hexdigest(),
         "processing_version": f"config.{config_digest(config)}",
     }
 
 
-def _build_into(config, sources, source_roles, kind, region_parts, region_osm, raster, out_dir, final_dir, created_at, log):
+def _build_into(config, sources, source_roles, kind, region_parts, region_osm, raster, out_dir, final_dir, created_at, log, config_path):
     projector = Projector(config["metric_crs"])
     # Модельные параметры ссылаются на конфигурацию, а не на OSM.
-    model_source = config_source(config, created_at)
+    model_source = config_source(config, created_at, config_path)
     sources = sorted(sources + [model_source], key=lambda source: source["source_id"])
     source_roles = dict(source_roles, config=model_source["source_id"])
 

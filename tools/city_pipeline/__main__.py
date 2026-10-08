@@ -73,6 +73,18 @@ def load_config(path: Path) -> dict:
     errors = sorted(Draft202012Validator(read_json(CONFIG_SCHEMA)).iter_errors(config), key=lambda error: list(error.absolute_path))
     if errors:
         raise ManifestError("\n".join(f"{path}: {'.'.join(map(str, error.absolute_path)) or '$'}: {error.message}" for error in errors))
+    # Связь полей, которую не выразить схемой: интервалы для каждого вида транспорта и каждого периода.
+    headways = config["model_assumptions"]["headway_minutes"]
+    periods = set(headways["periods"])
+    problems = []
+    for mode in config["transit"]["route_modes"]:
+        by_period = headways["by_mode"].get(mode)
+        if by_period is None:
+            problems.append(f"нет интервалов для вида {mode}")
+        elif set(by_period) != periods:
+            problems.append(f"{mode}: периоды {sorted(set(by_period))} не совпадают с {sorted(periods)}")
+    if problems:
+        raise ManifestError(f"{path}: model_assumptions.headway_minutes: " + "; ".join(problems))
     return config
 
 
@@ -145,6 +157,7 @@ def command_build(args) -> int:
     manifest, report = build_package(
         config, sources=sources, source_roles={role: source["source_id"] for role, source in selected.items()},
         kind="city_data", region_parts=parts, region_osm=region_osm, raster=raster, out_dir=out, created_at=_created_at(),
+        config_path=args.config,
     )
     failed = [check["check"] for check in report["checks"] if check["status"] != "pass"]
     print(f"OK: {manifest['package_id']} · {manifest['package_version']} · {len(manifest['assets'])} файлов · {out}")

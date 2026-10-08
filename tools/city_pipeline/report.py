@@ -84,7 +84,12 @@ def build_report(context):
 
     residents = population.residents
     populated = residents > 0
-    floor = buildings.floor_area_m2[populated]
+    # База плотности — та же, что при распределении: жилая площадь (площадь × доля жилья), а у зданий
+    # без функции — их площадь этажей; нежилые этажи не «разбавляют» превышение потолка.
+    residential_share = buildings.shares[:, FUNCTIONS.index("residential")]
+    unknown_min = config["population"]["unknown_building_min_footprint_m2"]
+    capacity_floor = buildings.floor_area_m2 * residential_share + np.where(unknown & (buildings.footprint_m2 >= unknown_min), buildings.floor_area_m2, 0.0)
+    floor = capacity_floor[populated]
     per_100 = residents[populated] / np.maximum(floor, 1.0) * 100.0
     zone_total = int(context["zone_pop"].sum())
     dense_limit = config["quality"]["max_plausible_residents_per_100m2"]
@@ -115,7 +120,7 @@ def build_report(context):
         _check("population_matches_grid", abs(population.allocated_total + population.unallocated - population.region_total) <= 1.0,
                f"сетка {population.region_total:.1f}, распределено {population.allocated_total}, не распределено {population.unallocated:.1f}"),
         _check("residential_density_plausible", _pct(dense_residents, int(residents.sum())) is None or _pct(dense_residents, int(residents.sum())) <= 5.0,
-               f"{_pct(dense_residents, int(residents.sum()))}% жителей в зданиях плотнее {dense_limit} чел. на 100 м² площади этажей"),
+               f"{_pct(dense_residents, int(residents.sum()))}% жителей в зданиях плотнее {dense_limit} чел. на 100 м² жилой площади"),
         _check("raster_covers_region", population.raster_covers_region,
                f"сетка покрывает охват региона; ячеек без данных внутри: {population.missing_cells}"),
         _check("unique_building_ids", len(set(buildings.ids)) == count, f"{count} зданий"),
@@ -168,7 +173,7 @@ def build_report(context):
             "inside_mkad": int(residents[context["in_mkad"]].sum()),
             "buildings_with_residents": int(populated.sum()),
             "max_residents_per_building": int(residents.max()) if count else 0,
-            "residents_per_100m2_floor": _quantiles(per_100),
+            "residents_per_100m2_residential_floor": _quantiles(per_100),
             "dense_buildings": int(dense.sum()), "dense_buildings_residents": dense_residents, "dense_limit_per_100m2": dense_limit,
             "grid_cells_in_region": population.cells_in_region,
             "grid_cells_missing_in_region": population.missing_cells,
