@@ -37,7 +37,7 @@
     },
     "roads": {
       "type": "object", "additionalProperties": false, "required": ["highways"],
-      "properties": {"highways": {"$ref": "#/$defs/strings"}}
+      "properties": {"highways": {"$ref": "#/$defs/strings", "minItems": 1}}
     },
     "buildings": {
       "type": "object", "additionalProperties": false,

@@ -5,12 +5,21 @@
 """
 
 import os
+import re
+from datetime import date
 import shutil
 import tempfile
 import urllib.request
 from pathlib import Path
 
-from .manifest import ManifestError, read_json, sha256_file
+from .manifest import ManifestError, _timestamp, read_json, sha256_file
+
+
+def _is_date(value: str) -> bool:
+    try:
+        return re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is not None and date.fromisoformat(value) is not None
+    except ValueError:
+        return False
 
 REGISTRY_FIELDS = ("source_id", "url", "file", "owner", "license", "data_date", "acquired_at", "coverage", "format", "sha256")
 
@@ -32,6 +41,11 @@ def load_registry(path: Path) -> dict:
         wrong = [field for field in REGISTRY_FIELDS if not isinstance(source[field], str) and not (field == "data_date" and source[field] is None)]
         if wrong:
             raise ManifestError(f"{source.get('source_id', '?')}: поля должны быть строками: {', '.join(wrong)}")
+        # Даты проверяются сразу, а не валидатором паспорта после многоминутной сборки.
+        if not _timestamp(source["acquired_at"]) or ("T" not in source["acquired_at"]):
+            raise ManifestError(f"{source['source_id']}: acquired_at должен быть временем с часовым поясом, получено {source['acquired_at']!r}")
+        if source["data_date"] is not None and not _is_date(source["data_date"]):
+            raise ManifestError(f"{source['source_id']}: data_date должна быть датой ГГГГ-ММ-ДД или null, получено {source['data_date']!r}")
         if source["source_id"] in result:
             raise ManifestError(f"Повторяющийся source_id {source['source_id']}")
         if "/" in source["file"] or source["file"] in ("", ".", ".."):

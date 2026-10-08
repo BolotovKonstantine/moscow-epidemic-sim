@@ -107,7 +107,9 @@ class RegistryTests(unittest.TestCase):
             path = Path(directory) / "sources.json"
             for document in ("[]", "null", '{"registry_version": 1}', '{"registry_version": 1, "sources": [5]}',
                              '{"registry_version": true, "sources": []}',
-                             '{"registry_version": 1, "sources": [{"source_id": 1, "url": "u", "file": "f", "owner": "o", "license": "l", "data_date": null, "acquired_at": "a", "coverage": "c", "format": "f", "sha256": "s"}]}'):
+                             '{"registry_version": 1, "sources": [{"source_id": 1, "url": "u", "file": "f", "owner": "o", "license": "l", "data_date": null, "acquired_at": "a", "coverage": "c", "format": "f", "sha256": "s"}]}',
+                             '{"registry_version": 1, "sources": [{"source_id": "s", "url": "u", "file": "f", "owner": "o", "license": "l", "data_date": null, "acquired_at": "вчера", "coverage": "c", "format": "f", "sha256": "s"}]}',
+                             '{"registry_version": 1, "sources": [{"source_id": "s", "url": "u", "file": "f", "owner": "o", "license": "l", "data_date": "2021-02-30", "acquired_at": "2026-10-06T20:19:00Z", "coverage": "c", "format": "f", "sha256": "s"}]}'):
                 with self.subTest(document=document):
                     path.write_text(document)
                     with self.assertRaises(ManifestError):
@@ -212,6 +214,10 @@ class ConfigSnapshotTests(unittest.TestCase):
             path.write_text(config, encoding="utf-8")
             with self.assertRaisesRegex(ManifestError, "1e400"):
                 load_config(path)
+
+    def test_empty_road_classes_and_reversed_mkad_range_rejected(self):
+        self.invalid(lambda c: c["roads"].__setitem__("highways", []), "roads.highways")
+        self.invalid(lambda c: c["boundary"].__setitem__("mkad_area_km2_range", [900, 850]), "mkad_area_km2_range")
 
     def test_building_value_in_two_functions_rejected(self):
         self.invalid(lambda c: c["buildings"]["tag_functions"]["work"].append("apartments"), "apartments")

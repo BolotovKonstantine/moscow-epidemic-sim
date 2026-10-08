@@ -79,6 +79,9 @@ def load_config(path: Path, data: bytes | None = None) -> dict:
     errors = sorted(Draft202012Validator(read_json(CONFIG_SCHEMA)).iter_errors(config), key=lambda error: list(error.absolute_path))
     if errors:
         raise ManifestError("\n".join(f"{path}: {'.'.join(map(str, error.absolute_path)) or '$'}: {error.message}" for error in errors))
+    low, high = config["boundary"]["mkad_area_km2_range"]
+    if low > high:
+        raise ManifestError(f"{path}: boundary.mkad_area_km2_range: нижняя граница {low} больше верхней {high}")
     # Значение building относится ровно к одной функции: иначе результат зависел бы от порядка ключей JSON.
     seen = {}
     for function, values in config["buildings"]["tag_functions"].items():
