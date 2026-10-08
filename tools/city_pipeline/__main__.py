@@ -259,6 +259,34 @@ def command_build(args) -> int:
     return 0
 
 
+def command_map_tile(args) -> int:
+    """Тестовый экспорт участков карты (#11) из собранного пакета и его вырезки OSM."""
+    from .build import config_digest
+    from .mapbuild import export_test_tiles
+
+    config = load_config(args.config)
+    package = package_dir(args.packages, config.get("package_id"), config.get("package_version"))
+    validate_manifest(package / "manifest.json", check_files=True)
+    # Пакет перезаписывается при той же версии, а вырезка OSM лежит по хешу конфигурации:
+    # другая конфигурация дала бы чужую вырезку и CRS к этому пакету.
+    packaged = load_config(package / "build_config.json")
+    if config_digest(packaged) != config_digest(config):
+        raise ManifestError(f"{args.config} не совпадает с конфигурацией, из которой собран {package} (build_config.json): пересоберите пакет командой build")
+    region_pbf = work_dir(args.work, config["package_id"]) / f"{config['package_version']}-{config_digest(config)}" / "region.osm.pbf"
+    if not region_pbf.is_file():
+        raise ManifestError(f"Нет вырезки OSM {region_pbf}: сначала выполните build для этой конфигурации")
+    try:
+        lon, lat = (float(value) for value in args.at.split(","))
+    except ValueError as error:
+        raise ManifestError(f"--at ожидает «долгота,широта», получено {args.at!r}") from error
+    out = args.out.resolve()
+    index = export_test_tiles(package, region_pbf, config["metric_crs"], lon, lat, out)
+    for tile in index["tiles"]:
+        print(f"z{tile['level']} {tile['tile'][0]}_{tile['tile'][1]}: {tile['size_bytes'] / 1e6:.2f} МБ · {tile['counts']}")
+    print(f"OK: {out / 'index.json'}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Городские пакеты Moscow Epidemic Sim")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -277,6 +305,14 @@ def main() -> int:
             sub.add_argument("--work", type=Path, default=ROOT / "data" / "processed", help="Каталог промежуточных файлов")
             sub.add_argument("--out", type=Path, default=ROOT / "data" / "packages", help="Каталог готовых пакетов")
         sub.set_defaults(handler=handler)
+
+    tile = commands.add_parser("map-tile", help="Тестовый экспорт участков карты вокруг точки (уровни 0–2)")
+    tile.add_argument("config", type=Path, help="Конфигурация сборки собранного пакета")
+    tile.add_argument("--at", default="37.6175,55.7520", help="Точка «долгота,широта» внутри региона (по умолчанию — центр Москвы)")
+    tile.add_argument("--packages", type=Path, default=ROOT / "data" / "packages", help="Каталог готовых пакетов")
+    tile.add_argument("--work", type=Path, default=ROOT / "data" / "processed", help="Каталог промежуточных файлов (вырезка OSM)")
+    tile.add_argument("--out", type=Path, default=ROOT / "data" / "processed" / "map-test", help="Каталог участков")
+    tile.set_defaults(handler=command_map_tile)
 
     args = parser.parse_args()
     try:

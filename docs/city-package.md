@@ -69,6 +69,37 @@ CLI проверяет версию и обязательные поля, дат
 
 Пустая ячейка CSV означает отсутствие значения (например, здание вне всех зон); `unknown` — явно неизвестное значение. Для синтетического пакета вид `observed` заменяется на `game_setting`, так как синтетика не является наблюдением.
 
+## Участки карты
+
+Формат версии 1 выбран в [#9](https://github.com/BolotovKonstantine/moscow-epidemic-sim/issues/9). Участки — производный слой только для отображения: они собираются из пакета и той же вырезки OSM, а модель их не читает. Пока реализован тестовый экспорт (`map-tile`, см. [tools/city_pipeline/AGENTS.md](../tools/city_pipeline/AGENTS.md)): обзор и по одному участку уровней 1 и 2 вокруг точки. Сборка всего региона и включение файлов в паспорт — задача #13.
+
+**Плоскость.** Метрическая проекция пакета (`EPSG:32637`), 1 единица = 1 м, ось Y вниз. Начало `plane.origin_metric` — левый верхний угол, кратный 8 км. Координаты в плоскости карты: `x = E − x0`, `y = y0 − N`.
+
+| Уровень | Участок | Содержимое | Упрощение |
+| --- | --- | --- | --- |
+| 0 | один на регион, начало (0, 0) | площади от 5 га, реки, магистрали (motorway, trunk, primary), магистральные железные дороги, границы региона и Москвы | 25 м |
+| 1 | 8×8 км | площади от 2000 м², дороги до tertiary, реки, железные дороги, здания от 150 м² | площади 3 м, линии 4 м, здания 2 м |
+| 2 | 2×2 км | всё без упрощения; данные выбора зданий | нет |
+
+Участок `(ix, iy)` уровня с размером `s` занимает в плоскости карты квадрат от `(ix·s, iy·s)`; сетки уровней вложены. Вершины участка хранятся относительно этого угла. Площади и линии обрезаются по границе региона и участка. Здание целиком принадлежит участку, где лежит его представительная точка (`lon`, `lat` из `building_attributes.csv.gz`), и может выступать за край — это учтено в `bbox`. Тоннели дорог, рек и железных дорог не рисуются; метро — отдельный слой транспорта.
+
+**Файл** `z<уровень>/<ix>_<iy>.mtile`: 8 байт `MESMTILE`, u32 версия формата, u32 длина заголовка, JSON-заголовок (UTF-8, дополнен пробелами до кратности 4), затем разделы. Числа little-endian; разделы идут сразу после заголовка, `offset` отсчитывается от начала файла и кратен 4. У раздела в заголовке: `name`, `dtype` (`f32`, `i32`, `json`), `shape` и `count` для массивов, `offset`, `size` (в файле), `raw_size` (после распаковки), `codec` — `deflate` (поток zlib, читается `PackedByteArray.decompress(raw_size, COMPRESSION_DEFLATE)`) или `none`. В заголовке также `package_id`, `package_version`, `level`, `tile`, `tile_size_m`, `origin` (угол в плоскости карты), `bbox` (в координатах участка), `classes`, `counts`, `attribution` — список: первая строка — подпись «© участники OpenStreetMap, ODbL», которую карта показывает всегда, затем владелец и лицензия каждого внешнего источника пакета из паспорта (для `moscow-2021` — OSM и GHS-POP: жители зданий в `pick.attrs` получены из сетки GHS-POP, CC BY 4.0).
+
+| Раздел | Тип | Содержимое |
+| --- | --- | --- |
+| `area.xy`, `area.cls`, `area.tri` | f32 (V,2), f32 (V), i32 (T,3) | Площади подложки, разбитые на треугольники; код класса на вершину; порядок — порядок рисования |
+| `line.xy`, `line.off`, `line.cls`, `line.tri` | f32 (V,2), f32 (V,2), f32 (V), i32 (T,3) | Ленты линий: две вершины на точку осевой линии, `off` — смещение в полуширинах (стык и квадратные концы); ширину задаёт шейдер по классу и масштабу |
+| `building.xy`, `building.cls`, `building.tri`, `building.outline` | f32, f32, i32 (T,3), i32 (E,2) | Здания (уровни 1–2): вершины колец, треугольники заливки и отрезки контура по тем же вершинам |
+| `pick.ring` | i32 (R,3) | Уровень 2: внешние кольца — строка здания в участке, первая вершина в `building.xy`, число вершин |
+| `pick.bbox` | f32 (B,4) | Прямоугольник здания в координатах участка |
+| `pick.attrs` | json | Колонки карточки: `id` (ID пакета), `name`, `function` и `function_source`, `levels` и `levels_source`, `footprint_m2`, `residents`, `zone_id`, `territory`. Функция — оценка, если `function_source` не `tag`; этажность — оценка при `levels_source=default`; жители всегда оценка, отсутствие строки в `population.csv.gz` означает 0 |
+
+Классы (код — позиция в списке, список — в `classes` заголовка): площади `farmland, residential, commercial, industrial, cemetery, grass, park, forest, water`; здания `unknown, residential, work, retail, education, medical, transport, control, other`; линии `stream, river, service, pedestrian, residential, tertiary, secondary, primary, trunk, motorway, tram, rail_minor, rail, boundary_moscow, boundary_region`. Классы дорог — из `highway` (связки `*_link` — класс основной дороги; `unclassified`, `living_street`, `road` → `residential`). Подложка из OSM: `water` — `natural=water`, `waterway=riverbank`, `landuse=reservoir|basin`; `forest` — `landuse=forest`, `natural=wood`; `park` — `leisure=park|garden|golf_course`, `landuse=recreation_ground|village_green`; `grass` — `landuse=grass|meadow`, `natural=grassland|scrub|heath`; `river` — `waterway=river|canal`; `rail_minor` — `railway=rail` с `service` и `narrow_gauge`; `tram` — `railway=tram|light_rail|monorail`.
+
+**Индекс** `index.json`: `format` = `mesim-map-index`, `format_version`, пакет и его источники, `metric_crs`, `plane`, `levels`, `classes`, `attribution` и список `tiles` с уровнем, индексами, путём, размером, SHA256, `bbox` в плоскости карты и счётчиками. Повторный экспорт из тех же файлов даёт те же байты. `map-tile` отказывается работать, если переданная конфигурация не совпадает с `build_config.json` пакета: вырезка OSM хранится по хешу конфигурации, и другая конфигурация подставила бы чужую вырезку или проекцию.
+
+Контуры `boundary.geojson` округлены до 7 знаков WGS84; после перевода в метры у границы региона `moscow-2021` 0.1.0 есть микросамопересечение, поэтому карта исправляет контуры `make_valid`. На расчёты пакета это не влияет: они выполняются по исходной метрической границе.
+
 ## Синтетический пример
 
 [manifest.json](../tests/fixtures/city_package/manifest.json) описывает небольшой вручную созданный квадрат в GeoJSON. Он помечен `fixture`, источник — `synthetic`, данные — `game_setting`. Это проверка формата файлов и хешей; квадрат не изображает границу Москвы, а дата примера не является решением о годе сценария.
