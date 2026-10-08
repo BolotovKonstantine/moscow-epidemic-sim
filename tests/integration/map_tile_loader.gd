@@ -112,6 +112,9 @@ func _test_rejections(fixture: String) -> void:
 	check(not MapTile._codes_within(PackedFloat32Array([0, 1.9, 1]), 3), "дробный код класса отклоняется")
 	check(not MapTile._codes_within(PackedFloat32Array([0, 3]), 3), "код вне списка классов отклоняется")
 
+	var stale := MapTile.open(_write("stale_bbox.mtile", source), {"bbox": Rect2(0, 0, 1000, 1000)})
+	check("не совпадает с индексом" in stale.error, "устаревший bbox индекса отклоняется: " + stale.error)
+
 	var tile := MapTile.open(_write("other_package.mtile", source), {"package_id": "moscow-2021"})
 	check("package_id" in tile.error, "участок другого пакета отклоняется: " + tile.error)
 	tile = MapTile.open(_scratch.path_join("missing.mtile"))
@@ -131,10 +134,17 @@ func _test_rejections(fixture: String) -> void:
 	_expect_index_error(doc, "64 шестнадцатеричных", "пустой sha256 отклоняется — проверку целостности не отключить")
 	doc.tiles[0].sha256 = good_sha
 	doc.tiles[0].tile = []
-	_expect_index_error(doc, "два числа", "пустой tile в индексе отклоняется")
+	_expect_index_error(doc, "два целых", "пустой tile в индексе отклоняется")
+	doc.tiles[0].tile = [0.5, 0]
+	_expect_index_error(doc, "два целых", "дробный номер участка отклоняется")
 	doc.tiles[0].tile = [0, 0]
+	doc.tiles[0].level = 0.5
+	_expect_index_error(doc, "целое 0..2", "дробный уровень отклоняется")
+	doc.tiles[0].level = 0
+	doc.tiles[0].bbox = [10, 0, 5, 0]
+	_expect_index_error(doc, "упорядоченные", "неупорядоченный bbox отклоняется")
 	doc.tiles[0].bbox = [1, 2]
-	_expect_index_error(doc, "четыре числа", "короткий bbox в индексе отклоняется")
+	_expect_index_error(doc, "упорядоченные", "короткий bbox в индексе отклоняется")
 	doc.tiles[0].bbox = null
 	doc.attribution = ["Custom map"]
 	_expect_index_error(doc, "первая строка атрибуции", "атрибуция без подписи OSM отклоняется")
@@ -239,6 +249,15 @@ func _test_views(fixture: String) -> void:
 	map.zoom_at(cursor, 0.5)
 	check(map.screen_to_map(cursor).distance_to(under_cursor) < 0.01, "зум сохраняет точку под курсором")
 	check(is_equal_approx(map.meters_per_pixel, 2.0), "шаг зума меняет масштаб")
+	map.look_at_point(Vector2(0, 0), 1.0)
+	map.pan_pixels(Vector2(-500, -500))
+	var corner := map.screen_to_map(Vector2.ZERO)
+	check(corner.x >= map.region_rect.position.x - 0.01 and corner.y >= map.region_rect.position.y - 0.01,
+		"окно не уходит за край региона: левый верхний угол %s" % corner)
+	map.fit_region()
+	map.zoom_at(Vector2(0, 0), 1.5)
+	check(map.screen_to_map(map.get_viewport_rect().size / 2.0 if map.is_inside_tree() else Vector2(640, 360)).is_equal_approx(
+		map.region_rect.get_center()), "окно шире региона — камера по центру")
 	map.look_at_point(Vector2(1000, 1000), 0.01)
 	check(is_equal_approx(map.meters_per_pixel, MapTheme.MIN_MPP), "приближение ограничено %.2f м/пикс." % MapTheme.MIN_MPP)
 	check(map.level_for(map.meters_per_pixel) == 2, "при сильном приближении — уровень 2")

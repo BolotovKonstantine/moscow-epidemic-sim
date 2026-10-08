@@ -36,6 +36,7 @@ var level := -1
 var tile := Vector2i.ZERO
 var origin := Vector2.ZERO   # левый верхний угол в плоскости карты, м
 var tile_size_m := 0.0       # 0 — обзор региона (уровень 0)
+var bbox := Rect2()          # охват геометрии в плоскости карты (из заголовка под SHA256), пустой — нет геометрии
 var classes: Dictionary = {}
 var counts: Dictionary = {}
 var sections: Dictionary = {}   # имя → PackedFloat32Array | PackedInt32Array | данные JSON
@@ -124,6 +125,14 @@ func _read_header(expected: Dictionary) -> String:
 			return "начало участка %s не совпадает с его местом в сетке %s × %.0f м" % [origin, tile, tile_size_m]
 	else:
 		return "у участка уровня %d нет положительного tile_size_m" % level
+	var box: Variant = header.get("bbox")
+	if not (box == null or is_box(box)):
+		return "bbox должен быть упорядоченными minx, miny, maxx, maxy или null"
+	if box != null:
+		bbox = Rect2(origin + Vector2(box[0], box[1]), Vector2(box[2] - box[0], box[3] - box[1]))
+	if expected.has("bbox") and expected.bbox is Rect2 and expected.bbox.has_area() \
+			and not expected.bbox.is_equal_approx(bbox):
+		return "охват участка %s не совпадает с индексом %s" % [bbox, expected.bbox]
 	var problem := MapTile.check_classes(header.classes)
 	if not problem.is_empty():
 		return problem
@@ -251,6 +260,17 @@ static func check_classes(value: Variant) -> String:
 		if not names is Array or not names.all(func(v): return v is String):
 			return "classes.%s должен быть списком строк" % layer
 	return ""
+
+
+## Значение — массив из count целых чисел (JSON отдаёт числа как float).
+static func is_integers(value: Variant, count: int) -> bool:
+	return is_numbers(value, count) and value.all(func(v): return is_finite(float(v)) and float(v) == floorf(float(v)))
+
+
+## Прямоугольник [minx, miny, maxx, maxy]: конечные числа, min не больше max.
+static func is_box(value: Variant) -> bool:
+	return is_numbers(value, 4) and value.all(func(v): return is_finite(float(v))) \
+		and value[0] <= value[2] and value[1] <= value[3]
 
 
 ## Значение — массив из count чисел (защита от искажённого JSON до обращения по индексу).

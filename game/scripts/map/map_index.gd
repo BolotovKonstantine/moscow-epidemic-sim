@@ -34,7 +34,7 @@ func tiles_of_level(level: int) -> Array[Dictionary]:
 ## Загрузить участок из записи индекса с проверкой SHA256, пакета и классов.
 func load_tile(entry: Dictionary) -> MapTile:
 	return MapTile.open(dir.path_join(entry.path), {
-		"sha256": entry.sha256, "level": entry.level, "tile": entry.tile,
+		"sha256": entry.sha256, "level": entry.level, "tile": entry.tile, "bbox": entry.bbox,
 		"package_id": package_id, "package_version": package_version, "classes": classes,
 	})
 
@@ -78,10 +78,11 @@ func _read(index_path: String) -> String:
 				or ":" in rel_path or ".." in rel_path.split("/"):
 			return "путь участка %s выходит за каталог карты" % rel_path
 		var bbox: Variant = item.get("bbox")
-		if not MapTile.is_numbers([item.level], 1) or not MapTile.is_numbers(item.tile, 2) \
-				or not (bbox == null or MapTile.is_numbers(bbox, 4)) or not item.sha256 is String \
+		if not MapTile.is_integers([item.level], 1) or int(item.level) < 0 or int(item.level) > MapTile.MAX_LEVEL \
+				or not MapTile.is_integers(item.tile, 2) or not (bbox == null or MapTile.is_box(bbox)) \
+				or not item.sha256 is String \
 				or item.sha256.length() != 64 or not item.sha256.is_valid_hex_number():
-			return "запись участка %s: level — число, tile — два числа, bbox — четыре числа или null, sha256 — 64 шестнадцатеричных символа" % rel_path
+			return "запись участка %s: level — целое 0..2, tile — два целых, bbox — упорядоченные minx, miny, maxx, maxy или null, sha256 — 64 шестнадцатеричных символа" % rel_path
 		tiles.append({
 			"level": int(item.level),
 			"tile": Vector2i(int(item.tile[0]), int(item.tile[1])),

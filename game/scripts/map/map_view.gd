@@ -62,7 +62,8 @@ func load_map(map_dir: String) -> String:
 		view.setup(tile, style)
 		_tiles.append(view)
 		if tile.level == 0:
-			region_rect = entry.bbox if entry.bbox.has_area() else Rect2(Vector2.ZERO, Vector2.ONE * 1000.0)
+			# Охват — из заголовка обзора, защищённого SHA256 (с индексом он сверен при загрузке).
+			region_rect = tile.bbox if tile.bbox.has_area() else Rect2(Vector2.ZERO, Vector2.ONE * 1000.0)
 	if _tiles.is_empty() or _tiles[0].level != 0:
 		# Без обзора нет ни границ региона для камеры, ни подложки: подробные участки не показываем.
 		errors.insert(0, "Обзор региона не загружен")
@@ -99,6 +100,7 @@ func fit_region() -> void:
 	max_meters_per_pixel = fit * 1.5
 	_camera.position = region_rect.get_center()
 	_set_scale(fit)
+	_clamp_camera()
 
 
 ## Показать точку плоскости карты при заданном масштабе (для тестов и скриншотов).
@@ -168,8 +170,16 @@ func _view_size() -> Vector2:
 	return size if size.x > 0.0 and size.y > 0.0 else Vector2(1280, 720)
 
 
+## Окно не уходит за регион: центр камеры ограничен с запасом в половину окна, а по оси, где окно
+## шире региона, камера стоит по центру региона.
 func _clamp_camera() -> void:
-	_camera.position = _camera.position.clamp(region_rect.position, region_rect.end)
+	var half := _view_size() / 2.0 * meters_per_pixel
+	var position := _camera.position
+	for axis in 2:
+		var low := region_rect.position[axis] + half[axis]
+		var high := region_rect.end[axis] - half[axis]
+		position[axis] = region_rect.get_center()[axis] if low > high else clampf(position[axis], low, high)
+	_camera.position = position
 
 
 func _unhandled_input(event: InputEvent) -> void:
