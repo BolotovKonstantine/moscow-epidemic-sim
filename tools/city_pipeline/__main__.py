@@ -92,6 +92,13 @@ def load_config(path: Path, data: bytes | None = None) -> dict:
         Projector(config["metric_crs"])
     except Exception as error:   # неизвестная CRS (pyproj) или не метрическая (GeoError)
         raise ManifestError(f"{path}: metric_crs {config['metric_crs']!r} не подходит: {error}") from error
+    problem = _check_day_partition(config["model_assumptions"]["headway_minutes"]["periods"])
+    if problem:
+        raise ManifestError(f"{path}: model_assumptions.headway_minutes.periods: {problem}")
+    levels = config["buildings"]
+    over = sorted(kind for kind, value in levels["default_levels"].items() if value > levels["max_levels"])
+    if over:
+        raise ManifestError(f"{path}: buildings.default_levels больше max_levels {levels['max_levels']}: {', '.join(over)}")
     low, high = config["boundary"]["mkad_area_km2_range"]
     if low > high:
         raise ManifestError(f"{path}: boundary.mkad_area_km2_range: нижняя граница {low} больше верхней {high}")
@@ -126,13 +133,40 @@ def command_validate(args) -> int:
     return 0
 
 
+ROLE_FORMATS = {"osm": "osm-pbf", "population": "geotiff-in-zip"}   # формат карточки реестра для роли
+
+
 def _selected_sources(config, registry):
     selected = {}
     for role, source_id in config["sources"].items():
         if source_id not in registry:
             raise ManifestError(f"Источник {source_id} ({role}) отсутствует в реестре")
+        if registry[source_id]["format"] != ROLE_FORMATS[role]:
+            raise ManifestError(f"Источник {source_id} имеет формат {registry[source_id]['format']}, а для роли {role} нужен {ROLE_FORMATS[role]}")
         selected[role] = registry[source_id]
     return selected
+
+
+def _minutes(clock):
+    hours, minutes = map(int, clock.split(":"))
+    return hours * 60 + minutes
+
+
+def _check_day_partition(periods):
+    """Периоды интервалов должны разбивать сутки без перекрытий и пропусков (переход через полночь допустим)."""
+    spans = []
+    for name, (start, end) in periods.items():
+        a, b = _minutes(start), _minutes(end)
+        if a == b:
+            return f"период {name} пустой ({start}–{end})"
+        spans.append((a, (b - a) % 1440, name))
+    if sum(length for _, length, _ in spans) != 1440:
+        return f"периоды покрывают {sum(length for _, length, _ in spans)} минут вместо 1440 (перекрытие или пропуск)"
+    spans.sort()
+    for (a, length, name), (next_a, _, next_name) in zip(spans, spans[1:] + spans[:1]):
+        if (a + length) % 1440 != next_a:
+            return f"после периода {name} следует {next_name} не встык"
+    return None
 
 
 def command_fetch(args) -> int:

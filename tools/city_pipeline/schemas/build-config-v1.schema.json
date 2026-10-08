@@ -108,7 +108,7 @@
   },
   "$defs": {
     "text": {"type": "string", "minLength": 1, "pattern": "\\S"},
-    "strings": {"type": "array", "items": {"type": "string"}},
+    "strings": {"type": "array", "items": {"$ref": "#/$defs/text"}},
     "positive": {"type": "number", "exclusiveMinimum": 0},
     "function": {"enum": ["residential", "work", "retail", "education", "medical", "transport", "control", "other"]}
   }

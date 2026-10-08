@@ -229,6 +229,23 @@ class ConfigSnapshotTests(unittest.TestCase):
             with self.assertRaisesRegex(ManifestError, "1e400"):
                 load_config(path)
 
+    def test_blank_classes_overlapping_periods_and_oversized_defaults_rejected(self):
+        self.invalid(lambda c: c["roads"].__setitem__("highways", [""]), "roads.highways")
+        self.invalid(lambda c: c["boundary"]["mkad"]["match"].__setitem__("ref", [" "]), "boundary.mkad.match.ref")
+        periods = lambda c: c["model_assumptions"]["headway_minutes"]["periods"]
+        self.invalid(lambda c: periods(c).__setitem__("day", ["09:00", "17:00"]), "перекрытие или пропуск")   # перекрытие 09–10
+        self.invalid(lambda c: periods(c).__setitem__("day", ["11:00", "17:00"]), "перекрытие или пропуск")   # пропуск 10–11
+        self.invalid(lambda c: c["buildings"]["default_levels"].__setitem__("*", 500), "max_levels")
+
+    def test_source_format_must_match_role(self):
+        from tools.city_pipeline.__main__ import _selected_sources
+        from tools.city_pipeline.sources import load_registry
+        registry = load_registry(self.REAL.parent / "sources.json")
+        config = json.loads(self.REAL.read_text(encoding="utf-8"))
+        config["sources"]["population"] = config["sources"]["osm"]   # PBF вместо растра
+        with self.assertRaisesRegex(ManifestError, "для роли population"):
+            _selected_sources(config, registry)
+
     def test_float_encoded_integers_rejected(self):
         self.invalid(lambda c: c["quality"].__setitem__("manual_sample_size", 60.0), "quality.manual_sample_size")
         self.invalid(lambda c: c["quality"].__setitem__("sample_seed", 20210101.0), "quality.sample_seed")
