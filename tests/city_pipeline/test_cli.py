@@ -229,6 +229,11 @@ class ConfigSnapshotTests(unittest.TestCase):
             with self.assertRaisesRegex(ManifestError, "1e400"):
                 load_config(path)
 
+    def test_float_encoded_integers_rejected(self):
+        self.invalid(lambda c: c["quality"].__setitem__("manual_sample_size", 60.0), "quality.manual_sample_size")
+        self.invalid(lambda c: c["quality"].__setitem__("sample_seed", 20210101.0), "quality.sample_seed")
+        self.invalid(lambda c: c["population"].__setitem__("block_zones", 5.0), "population.block_zones")
+
     def test_empty_mkad_match_values_rejected(self):
         self.invalid(lambda c: c["boundary"]["mkad"]["match"].__setitem__("ref", []), "boundary.mkad.match.ref")
 

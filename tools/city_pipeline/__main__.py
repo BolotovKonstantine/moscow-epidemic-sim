@@ -10,7 +10,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, validators
 from shapely.errors import ShapelyError
 
 from .manifest import ManifestError, parse_json_bytes, read_json, validate_manifest
@@ -60,6 +60,14 @@ SUPPORTED_CONFIG_VERSION = 1
 
 CONFIG_SCHEMA = Path(__file__).parent / "schemas" / "build-config-v1.schema.json"
 
+# В схеме конфигурации integer — только целые Python (60, а не 60.0): дальше значения идут в numpy
+# (размер выборки, seed), где float падает лишь в конце сборки. bool целым не считается.
+StrictIntegerValidator = validators.extend(
+    Draft202012Validator,
+    type_checker=Draft202012Validator.TYPE_CHECKER.redefine(
+        "integer", lambda _, value: isinstance(value, int) and not isinstance(value, bool)),
+)
+
 
 def load_config(path: Path, data: bytes | None = None) -> dict:
     """Конфигурация сборки версии 1, проверенная JSON Schema до любой работы.
@@ -76,7 +84,7 @@ def load_config(path: Path, data: bytes | None = None) -> dict:
     version = config.get("config_version") if isinstance(config, dict) else None
     if type(version) is not int or version != SUPPORTED_CONFIG_VERSION:
         raise ManifestError(f"{path}: неподдерживаемая config_version {version!r}, ожидается {SUPPORTED_CONFIG_VERSION}")
-    errors = sorted(Draft202012Validator(read_json(CONFIG_SCHEMA)).iter_errors(config), key=lambda error: list(error.absolute_path))
+    errors = sorted(StrictIntegerValidator(read_json(CONFIG_SCHEMA)).iter_errors(config), key=lambda error: list(error.absolute_path))
     if errors:
         raise ManifestError("\n".join(f"{path}: {'.'.join(map(str, error.absolute_path)) or '$'}: {error.message}" for error in errors))
     try:
