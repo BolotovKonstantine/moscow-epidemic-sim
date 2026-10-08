@@ -10,6 +10,7 @@ const FORMAT := "mesim-map-tile"
 const FORMAT_VERSION := 1
 const LEVEL_TILE_M := {1: 8000.0, 2: 2000.0}   # размеры участков уровней формата 1
 const MAX_DECODED_BYTES := 512 << 20   # всего данных участка после распаковки
+const MAX_COORD_M := 1.0e7   # |координата| плоскости карты: регион — сотни км; 1e7 точно помещается во float32
 const MAX_LEVEL := 2   # уровни 0–2 формата 1: обзор, участки 8 и 2 км
 const PREAMBLE := 16   # магия, u32 версия, u32 длина заголовка
 const MAX_HEADER_BYTES := 1 << 20
@@ -124,7 +125,7 @@ func _read_header(expected: Dictionary) -> String:
 	for key: String in ["level", "tile", "origin", "classes", "counts", "sections", "attribution"]:
 		if not header.has(key):
 			return "в заголовке нет поля %s" % key
-	if not is_integers(header.tile, 2) or not is_finite_numbers(header.origin, 2) or not is_integers([header.level], 1):
+	if not is_integers(header.tile, 2) or not is_coords(header.origin, 2) or not is_integers([header.level], 1):
 		return "level — целое, tile — два целых, origin — два конечных числа"
 	level = int(header.level)
 	if level < 0 or level > MAX_LEVEL or float(header.level) != level:
@@ -324,9 +325,15 @@ static func is_finite_numbers(value: Variant, count: int) -> bool:
 	return is_numbers(value, count) and value.all(func(v): return is_finite(float(v)))
 
 
-## Прямоугольник [minx, miny, maxx, maxy]: конечные числа, min не больше max.
+## Прямоугольник [minx, miny, maxx, maxy]: координаты плоскости (is_coords), min не больше max.
 static func is_box(value: Variant) -> bool:
-	return is_finite_numbers(value, 4) and value[0] <= value[2] and value[1] <= value[3]
+	return is_coords(value, 4) and value[0] <= value[2] and value[1] <= value[3]
+
+
+## Значение — массив из count координат плоскости карты: конечные и по модулю не больше MAX_COORD_M,
+## чтобы не переполнить 32-битный Vector2.
+static func is_coords(value: Variant, count: int) -> bool:
+	return is_finite_numbers(value, count) and value.all(func(v): return absf(float(v)) <= MAX_COORD_M)
 
 
 ## Значение — массив из count чисел (защита от искажённого JSON до обращения по индексу).
