@@ -163,6 +163,9 @@ def population_raster(archive: Path) -> str:
     path = f"zip://{archive}!/{members[0]}"
     try:
         with rasterio.open(path) as dataset:
+            transform = dataset.transform
+            if transform.b != 0 or transform.d != 0 or transform.a <= 0 or transform.e >= 0:
+                raise ManifestError(f"{path}: сетка должна быть без поворота, север вверху (получено {tuple(transform)[:6]})")
             if dataset.crs is None or dataset.crs.to_epsg() != 4326:
                 raise ManifestError(f"{path}: сетка населения должна быть в EPSG:4326, получено {dataset.crs}")
     except rasterio.errors.RasterioError as error:
@@ -233,7 +236,7 @@ def command_build(args) -> int:
     boundary_osm = work / "boundary-sources.osm.pbf"
     prefilter_boundary(osm, boundary_osm, config["boundary"])
     parts = make_boundary(config, boundary_osm, projector)
-    region_wgs = projector.to_wgs84(parts["region"])
+    region_wgs = projector.to_wgs84_dense(parts["region"])   # контур вырезки повторяет метрическую границу
     print(f"  регион {parts['region'].area / 1e6:.0f} км², внутри МКАД {parts['mkad_outer'].area / 1e6:.0f} км²")
     print("Вырезка OSM…")
     region_osm = clip_region(osm, region_wgs, work)

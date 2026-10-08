@@ -235,7 +235,7 @@ class ConfigSnapshotTests(unittest.TestCase):
         periods = lambda c: c["model_assumptions"]["headway_minutes"]["periods"]
         self.invalid(lambda c: periods(c).__setitem__("day", ["09:00", "17:00"]), "перекрытие или пропуск")   # перекрытие 09–10
         self.invalid(lambda c: periods(c).__setitem__("day", ["11:00", "17:00"]), "перекрытие или пропуск")   # пропуск 10–11
-        self.invalid(lambda c: c["buildings"]["default_levels"].__setitem__("*", 500), "max_levels")
+        self.invalid(lambda c: c["buildings"]["default_levels"].__setitem__("*", 150), "max_levels")
 
     def test_source_format_must_match_role(self):
         from tools.city_pipeline.__main__ import _selected_sources
@@ -245,6 +245,11 @@ class ConfigSnapshotTests(unittest.TestCase):
         config["sources"]["population"] = config["sources"]["osm"]   # PBF вместо растра
         with self.assertRaisesRegex(ManifestError, "для роли population"):
             _selected_sources(config, registry)
+
+    def test_blank_facility_and_mkad_keys_and_huge_levels_rejected(self):
+        self.invalid(lambda c: c["facilities"]["kinds"]["amenity"].__setitem__("hospital", ""), "facilities.kinds.amenity.hospital")
+        self.invalid(lambda c: c["boundary"]["mkad"]["match"].__setitem__("", ["МКАД"]), "boundary.mkad.match")
+        self.invalid(lambda c: c["buildings"].__setitem__("max_levels", 1e308), "buildings.max_levels")
 
     def test_tiny_cells_and_blank_moscow_selectors_rejected(self):
         self.invalid(lambda c: c["zones"].__setitem__("cell_size_m", 1e-320), "zones.cell_size_m")

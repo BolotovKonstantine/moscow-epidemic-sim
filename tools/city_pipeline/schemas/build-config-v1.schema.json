@@ -22,7 +22,7 @@
         "mkad": {
           "type": "object", "additionalProperties": false, "required": ["match", "highways"],
           "properties": {
-            "match": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/strings", "minItems": 1}},
+            "match": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"$ref": "#/$defs/strings", "minItems": 1}},
             "highways": {"$ref": "#/$defs/strings", "minItems": 1}
           }
         },
@@ -49,9 +49,9 @@
         "site_functions": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"$ref": "#/$defs/function"}}},
         "poi_secondary_weight": {"type": "number", "minimum": 0},
         "site_min_residential_footprint_m2": {"type": "number", "minimum": 0},
-        "meters_per_level": {"$ref": "#/$defs/positive"},
-        "default_levels": {"type": "object", "required": ["*"], "additionalProperties": {"$ref": "#/$defs/positive"}},
-        "max_levels": {"$ref": "#/$defs/positive"}
+        "meters_per_level": {"type": "number", "minimum": 1, "maximum": 10},
+        "default_levels": {"type": "object", "required": ["*"], "additionalProperties": {"type": "number", "exclusiveMinimum": 0, "maximum": 200}},
+        "max_levels": {"type": "number", "exclusiveMinimum": 0, "maximum": 200}
       }
     },
     "population": {
@@ -66,7 +66,7 @@
     },
     "facilities": {
       "type": "object", "additionalProperties": false, "required": ["kinds"],
-      "properties": {"kinds": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"type": "string"}}}}
+      "properties": {"kinds": {"type": "object", "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"$ref": "#/$defs/text"}}}}
     },
     "transit": {
       "type": "object", "additionalProperties": false,

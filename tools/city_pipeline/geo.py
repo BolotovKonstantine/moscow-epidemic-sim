@@ -35,6 +35,11 @@ class Projector:
     def to_wgs84(self, geometries):
         return shapely.transform(geometries, lambda coords: np.column_stack(self.lonlat(coords[:, 0], coords[:, 1])))
 
+    def to_wgs84_dense(self, geometries, step_m=50.0):
+        """Перевод в WGS84 с уплотнением в метрах: прямой отрезок в метрах не равен хорде в градусах,
+        поэтому длинные стороны дробятся до шага step_m перед обратным переводом."""
+        return self.to_wgs84(shapely.segmentize(geometries, max_segment_length=step_m))
+
 
 def round_wgs84(geometries, digits=7):
     return shapely.transform(geometries, lambda coords: np.round(coords, digits))

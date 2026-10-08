@@ -65,6 +65,10 @@ class RoadTests(unittest.TestCase):
         candidates = crossing_points(line.intersection(region.boundary))
         kept = side_transitions(line, candidates, region)
         self.assertEqual(sorted(map(tuple, kept)), [(50.0, 0.0), (60.0, 100.0)])   # касание не вход
+        # Узкий заход внутрь на 0,4 м: оба пересечения ближе 1 м друг к другу и оба — переходы.
+        narrow = LineString([(-10, 50), (0.2, 50), (-10, 50.5)])
+        kept = side_transitions(narrow, crossing_points(narrow.intersection(region.boundary)), region)
+        self.assertEqual(len(kept), 2)
 
 
 if __name__ == "__main__":

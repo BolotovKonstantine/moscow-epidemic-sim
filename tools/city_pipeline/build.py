@@ -45,7 +45,7 @@ def make_boundary(config, boundary_osm: Path, projector: Projector):
 
 def write_boundary(path: Path, parts, projector, config):
     order = ("region", "moscow_admin", "mkad_outer")
-    exact = projector.to_wgs84(np.array([parts[name] for name in order]))
+    exact = projector.to_wgs84_dense(np.array([parts[name] for name in order]))
     geometries = round_wgs84(exact)  # округление только для файла
     properties = [
         {"part": "region", "rule": "moscow_admin_union_mkad_outer_buffer", "buffer_meters": config["boundary"]["buffer_meters"], "area_km2": round(parts["region"].area / 1e6, 3)},
@@ -157,11 +157,15 @@ def side_transitions(line, candidates, region_metric, step_m=0.5):
     if len(candidates) == 0:
         return candidates
     length = line.length
+    positions = [line.project(shapely.Point(x, y)) for x, y in candidates]
+    ordered = sorted(positions)
     keep = []
-    for x, y in candidates:
-        distance = line.project(shapely.Point(x, y))
-        before = line.interpolate(max(distance - step_m, 0.0))
-        after = line.interpolate(min(distance + step_m, length))
+    for (x, y), distance in zip(candidates, positions):
+        # Шаг не больше половины расстояния до соседнего кандидата: узкий заход (< 1 м) не теряется.
+        neighbours = [abs(other - distance) for other in ordered if other != distance]
+        step = min([step_m] + [gap / 2 for gap in neighbours if gap > 0])
+        before = line.interpolate(max(distance - step, 0.0))
+        after = line.interpolate(min(distance + step, length))
         if region_metric.contains(before) != region_metric.contains(after):
             keep.append((x, y))
     return np.array(keep, dtype=np.float64).reshape(-1, 2)
@@ -443,7 +447,8 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     log("  дороги и узлы…")
     write_csv(out_dir / "road_nodes.csv.gz", ["node_id", "lon", "lat", "inside", "zone_id", "weak_component", "strong_component"], node_rows)
     write_geojsonl(out_dir / "roads.geojsonl.gz", round_wgs84(graph.edge_lines), [
-        {key: (round(value, 1) if key == "length_m" else value) for key, value in edge.items()} for edge in graph.edges
+        # gateway — вычисленный по границе флаг, не наблюдение OSM; он в gateways.csv.gz, а не здесь.
+        {key: (round(value, 1) if key == "length_m" else value) for key, value in edge.items() if key != "gateway"} for edge in graph.edges
     ])
     add("road-nodes", "roads", "road_nodes.csv.gz", "csv+gzip", "observed", ["osm"])
     add("roads", "roads", "roads.geojsonl.gz", "geojsonl+gzip", "observed", ["osm"])

@@ -201,6 +201,8 @@ class BuildTests(unittest.TestCase):
         crossings = [row for row in read_csv(self.out / "gateways.csv.gz") if row["kind"] == "road"]
         self.assertTrue(all(row["inside_ref"] == "" and row["outside_ref"].count(";") == 1 and row["zone_id"] for row in crossings))
         self.assertNotIn("footway", roads["length_km_by_class"])
+        with gzip.open(self.out / "roads.geojsonl.gz", "rt", encoding="utf-8") as stream:
+            self.assertNotIn("gateway", json.loads(stream.readline())["properties"])   # вычисленный флаг не в наблюдении
         checks = {check["check"]: check["status"] for check in self.report["checks"]}
         self.assertEqual(checks["road_graph_mostly_connected"], "fail")
 
