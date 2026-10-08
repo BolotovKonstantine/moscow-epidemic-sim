@@ -79,6 +79,11 @@ def load_config(path: Path, data: bytes | None = None) -> dict:
     errors = sorted(Draft202012Validator(read_json(CONFIG_SCHEMA)).iter_errors(config), key=lambda error: list(error.absolute_path))
     if errors:
         raise ManifestError("\n".join(f"{path}: {'.'.join(map(str, error.absolute_path)) or '$'}: {error.message}" for error in errors))
+    try:
+        from .geo import Projector
+        Projector(config["metric_crs"])
+    except Exception as error:   # неизвестная CRS (pyproj) или не метрическая (GeoError)
+        raise ManifestError(f"{path}: metric_crs {config['metric_crs']!r} не подходит: {error}") from error
     low, high = config["boundary"]["mkad_area_km2_range"]
     if low > high:
         raise ManifestError(f"{path}: boundary.mkad_area_km2_range: нижняя граница {low} больше верхней {high}")

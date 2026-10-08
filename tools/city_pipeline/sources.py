@@ -12,7 +12,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-from .manifest import ManifestError, _timestamp, read_json, sha256_file
+from .manifest import ManifestError, _timestamp, read_json, sha256_file, validate_source_card
 
 
 def _is_date(value: str) -> bool:
@@ -46,6 +46,8 @@ def load_registry(path: Path) -> dict:
             raise ManifestError(f"{source['source_id']}: acquired_at должен быть временем с часовым поясом, получено {source['acquired_at']!r}")
         if source["data_date"] is not None and not _is_date(source["data_date"]):
             raise ManifestError(f"{source['source_id']}: data_date должна быть датой ГГГГ-ММ-ДД или null, получено {source['data_date']!r}")
+        # Карточка проверяется по схеме паспорта сразу: неверный ID, URL или пустой владелец не всплывут после сборки.
+        validate_source_card(manifest_source(source, "registry-check"), f"{path}: {source['source_id']}")
         if source["source_id"] in result:
             raise ManifestError(f"Повторяющийся source_id {source['source_id']}")
         if "/" in source["file"] or source["file"] in ("", ".", ".."):

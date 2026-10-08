@@ -23,7 +23,7 @@
           "type": "object", "additionalProperties": false, "required": ["match", "highways"],
           "properties": {
             "match": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/strings"}},
-            "highways": {"$ref": "#/$defs/strings"}
+            "highways": {"$ref": "#/$defs/strings", "minItems": 1}
           }
         },
         "mkad_edge_offset_m": {"$ref": "#/$defs/positive"},
@@ -84,8 +84,8 @@
       "required": ["transfer_walk_speed_mps", "transfer_overhead_s", "headway_minutes"],
       "properties": {
         "note": {"type": "string"},
-        "transfer_walk_speed_mps": {"$ref": "#/$defs/positive"},
-        "transfer_overhead_s": {"type": "number", "minimum": 0},
+        "transfer_walk_speed_mps": {"type": "number", "minimum": 0.1, "maximum": 10},
+        "transfer_overhead_s": {"type": "number", "minimum": 0, "maximum": 3600},
         "headway_minutes": {
           "type": "object", "additionalProperties": false, "required": ["periods", "by_mode"],
           "properties": {

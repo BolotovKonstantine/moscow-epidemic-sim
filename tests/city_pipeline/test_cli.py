@@ -109,7 +109,10 @@ class RegistryTests(unittest.TestCase):
                              '{"registry_version": true, "sources": []}',
                              '{"registry_version": 1, "sources": [{"source_id": 1, "url": "u", "file": "f", "owner": "o", "license": "l", "data_date": null, "acquired_at": "a", "coverage": "c", "format": "f", "sha256": "s"}]}',
                              '{"registry_version": 1, "sources": [{"source_id": "s", "url": "u", "file": "f", "owner": "o", "license": "l", "data_date": null, "acquired_at": "вчера", "coverage": "c", "format": "f", "sha256": "s"}]}',
-                             '{"registry_version": 1, "sources": [{"source_id": "s", "url": "u", "file": "f", "owner": "o", "license": "l", "data_date": "2021-02-30", "acquired_at": "2026-10-06T20:19:00Z", "coverage": "c", "format": "f", "sha256": "s"}]}'):
+                             '{"registry_version": 1, "sources": [{"source_id": "s", "url": "u", "file": "f", "owner": "o", "license": "l", "data_date": "2021-02-30", "acquired_at": "2026-10-06T20:19:00Z", "coverage": "c", "format": "f", "sha256": "s"}]}',
+                             '{"registry_version": 1, "sources": [{"source_id": "OSM Source", "url": "https://x", "file": "f", "owner": "o", "license": "l", "data_date": null, "acquired_at": "2026-10-06T20:19:00Z", "coverage": "c", "format": "f", "sha256": "' + "0" * 64 + '"}]}',
+                             '{"registry_version": 1, "sources": [{"source_id": "s", "url": "ftp://x", "file": "f", "owner": "o", "license": "l", "data_date": null, "acquired_at": "2026-10-06T20:19:00Z", "coverage": "c", "format": "f", "sha256": "' + "0" * 64 + '"}]}',
+                             '{"registry_version": 1, "sources": [{"source_id": "s", "url": "https://x", "file": "f", "owner": " ", "license": "l", "data_date": null, "acquired_at": "2026-10-06T20:19:00Z", "coverage": "c", "format": "f", "sha256": "' + "0" * 64 + '"}]}'):
                 with self.subTest(document=document):
                     path.write_text(document)
                     with self.assertRaises(ManifestError):
@@ -214,6 +217,12 @@ class ConfigSnapshotTests(unittest.TestCase):
             path.write_text(config, encoding="utf-8")
             with self.assertRaisesRegex(ManifestError, "1e400"):
                 load_config(path)
+
+    def test_mkad_classes_crs_and_transfer_bounds_rejected(self):
+        self.invalid(lambda c: c["boundary"]["mkad"].__setitem__("highways", []), "boundary.mkad.highways")
+        self.invalid(lambda c: c.__setitem__("metric_crs", "EPSG:4326"), "metric_crs")      # географическая
+        self.invalid(lambda c: c.__setitem__("metric_crs", "EPSG:999999"), "metric_crs")    # неизвестная
+        self.invalid(lambda c: c["model_assumptions"].__setitem__("transfer_walk_speed_mps", 5e-324), "transfer_walk_speed_mps")
 
     def test_empty_road_classes_and_reversed_mkad_range_rejected(self):
         self.invalid(lambda c: c["roads"].__setitem__("highways", []), "roads.highways")

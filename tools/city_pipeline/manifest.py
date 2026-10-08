@@ -87,6 +87,17 @@ def _asset_path(root: Path, relative: str) -> Path:
     return candidate
 
 
+def validate_source_card(card: dict, origin) -> None:
+    """Проверить одну карточку источника по схеме паспорта (до сборки, а не после неё)."""
+    schema = read_json(SCHEMA_PATH)
+    formats = FormatChecker()
+    formats.checks("date-time")(_timestamp)
+    validator = Draft202012Validator({"$ref": "#/$defs/source", "$defs": schema["$defs"]}, format_checker=formats)
+    errors = list(validator.iter_errors(card))
+    if errors:
+        raise ManifestError("\n".join(f"{origin}: {'.'.join(map(str, error.absolute_path)) or '$'}: {error.message}" for error in errors))
+
+
 def validate_manifest(path: Path, *, check_files: bool = True) -> dict:
     manifest = read_json(path)
     schema = read_json(SCHEMA_PATH)

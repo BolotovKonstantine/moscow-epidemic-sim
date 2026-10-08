@@ -319,10 +319,8 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
 
     region_metric = region_parts["region"]
     wgs = write_boundary(out_dir / "boundary.geojson", region_parts, projector, config)
-    region_wgs, moscow_wgs, mkad_wgs = wgs["region"], wgs["moscow_admin"], wgs["mkad_outer"]
+    region_wgs = wgs["region"]
     shapely.prepare(region_wgs)
-    shapely.prepare(moscow_wgs)
-    shapely.prepare(mkad_wgs)
 
     log("Чтение OSM…")
     data = read_osm(region_osm, config)
@@ -344,8 +342,11 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     sites_metric = projector.to_metric(shapely.from_wkb(site_wkbs)) if site_wkbs else np.array([])
     log("Классификация зданий…")
     buildings = classify(building_ids, geometry, metric, building_tags, pois, site_functions, sites_metric, config, projector)
-    in_moscow = shapely.contains_xy(moscow_wgs, buildings.lon, buildings.lat)
-    in_mkad = shapely.contains_xy(mkad_wgs, buildings.lon, buildings.lat)
+    # Принадлежность Москве и территории внутри МКАД — по метрическим контурам и точкам (как у остальных предикатов).
+    shapely.prepare(region_parts["moscow_admin"])
+    shapely.prepare(region_parts["mkad_outer"])
+    in_moscow = shapely.contains_xy(region_parts["moscow_admin"], buildings.centroid_x, buildings.centroid_y)
+    in_mkad = shapely.contains_xy(region_parts["mkad_outer"], buildings.centroid_x, buildings.centroid_y)
 
     log("Зоны…")
     zones = build_zones(region_metric, config["zones"]["cell_size_m"])

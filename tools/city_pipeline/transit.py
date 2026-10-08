@@ -152,6 +152,12 @@ def _stop_name(stop, members, points):
     return ""
 
 
+def _finite(value, what):
+    if not np.isfinite(value):
+        raise ValueError(f"{what} получилось нечисловым ({value}): проверьте параметры model_assumptions")
+    return value
+
+
 def _point(geometry):
     if isinstance(geometry, tuple):
         return geometry
@@ -263,7 +269,7 @@ def build_network(data, region_wgs84, projector, config):
         meters = distance(a, b)
         transfers.append({
             "stop_area_id": area_id, "from_stop": a, "to_stop": b, "distance_m": meters,
-            "walk_s": meters / model["transfer_walk_speed_mps"] + model["transfer_overhead_s"],
+            "walk_s": _finite(meters / model["transfer_walk_speed_mps"] + model["transfer_overhead_s"], "время пересадки"),
         })
     for route in routes:
         # Ненайденные члены маршрута не доказывают выход за границу: это видно только по остановкам вне региона.
