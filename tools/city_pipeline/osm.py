@@ -171,7 +171,11 @@ def read_boundary_sources(path, boundary_config):
     for obj in processor:
         tags = obj.tags
         if obj.is_area() and not obj.from_way() and all(tags.get(key) == value for key, value in admin.items()):
-            moscow.append((obj.orig_id(), bytes.fromhex(wkb.create_multipolygon(obj))))
+            try:
+                moscow.append((obj.orig_id(), bytes.fromhex(wkb.create_multipolygon(obj))))
+            except RuntimeError as error:
+                # Не трассировка, а ошибка данных: без контура Москвы регион не построить.
+                raise ValueError(f"Не удалось собрать контур отношения Москвы r{obj.orig_id()}: {error}") from error
         elif obj.is_way() and tags.get("highway") in mkad["highways"]:
             if any(tags.get(key) in values for key, values in mkad["match"].items()):
                 try:

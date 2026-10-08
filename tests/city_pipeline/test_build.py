@@ -58,6 +58,24 @@ class BuildTests(unittest.TestCase):
         moscow, _ = read_boundary_sources(path, boundary)
         self.assertEqual(len(moscow), 1)
 
+    def test_broken_moscow_geometry_is_a_data_error(self):
+        from tools.city_pipeline import osm
+
+        class Broken:
+            def create_multipolygon(self, _):
+                raise RuntimeError("invalid area")
+
+            def create_linestring(self, _):
+                raise RuntimeError("invalid line")   # линии МКАД пропускаются, важен контур Москвы
+
+        original = osm.osmium.geom.WKBFactory
+        osm.osmium.geom.WKBFactory = Broken
+        try:
+            with self.assertRaisesRegex(ValueError, "контур отношения Москвы"):
+                osm.read_boundary_sources(self.osm, self.config["boundary"])
+        finally:
+            osm.osmium.geom.WKBFactory = original
+
     def test_broken_mkad_ring_is_rejected(self):
         config = json.loads(json.dumps(self.config))
         config["boundary"]["mkad_area_km2_range"] = [850, 900]

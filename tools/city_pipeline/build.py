@@ -280,7 +280,7 @@ def config_source(config, created_at, config_path: Path | None = None, config_by
     доступна только в пакете (это отражено в coverage).
     """
     data = config_snapshot(config, config_path, config_bytes)
-    url, owner = REPOSITORY_URL, "Moscow Epidemic Sim"
+    url, owner, license_ = REPOSITORY_URL, "Moscow Epidemic Sim", "MIT"
     if config_path is None:
         origin = "нормализованный JSON конфигурации, переданной из кода; копия — build_config.json пакета"
     else:
@@ -292,13 +292,15 @@ def config_source(config, created_at, config_path: Path | None = None, config_by
         elif relative:
             origin = f"незакоммиченная версия {relative}; точная копия — только build_config.json пакета"
         else:
-            owner, origin = "Автор сборки (локальный файл конфигурации)", f"локальный файл {resolved.name} вне репозитория; копия — build_config.json пакета"
+            # Лицензия чужого файла неизвестна — не приписываем MIT репозитория.
+            owner, license_ = "Автор сборки (локальный файл конфигурации)", "unknown"
+            origin = f"локальный файл {resolved.name} вне репозитория; копия — build_config.json пакета"
     return {
         "source_id": f"build-config-{config['package_id']}",
         "source_type": "synthetic",
         "url": url,
         "owner": owner,
-        "license": "MIT",
+        "license": license_,
         "data_date": None,
         "acquired_at": created_at,
         "coverage": f"Модельные параметры конфигурации сборки (model_assumptions): интервалы движения, скорость и надбавка пересадки; {origin}",

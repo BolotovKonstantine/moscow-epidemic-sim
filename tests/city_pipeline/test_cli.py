@@ -156,6 +156,7 @@ class ConfigProvenanceTests(unittest.TestCase):
             card = config_source(config, "2026-10-08T00:00:00Z", outside)
             self.assertEqual(card["sha256"], hashlib.sha256(outside.read_bytes()).hexdigest())
             self.assertIn("вне репозитория", card["coverage"])
+            self.assertEqual(card["license"], "unknown")
 
     def test_headways_cover_every_mode_and_period(self):
         real = Path(__file__).resolve().parents[2] / "data" / "manifests" / "moscow-2021.json"
@@ -196,6 +197,21 @@ class ConfigSnapshotTests(unittest.TestCase):
 
     def test_clock_hours_above_23_rejected(self):
         self.invalid(lambda c: c["model_assumptions"]["headway_minutes"]["periods"].__setitem__("night", ["01:00", "29:00"]), "periods")
+
+    def test_empty_periods_rejected(self):
+        def empty(config):
+            config["model_assumptions"]["headway_minutes"]["periods"] = {}
+            for mode in config["model_assumptions"]["headway_minutes"]["by_mode"]:
+                config["model_assumptions"]["headway_minutes"]["by_mode"][mode] = {}
+        self.invalid(empty, "periods")
+
+    def test_numeric_overflow_rejected(self):
+        config = self.REAL.read_text(encoding="utf-8").replace('"transfer_walk_speed_mps": 1.2', '"transfer_walk_speed_mps": 1e400')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(config, encoding="utf-8")
+            with self.assertRaisesRegex(ManifestError, "1e400"):
+                load_config(path)
 
     def test_building_value_in_two_functions_rejected(self):
         self.invalid(lambda c: c["buildings"]["tag_functions"]["work"].append("apartments"), "apartments")
