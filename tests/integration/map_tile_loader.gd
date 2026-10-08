@@ -99,6 +99,18 @@ func _test_rejections(fixture: String) -> void:
 		var values := specials.duplicate()
 		values.append(bad)
 		check(not MapTile._all_finite(values.to_byte_array()), "%s отклоняется" % bad)
+	# Заголовок проверяет tile той же функцией, что и индекс (подмена в файле не помещается в длину).
+	check(not MapTile.is_integers([0.5, 0], 2) and MapTile.is_integers([3.0, 0], 2), "номер участка — только целые")
+	var big := MapTile.open(_write("sized.mtile", source), {"size_bytes": source.size() + 1})
+	check("в индексе" in big.error, "размер файла сверяется с индексом: " + big.error)
+	var rings := _section_descriptor(source, "pick.ring")
+	check(rings.codec == "none" or rings.codec == "deflate", "у pick.ring известное сжатие")
+	var tile_ok := MapTile.open(_write("pick.mtile", source))
+	tile_ok.sections["pick.ring"][1] = 999
+	check("pick.ring" in tile_ok._check_pick(), "кольцо с вершинами вне building.xy отклоняется")
+	tile_ok.sections["pick.ring"][1] = 0
+	tile_ok.sections["pick.ring"][0] = 7
+	check("pick.ring" in tile_ok._check_pick(), "кольцо несуществующего здания отклоняется")
 	var attrs := _section_descriptor(source, "pick.attrs")
 	_expect_header_patch(source, "\"raw_size\":%d" % attrs.raw_size, "\"raw_size\":1e9",
 		"больше предела", "огромный raw_size отклоняется до распаковки")

@@ -11,6 +11,7 @@ const FORMAT_VERSION := 1
 const MAX_LEVEL := 2   # уровни 0–2 формата 1: обзор, участки 8 и 2 км
 const PREAMBLE := 16   # магия, u32 версия, u32 длина заголовка
 const MAX_HEADER_BYTES := 1 << 20
+const MAX_TILE_BYTES := 256 << 20      # предел файла участка; участки центра Москвы — до ~3,5 МБ
 const MAX_SECTION_BYTES := 256 << 20   # предел раздела после распаковки; участок 2 км центра — ~3 МБ
 
 # Раздел → число столбцов (1 — плоский массив). Индексные разделы проверяются по числу вершин.
@@ -63,6 +64,17 @@ func vertex_count(layer: String) -> int:
 
 
 func _read(file_path: String, expected: Dictionary) -> String:
+	# Размер файла проверяется до чтения в память: испорченный каталог карты не должен исчерпать память.
+	var file := FileAccess.open(file_path, FileAccess.READ)
+	if file == null:
+		return "не удалось прочитать файл (%s)" % error_string(FileAccess.get_open_error())
+	var length := file.get_length()
+	file.close()
+	if length > MAX_TILE_BYTES:
+		return "файл %d байт, больше предела %d" % [length, MAX_TILE_BYTES]
+	var want_size := int(expected.get("size_bytes", 0))
+	if want_size > 0 and length != want_size:
+		return "размер %d байт, а в индексе %d" % [length, want_size]
 	var bytes := FileAccess.get_file_as_bytes(file_path)
 	if bytes.is_empty():
 		return "не удалось прочитать файл (%s)" % error_string(FileAccess.get_open_error())
@@ -105,8 +117,8 @@ func _read_header(expected: Dictionary) -> String:
 	for key: String in ["level", "tile", "origin", "classes", "counts", "sections", "attribution"]:
 		if not header.has(key):
 			return "в заголовке нет поля %s" % key
-	if not is_numbers(header.tile, 2) or not is_numbers(header.origin, 2) or not is_numbers([header.level], 1):
-		return "поля level, tile и origin должны быть числами (tile и origin — по два)"
+	if not is_integers(header.tile, 2) or not is_finite_numbers(header.origin, 2) or not is_integers([header.level], 1):
+		return "level — целое, tile — два целых, origin — два конечных числа"
 	level = int(header.level)
 	if level < 0 or level > MAX_LEVEL or float(header.level) != level:
 		return "уровень %s вне 0..%d" % [header.level, MAX_LEVEL]
@@ -225,6 +237,31 @@ func _check_layers() -> String:
 			return "раздел %s: код класса вне списка из %d классов" % [cls_name, class_list.size()]
 	if level == 0 and has_layer("building"):
 		return "в обзоре региона не должно быть зданий"
+	return _check_pick()
+
+
+## Данные выбора зданий (уровень 2): кольцо ссылается на строку здания и на вершины building.xy,
+## прямоугольники и колонки карточки — по строке на здание.
+func _check_pick() -> String:
+	var names := ["pick.ring", "pick.bbox", "pick.attrs"]
+	var present := names.filter(func(n): return sections.has(n))
+	if present.is_empty():
+		return ""
+	if present.size() != names.size() or not has_layer("building"):
+		return "данные выбора неполны или без зданий: %s" % [present]
+	var buildings := (sections["pick.bbox"] as PackedFloat32Array).size() / 4
+	var attrs: Variant = sections["pick.attrs"]
+	if not attrs is Dictionary or not attrs.values().all(func(c): return c is Array and c.size() == buildings):
+		return "pick.attrs: каждая колонка — список из %d значений" % buildings
+	var rings: PackedInt32Array = sections["pick.ring"]
+	var vertices := vertex_count("building")
+	for i in range(0, rings.size(), 3):
+		var row := rings[i]
+		var start := rings[i + 1]
+		var count := rings[i + 2]
+		if row < 0 or row >= buildings or start < 0 or count < 3 or start + count > vertices:
+			return "pick.ring: кольцо %d ссылается на здание %d или вершины %d..%d вне данных" % [
+				i / 3, row, start, start + count - 1]
 	return ""
 
 
@@ -267,10 +304,14 @@ static func is_integers(value: Variant, count: int) -> bool:
 	return is_numbers(value, count) and value.all(func(v): return is_finite(float(v)) and float(v) == floorf(float(v)))
 
 
+## Значение — массив из count конечных чисел.
+static func is_finite_numbers(value: Variant, count: int) -> bool:
+	return is_numbers(value, count) and value.all(func(v): return is_finite(float(v)))
+
+
 ## Прямоугольник [minx, miny, maxx, maxy]: конечные числа, min не больше max.
 static func is_box(value: Variant) -> bool:
-	return is_numbers(value, 4) and value.all(func(v): return is_finite(float(v))) \
-		and value[0] <= value[2] and value[1] <= value[3]
+	return is_finite_numbers(value, 4) and value[0] <= value[2] and value[1] <= value[3]
 
 
 ## Значение — массив из count чисел (защита от искажённого JSON до обращения по индексу).
