@@ -227,7 +227,7 @@ def replace_dir(new: Path, final: Path):
 
 # ---------------------------------------------------------------- основная сборка
 
-def build_package(config, *, sources, source_roles, kind, region_parts, region_osm: Path, raster: Path, out_dir: Path, created_at: str, log=print, config_path: Path | None = None):
+def build_package(config, *, sources, source_roles, kind, region_parts, region_osm: Path, raster: Path, out_dir: Path, created_at: str, log=print, config_path: Path | None = None, config_bytes: bytes | None = None):
     """Собрать пакет. sources — карточки для паспорта; source_roles — {"osm": id, "population": id}."""
     # Заранее: прежний каталог пуст или это тот же пакет (паспорт читается и совпадает по ID и версии).
     if out_dir.exists() and any(out_dir.iterdir()):
@@ -244,7 +244,7 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
     final_dir.parent.mkdir(parents=True, exist_ok=True)
     out_dir = Path(tempfile.mkdtemp(prefix=f"{final_dir.name}.", suffix=".partial", dir=final_dir.parent))
     try:
-        return _build_into(config, sources, source_roles, kind, region_parts, region_osm, raster, out_dir, final_dir, created_at, log, config_path)
+        return _build_into(config, sources, source_roles, kind, region_parts, region_osm, raster, out_dir, final_dir, created_at, log, config_path, config_bytes)
     except BaseException:
         shutil.rmtree(out_dir, ignore_errors=True)
         raise
@@ -254,7 +254,7 @@ REPOSITORY_URL = "https://github.com/BolotovKonstantine/moscow-epidemic-sim"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
-def config_source(config, created_at, config_path: Path | None = None):
+def config_source(config, created_at, config_path: Path | None = None, config_bytes: bytes | None = None):
     """Карточка происхождения модельных параметров: сама конфигурация сборки (не наблюдение).
 
     SHA256 — от точных байтов файла конфигурации. Файл внутри репозитория указывается
@@ -262,7 +262,8 @@ def config_source(config, created_at, config_path: Path | None = None):
     источник — локальный файл. Без файла (вызов из кода) хешируется нормализованный JSON.
     """
     if config_path is not None:
-        data = Path(config_path).read_bytes()
+        # Хешируются байты, из которых разобрана конфигурация, а не перечитанный позже файл.
+        data = config_bytes if config_bytes is not None else Path(config_path).read_bytes()
         resolved = Path(config_path).resolve()
         if resolved.is_relative_to(REPOSITORY_ROOT):
             relative = resolved.relative_to(REPOSITORY_ROOT).as_posix()
@@ -287,10 +288,10 @@ def config_source(config, created_at, config_path: Path | None = None):
     }
 
 
-def _build_into(config, sources, source_roles, kind, region_parts, region_osm, raster, out_dir, final_dir, created_at, log, config_path):
+def _build_into(config, sources, source_roles, kind, region_parts, region_osm, raster, out_dir, final_dir, created_at, log, config_path, config_bytes):
     projector = Projector(config["metric_crs"])
     # Модельные параметры ссылаются на конфигурацию, а не на OSM.
-    model_source = config_source(config, created_at, config_path)
+    model_source = config_source(config, created_at, config_path, config_bytes)
     sources = sorted(sources + [model_source], key=lambda source: source["source_id"])
     source_roles = dict(source_roles, config=model_source["source_id"])
 
@@ -440,16 +441,18 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     gateway_rows = []
     position = {node: i for i, node in enumerate(graph.node_ids.tolist())}
     gateway_index = [i for i, edge in enumerate(graph.edges) if edge["gateway"]]
-    border = shapely.boundary(region_wgs)
-    crossings = shapely.intersection(graph.edge_lines[gateway_index], border) if gateway_index else []
+    # Пересечения считаются в метрической проекции (как требует data.md), затем точки переводятся в WGS84.
+    border = shapely.boundary(region_metric)
+    crossings = shapely.intersection(projector.to_metric(graph.edge_lines[gateway_index]), border) if gateway_index else []
     for index, crossing in zip(gateway_index, crossings):
         edge = graph.edges[index]
         a, b = position[edge["from_node"]], position[edge["to_node"]]
         inner = [int(graph.node_ids[n]) for n in (a, b) if graph.node_inside[n]]
         outer = [int(graph.node_ids[n]) for n in (a, b) if not graph.node_inside[n]]
-        points = crossing_points(crossing)
-        cx, cy = projector.xy(points[:, 0], points[:, 1])
-        point_zone = zones.index_of(cx, cy)
+        metric_points = crossing_points(crossing)
+        point_zone = zones.index_near(metric_points[:, 0], metric_points[:, 1])
+        lon, lat = projector.lonlat(metric_points[:, 0], metric_points[:, 1])
+        points = np.column_stack((np.atleast_1d(lon), np.atleast_1d(lat)))
         # Одна строка на точку пересечения границы; узлы — концы ребра по сторонам границы.
         for point, zone_index in sorted(zip(map(tuple, points), point_zone.tolist())):
             gateway_rows.append(["road", edge["edge_id"], edge["highway"], ";".join(map(str, inner)), ";".join(map(str, outer)),

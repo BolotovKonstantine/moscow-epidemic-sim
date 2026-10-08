@@ -28,6 +28,14 @@ def _invalid_constant(value):
     raise ManifestError(f"Недопустимое значение JSON: {value}")
 
 
+def parse_json_bytes(data: bytes, origin):
+    """Разобрать JSON из уже прочитанных байтов с теми же строгими правилами, что read_json."""
+    try:
+        return json.loads(data.decode("utf-8"), object_pairs_hook=_unique_object, parse_constant=_invalid_constant)
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ManifestError(f"Не удалось прочитать {origin}: {error}") from error
+
+
 def read_json(path: Path):
     try:
         with path.open(encoding="utf-8") as stream:

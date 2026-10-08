@@ -171,5 +171,33 @@ class ConfigProvenanceTests(unittest.TestCase):
                 load_config(path)
 
 
+
+class ConfigSnapshotTests(unittest.TestCase):
+    REAL = Path(__file__).resolve().parents[2] / "data" / "manifests" / "moscow-2021.json"
+
+    def test_provenance_hashes_parsed_snapshot(self):
+        import hashlib
+        from tools.city_pipeline.build import config_source
+        snapshot = self.REAL.read_bytes()
+        config = load_config(self.REAL, snapshot)
+        card = config_source(config, "2026-10-08T00:00:00Z", self.REAL, snapshot + b" ")   # файл «изменился» после разбора
+        self.assertEqual(card["sha256"], hashlib.sha256(snapshot + b" ").hexdigest())
+
+    def invalid(self, change, message):
+        config = json.loads(self.REAL.read_text(encoding="utf-8"))
+        change(config)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(config, ensure_ascii=False))
+            with self.assertRaisesRegex(ManifestError, message):
+                load_config(path)
+
+    def test_clock_hours_above_23_rejected(self):
+        self.invalid(lambda c: c["model_assumptions"]["headway_minutes"]["periods"].__setitem__("night", ["01:00", "29:00"]), "periods")
+
+    def test_building_value_in_two_functions_rejected(self):
+        self.invalid(lambda c: c["buildings"]["tag_functions"]["work"].append("apartments"), "apartments")
+
+
 if __name__ == "__main__":
     unittest.main()

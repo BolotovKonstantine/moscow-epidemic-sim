@@ -45,6 +45,18 @@ class Zones:
             index[check[~inside]] = -1
         return index
 
+    def index_near(self, x, y, tolerance_m=0.5):
+        """Как index_of, но точки на самой границе (погрешность пересечений) ищутся с допуском."""
+        index = self.index_of(x, y)
+        missing = np.nonzero(index < 0)[0]
+        if missing.size:
+            tree = shapely.STRtree(self.geometry_metric)
+            points = shapely.points(np.asarray(x, dtype=np.float64)[missing], np.asarray(y, dtype=np.float64)[missing])
+            point_index, zone_index = tree.query(points, predicate="dwithin", distance=tolerance_m)
+            for row, zone in sorted(zip(point_index.tolist(), zone_index.tolist()), reverse=True):
+                index[missing[row]] = zone   # при нескольких — меньший индекс (идёт последним)
+        return index
+
 
 def build_zones(region_metric, cell_size):
     minx, miny, maxx, maxy = region_metric.bounds

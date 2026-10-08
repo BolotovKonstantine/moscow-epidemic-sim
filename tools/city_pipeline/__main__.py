@@ -13,7 +13,7 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 from shapely.errors import ShapelyError
 
-from .manifest import ManifestError, read_json, validate_manifest
+from .manifest import ManifestError, parse_json_bytes, read_json, validate_manifest
 from .sources import fetch, load_registry, manifest_source, verify
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -61,18 +61,31 @@ SUPPORTED_CONFIG_VERSION = 1
 CONFIG_SCHEMA = Path(__file__).parent / "schemas" / "build-config-v1.schema.json"
 
 
-def load_config(path: Path) -> dict:
+def load_config(path: Path, data: bytes | None = None) -> dict:
     """Конфигурация сборки версии 1, проверенная JSON Schema до любой работы.
 
     Неизвестная версия отклоняется отдельным сообщением; true не считается версией 1.
+    data — уже прочитанные байты файла (один снимок для разбора и для хеша в паспорте).
     """
-    config = read_json(path)
+    if data is None:
+        try:
+            data = Path(path).read_bytes()
+        except OSError as error:
+            raise ManifestError(f"Не удалось прочитать {path}: {error}") from error
+    config = parse_json_bytes(data, path)
     version = config.get("config_version") if isinstance(config, dict) else None
     if type(version) is not int or version != SUPPORTED_CONFIG_VERSION:
         raise ManifestError(f"{path}: неподдерживаемая config_version {version!r}, ожидается {SUPPORTED_CONFIG_VERSION}")
     errors = sorted(Draft202012Validator(read_json(CONFIG_SCHEMA)).iter_errors(config), key=lambda error: list(error.absolute_path))
     if errors:
         raise ManifestError("\n".join(f"{path}: {'.'.join(map(str, error.absolute_path)) or '$'}: {error.message}" for error in errors))
+    # Значение building относится ровно к одной функции: иначе результат зависел бы от порядка ключей JSON.
+    seen = {}
+    for function, values in config["buildings"]["tag_functions"].items():
+        for value in values:
+            if value in seen and seen[value] != function:
+                raise ManifestError(f"{path}: buildings.tag_functions: значение {value!r} указано и в {seen[value]}, и в {function}")
+            seen[value] = function
     # Связь полей, которую не выразить схемой: интервалы для каждого вида транспорта и каждого периода.
     headways = config["model_assumptions"]["headway_minutes"]
     periods = set(headways["periods"])
@@ -122,7 +135,8 @@ def command_build(args) -> int:
     if shutil.which("osmium") is None:
         raise ManifestError("Не найдена утилита osmium (osmium-tool)")
     registry = load_registry(args.registry)
-    config = load_config(args.config)
+    config_bytes = args.config.read_bytes()   # один снимок: из него и разбор, и хеш в паспорте
+    config = load_config(args.config, config_bytes)
     # ID и версия проверяются до любой записи на диск: и рабочий, и выходной каталог — внутри своих корней.
     out = package_dir(args.out, config.get("package_id"), config.get("package_version"))
     # Отдельный рабочий каталог на версию и конфигурацию: разные сборки не делят вырезку.
@@ -157,7 +171,7 @@ def command_build(args) -> int:
     manifest, report = build_package(
         config, sources=sources, source_roles={role: source["source_id"] for role, source in selected.items()},
         kind="city_data", region_parts=parts, region_osm=region_osm, raster=raster, out_dir=out, created_at=_created_at(),
-        config_path=args.config,
+        config_path=args.config, config_bytes=config_bytes,
     )
     failed = [check["check"] for check in report["checks"] if check["status"] != "pass"]
     print(f"OK: {manifest['package_id']} · {manifest['package_version']} · {len(manifest['assets'])} файлов · {out}")
