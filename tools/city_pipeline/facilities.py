@@ -31,10 +31,12 @@ def _merge_duplicates(records, projector):
     areas = [row for row, record in enumerate(records) if record["area"] is not None]
     target = list(range(len(records)))
     if areas:
-        polygons = [records[row]["area"] for row in areas]
-        sizes = shapely.area(projector.to_metric(np.array(polygons, dtype=object)))
+        # Вложенность и размеры — в метрической проекции (data.md: пересечения считаются в метрах).
+        polygons = projector.to_metric(np.array([records[row]["area"] for row in areas], dtype=object))
+        sizes = shapely.area(polygons)
         tree = shapely.STRtree(polygons)
-        points = shapely.points([record["lon"] for record in records], [record["lat"] for record in records])
+        px, py = projector.xy(np.array([record["lon"] for record in records]), np.array([record["lat"] for record in records]))
+        points = shapely.points(np.atleast_1d(px), np.atleast_1d(py))
         point_index, area_index = tree.query(points, predicate="intersects")
         # Порядок контуров: (площадь в м², ID). Запись сливается только с контуром строго
         # «больше» себя, поэтому ссылки не образуют циклов (точка участка внутри корпуса).
@@ -109,14 +111,16 @@ def collect(data, buildings, projector, config, region_wgs84):
     lon = np.array([record["lon"] for record in records], dtype=np.float64)
     lat = np.array([record["lat"] for record in records], dtype=np.float64)
     x, y = projector.xy(lon, lat)
-    tree = shapely.STRtree(buildings.geometry)
-    points = shapely.points(lon, lat)
+    # Привязка к зданиям — тоже в метрах: контуры зданий, их представительные точки и точки учреждений.
+    tree = shapely.STRtree(buildings.metric)
+    points = shapely.points(np.atleast_1d(x), np.atleast_1d(y))
     for row, record in enumerate(records):
         if record["area"] is not None:
             # Корпуса в контуре (территории или здания-учреждения): здания, чья точка лежит в контуре,
             # плюс здания, объединённые с учреждением (osm_ids); само здание-учреждение тоже среди них.
-            candidates = tree.query(record["area"])
-            inside = {buildings.ids[int(c)] for c in candidates if shapely.contains_xy(record["area"], buildings.lon[c], buildings.lat[c])}
+            area = projector.to_metric(record["area"])
+            candidates = tree.query(area)
+            inside = {buildings.ids[int(c)] for c in candidates if shapely.contains_xy(area, buildings.centroid_x[c], buildings.centroid_y[c])}
             inside |= {osm_id for osm_id in record["osm_ids"] if osm_id in building_index}
             record["building_ids"] = sorted(inside)
         else:
