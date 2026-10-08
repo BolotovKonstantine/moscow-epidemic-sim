@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import re
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -26,6 +27,22 @@ def _unique_object(pairs):
 
 def _invalid_constant(value):
     raise ManifestError(f"Недопустимое значение JSON: {value}")
+
+
+def _finite_float(text):
+    """Число с плавающей точкой; переполнение вроде 1e400 (→ inf) отклоняется сразу."""
+    value = float(text)
+    if not math.isfinite(value):
+        raise ManifestError(f"Недопустимое значение JSON: {text}")
+    return value
+
+
+def parse_json_bytes(data: bytes, origin):
+    """Разобрать JSON из уже прочитанных байтов с теми же строгими правилами, что read_json."""
+    try:
+        return json.loads(data.decode("utf-8"), object_pairs_hook=_unique_object, parse_constant=_invalid_constant, parse_float=_finite_float)
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ManifestError(f"Не удалось прочитать {origin}: {error}") from error
 
 
 def read_json(path: Path):
@@ -68,6 +85,17 @@ def _asset_path(root: Path, relative: str) -> Path:
     if not candidate.is_relative_to(resolved_root):
         raise ManifestError(f"Файл находится за пределами пакета: {relative}")
     return candidate
+
+
+def validate_source_card(card: dict, origin) -> None:
+    """Проверить одну карточку источника по схеме паспорта (до сборки, а не после неё)."""
+    schema = read_json(SCHEMA_PATH)
+    formats = FormatChecker()
+    formats.checks("date-time")(_timestamp)
+    validator = Draft202012Validator({"$ref": "#/$defs/source", "$defs": schema["$defs"]}, format_checker=formats)
+    errors = list(validator.iter_errors(card))
+    if errors:
+        raise ManifestError("\n".join(f"{origin}: {'.'.join(map(str, error.absolute_path)) or '$'}: {error.message}" for error in errors))
 
 
 def validate_manifest(path: Path, *, check_files: bool = True) -> dict:

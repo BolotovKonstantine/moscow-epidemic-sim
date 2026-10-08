@@ -1,8 +1,8 @@
-# GitHub — CI и зависимости
+# GitHub — процесс, CI и зависимости
 
 Общие правила — в [../AGENTS.md](../AGENTS.md). Workflows запускаются на PR, push в main и вручную; macOS и анализ C++ выполняются только вручную, расписаний нет. Команды тестов — в AGENTS.md соответствующих модулей.
 
-- `ci.yml`: Python 3.14, unit-тесты и полный валидатор фикстуры; macOS universal debug-сборка и дымовой тест Godot 4.7.2 только при ручном запуске CI с `run_macos=true`.
+- `ci.yml`: Python 3.14, unit-тесты (включая сборку синтетического мини-города пайплайном) и полный валидатор фикстуры; macOS universal debug-сборка и дымовой тест Godot 4.7.2 только при ручном запуске CI с `run_macos=true`.
 - `security.yml`: dependency review (блокирует новые уязвимости moderate и выше), CodeQL Python и Actions. `codeql-native.yml` — анализ C++ только вручную. GDScript этим анализом не покрывается. CodeQL имеет `security-events: write` только для загрузки результатов анализа.
 - `dependabot.yml`: еженедельные PR для Python, Actions и submodule. Версии Godot/godot-cpp не менять без решения автора и записи в decisions.md.
 - Actions закреплены SHA; загрузка Godot проверяется SHA256. Обновляя версию, обновляй оба значения.
@@ -15,3 +15,7 @@ actionlint .github/workflows/*.yml
 ```
 
 Успешный локальный тест не означает успешный CI: результат фиксируется по прогону GitHub. Обязательные проверки на main настраиваются после первого успешного прогона; исключение владельца сохраняется.
+
+## Шаблоны задач и PR
+
+Рабочий стандарт — в [../docs/project-management.md](../docs/project-management.md). `ISSUE_TEMPLATE/` содержит формы задачи, ошибки, источника и решения; `PULL_REQUEST_TEMPLATE.md` — общий шаблон PR. Используй существующие labels (`enhancement`, `bug`, `question`); новые обязательные поля Project и labels без необходимости не вводи. Изменяя формы, синхронизируй CONTRIBUTING и регламент. Формы проверяют заполненность в веб-интерфейсе, но не качество критериев, Issues через API или содержание PR.

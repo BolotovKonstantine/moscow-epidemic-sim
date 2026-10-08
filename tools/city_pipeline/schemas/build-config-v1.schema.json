@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Конфигурация сборки городского пакета Moscow Epidemic Sim, версия 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["config_version", "package_id", "package_version", "description", "sources", "metric_crs", "boundary", "zones", "roads", "buildings", "population", "facilities", "transit", "model_assumptions", "quality"],
+  "properties": {
+    "config_version": {"type": "integer", "const": 1},
+    "package_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
+    "package_version": {"type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z.+_-]*$"},
+    "description": {"$ref": "#/$defs/text"},
+    "sources": {
+      "type": "object", "additionalProperties": false, "required": ["osm", "population"],
+      "properties": {"osm": {"$ref": "#/$defs/text"}, "population": {"$ref": "#/$defs/text"}}
+    },
+    "metric_crs": {"$ref": "#/$defs/text"},
+    "boundary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["moscow_admin", "mkad", "mkad_edge_offset_m", "buffer_meters", "mkad_area_km2_range"],
+      "properties": {
+        "moscow_admin": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"$ref": "#/$defs/text"}},
+        "mkad": {
+          "type": "object", "additionalProperties": false, "required": ["match", "highways"],
+          "properties": {
+            "match": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"$ref": "#/$defs/strings", "minItems": 1}},
+            "highways": {"$ref": "#/$defs/strings", "minItems": 1}
+          }
+        },
+        "mkad_edge_offset_m": {"$ref": "#/$defs/positive"},
+        "buffer_meters": {"const": 30000},
+        "mkad_area_km2_range": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/positive"}}
+      }
+    },
+    "zones": {
+      "type": "object", "additionalProperties": false, "required": ["cell_size_m"],
+      "properties": {"cell_size_m": {"type": "number", "minimum": 100, "maximum": 10000}}
+    },
+    "roads": {
+      "type": "object", "additionalProperties": false, "required": ["highways"],
+      "properties": {"highways": {"$ref": "#/$defs/strings", "minItems": 1}}
+    },
+    "buildings": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ignore_values", "tag_functions", "poi_functions", "site_functions", "poi_secondary_weight", "site_min_residential_footprint_m2", "meters_per_level", "default_levels", "max_levels"],
+      "properties": {
+        "ignore_values": {"$ref": "#/$defs/strings"},
+        "tag_functions": {"type": "object", "propertyNames": {"$ref": "#/$defs/function"}, "additionalProperties": {"$ref": "#/$defs/strings"}},
+        "poi_functions": {"type": "object", "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"$ref": "#/$defs/function"}}},
+        "site_functions": {"type": "object", "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"$ref": "#/$defs/function"}}},
+        "poi_secondary_weight": {"type": "number", "minimum": 0, "maximum": 1},
+        "site_min_residential_footprint_m2": {"type": "number", "minimum": 0},
+        "meters_per_level": {"type": "number", "minimum": 1, "maximum": 10},
+        "default_levels": {"type": "object", "required": ["*"], "additionalProperties": {"type": "number", "exclusiveMinimum": 0, "maximum": 200}},
+        "max_levels": {"type": "number", "exclusiveMinimum": 0, "maximum": 200}
+      }
+    },
+    "population": {
+      "type": "object", "additionalProperties": false,
+      "required": ["zone_pool_fallback", "max_residents_per_m2_floor", "block_zones", "unknown_building_min_footprint_m2"],
+      "properties": {
+        "zone_pool_fallback": {"type": "boolean"},
+        "max_residents_per_m2_floor": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "block_zones": {"type": "integer", "minimum": 1},
+        "unknown_building_min_footprint_m2": {"type": "number", "minimum": 0}
+      }
+    },
+    "facilities": {
+      "type": "object", "additionalProperties": false, "required": ["kinds"],
+      "properties": {"kinds": {"type": "object", "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"$ref": "#/$defs/text"}}}}
+    },
+    "transit": {
+      "type": "object", "additionalProperties": false,
+      "required": ["route_modes", "stop_roles", "platform_roles", "stop_platform_pair_m", "stop_platform_pair_same_name_m"],
+      "properties": {
+        "route_modes": {"$ref": "#/$defs/strings"},
+        "stop_roles": {"$ref": "#/$defs/strings"},
+        "platform_roles": {"$ref": "#/$defs/strings"},
+        "stop_platform_pair_m": {"type": "number", "minimum": 0},
+        "stop_platform_pair_same_name_m": {"type": "number", "minimum": 0}
+      }
+    },
+    "model_assumptions": {
+      "type": "object", "additionalProperties": false,
+      "required": ["transfer_walk_speed_mps", "transfer_overhead_s", "headway_minutes"],
+      "properties": {
+        "note": {"type": "string"},
+        "transfer_walk_speed_mps": {"type": "number", "minimum": 0.1, "maximum": 10},
+        "transfer_overhead_s": {"type": "number", "minimum": 0, "maximum": 3600},
+        "headway_minutes": {
+          "type": "object", "additionalProperties": false, "required": ["periods", "by_mode"],
+          "properties": {
+            "periods": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"}}},
+            "by_mode": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"type": ["number", "null"], "exclusiveMinimum": 0}}}
+          }
+        }
+      }
+    },
+    "quality": {
+      "type": "object", "additionalProperties": false,
+      "required": ["manual_sample_size", "sample_seed", "far_from_road_m", "max_plausible_residents_per_100m2"],
+      "properties": {
+        "manual_sample_size": {"type": "integer", "minimum": 0},
+        "sample_seed": {"type": "integer", "minimum": 0},
+        "far_from_road_m": {"$ref": "#/$defs/positive"},
+        "max_plausible_residents_per_100m2": {"$ref": "#/$defs/positive"}
+      }
+    }
+  },
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "strings": {"type": "array", "items": {"$ref": "#/$defs/text"}},
+    "positive": {"type": "number", "exclusiveMinimum": 0},
+    "function": {"enum": ["residential", "work", "retail", "education", "medical", "transport", "control", "other"]}
+  }
+}

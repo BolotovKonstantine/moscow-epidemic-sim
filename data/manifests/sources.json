@@ -1,0 +1,29 @@
+{
+  "registry_version": 1,
+  "sources": [
+    {
+      "source_id": "osm-geofabrik-cfd-20210101",
+      "url": "https://download.geofabrik.de/russia/central-fed-district-210101.osm.pbf",
+      "file": "central-fed-district-210101.osm.pbf",
+      "owner": "Участники OpenStreetMap; региональная выгрузка Geofabrik GmbH",
+      "license": "ODbL-1.0 (© OpenStreetMap contributors)",
+      "data_date": "2021-01-01",
+      "acquired_at": "2026-10-06T20:19:00Z",
+      "coverage": "Центральный федеральный округ России, снимок OSM на 2021-01-01T21:42:03Z (osmosis_replication_sequence_number 1876). Датированный файл Geofabrik не меняется, в отличие от -latest.",
+      "format": "osm-pbf",
+      "sha256": "19e222aa88a6f5aafb77dadafea22add956633110fe92f45a689e4a3cc39d37c"
+    },
+    {
+      "source_id": "ghs-pop-e2020-r2023a-r4c22",
+      "url": "https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_POP_GLOBE_R2023A/GHS_POP_E2020_GLOBE_R2023A_4326_3ss/V1-0/tiles/GHS_POP_E2020_GLOBE_R2023A_4326_3ss_V1_0_R4_C22.zip",
+      "file": "GHS_POP_E2020_GLOBE_R2023A_4326_3ss_V1_0_R4_C22.zip",
+      "owner": "European Commission, Joint Research Centre (GHSL)",
+      "license": "CC-BY-4.0 (© European Union, 1995–2026; изменения указаны в паспорте пакета)",
+      "data_date": null,
+      "acquired_at": "2026-10-06T20:08:00Z",
+      "coverage": "GHS-POP R2023A, эпоха 2020, 3 угловые секунды в EPSG:4326, тайл R4 C22 (≈30–40° в. д., 49–59° с. ш.). Точная дата данных не задана: эпоха — модельная оценка на 2020 год.",
+      "format": "geotiff-in-zip",
+      "sha256": "bfb077f0c435daa65491c9be37d108d6e1d31e77a41d805e5017307d59bab1d2"
+    }
+  ]
+}

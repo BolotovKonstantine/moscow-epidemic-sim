@@ -1,0 +1,82 @@
+name: "Задача"
+description: "Небольшое изменение с проверяемым результатом"
+labels:
+  - "enhancement"
+body:
+  -
+    type: "markdown"
+    attributes:
+      value: "Правила: [ведение проекта](https://github.com/BolotovKonstantine/moscow-epidemic-sim/blob/main/docs/project-management.md). Одна Issue — один проверяемый результат. Неизвестные значения отмечай явно."
+  -
+    type: "dropdown"
+    id: "stage"
+    attributes:
+      label: "Этап"
+      options:
+        - "0. Техническая основа"
+        - "1. Городские данные"
+        - "2. Просмотр города"
+        - "3. Движение и масштаб"
+        - "4. Болезнь и медицина"
+        - "5. Решения мэра"
+        - "6. Обе стороны"
+        - "7. Проверка модели и игры"
+        - "8. Подготовка iOS"
+        - "Общее / этап требует решения"
+    validations:
+      required: true
+  -
+    type: "dropdown"
+    id: "module"
+    attributes:
+      label: "Основной модуль"
+      options:
+        - "game — интерфейс и отображение"
+        - "native — расчётное ядро и мост"
+        - "city_pipeline — данные"
+        - "tests / benchmarks — проверки"
+        - "docs — требования и документация"
+        - ".github — CI и процесс"
+        - "Несколько модулей (перечислить в описании)"
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "goal"
+    attributes:
+      label: "Цель и причина"
+      description: "Какую проблему решаем и какой результат нужен?"
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "scope"
+    attributes:
+      label: "Границы работы"
+      description: "Что входит в задачу, что отложено?"
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "acceptance"
+    attributes:
+      label: "Критерии приёмки"
+      description: "Перечисли проверяемые условия завершения, желательно чек-листом. «Работает правильно» без конкретного результата недостаточно."
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "verification"
+    attributes:
+      label: "Способ проверки"
+      description: "Команды, тесты, сценарий или ручная проверка. Для исследования — какой отчёт подтверждает результат."
+    validations:
+      required: true
+  -
+    type: "textarea"
+    id: "dependencies"
+    attributes:
+      label: "Зависимости и открытые вопросы"
+      description: "Ссылки на связанные Issues и документы. Если зависимостей нет — «нет»."
+    validations:
+      required: true
