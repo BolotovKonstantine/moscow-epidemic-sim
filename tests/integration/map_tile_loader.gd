@@ -134,6 +134,8 @@ func _test_rejections(fixture: String) -> void:
 	var bbox_at := overview_head.find("\"bbox\":[")
 	var bbox_text := overview_head.substr(bbox_at, overview_head.find("]", bbox_at) - bbox_at + 1)
 	_expect_header_patch(overview, bbox_text, "\"bbox\":null", "нет охвата", "обзор без bbox отклоняется")
+	_expect_header_patch(overview, bbox_text, "\"bbox\":[0,0,1e100,1e100]", "bbox должен быть",
+		"охват за пределами float32 отклоняется")
 
 	var stale := MapTile.open(_write("stale_bbox.mtile", source), {"bbox": Rect2(0, 0, 1000, 1000)})
 	check("не совпадает с индексом" in stale.error, "устаревший bbox индекса отклоняется: " + stale.error)
