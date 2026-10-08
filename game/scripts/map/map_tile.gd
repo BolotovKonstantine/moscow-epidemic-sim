@@ -149,6 +149,8 @@ func _read_header(expected: Dictionary) -> String:
 		return "bbox должен быть упорядоченными minx, miny, maxx, maxy или null"
 	if box != null:
 		bbox = Rect2(origin + Vector2(box[0], box[1]), Vector2(box[2] - box[0], box[3] - box[1]))
+	if level == 0 and not bbox.has_area():
+		return "у обзора региона нет охвата bbox: камере не на что опереться"
 	if expected.has("bbox") and expected.bbox is Rect2 and expected.bbox.has_area() \
 			and not expected.bbox.is_equal_approx(bbox):
 		return "охват участка %s не совпадает с индексом %s" % [bbox, expected.bbox]

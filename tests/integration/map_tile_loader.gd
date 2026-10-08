@@ -132,6 +132,12 @@ func _test_rejections(fixture: String) -> void:
 	check(not MapTile._codes_within(PackedFloat32Array([0, 1.9, 1]), 3), "дробный код класса отклоняется")
 	check(not MapTile._codes_within(PackedFloat32Array([0, 3]), 3), "код вне списка классов отклоняется")
 
+	var overview := FileAccess.get_file_as_bytes(fixture.path_join("z0/0_0.mtile"))
+	var overview_head := overview.slice(16, 16 + overview.decode_u32(12)).get_string_from_utf8()
+	var bbox_at := overview_head.find("\"bbox\":[")
+	var bbox_text := overview_head.substr(bbox_at, overview_head.find("]", bbox_at) - bbox_at + 1)
+	_expect_header_patch(overview, bbox_text, "\"bbox\":null", "нет охвата", "обзор без bbox отклоняется")
+
 	var stale := MapTile.open(_write("stale_bbox.mtile", source), {"bbox": Rect2(0, 0, 1000, 1000)})
 	check("не совпадает с индексом" in stale.error, "устаревший bbox индекса отклоняется: " + stale.error)
 
