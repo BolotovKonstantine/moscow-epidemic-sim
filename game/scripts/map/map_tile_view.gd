@@ -13,6 +13,8 @@ const LEVEL_Z_STEP := 10
 var level := -1
 var tile_size_m := 0.0
 var building_outline: MeshInstance2D
+var _line_mesh: ArrayMesh
+var _line_aabb := AABB()
 
 
 ## style: {area_palette: PackedColorArray, line_casing: Material, line_fill: Material}.
@@ -27,9 +29,17 @@ func setup(tile: MapTile, style: Dictionary) -> void:
 	fill.self_modulate = MapTheme.BUILDING_FILL
 	building_outline = _add("BuildingOutlines", _building_mesh(tile, true))
 	building_outline.self_modulate = MapTheme.BUILDING_OUTLINE
-	var line_mesh := _line_mesh(tile)
-	_add("LineCasing", line_mesh).material = style.line_casing
-	_add("Lines", line_mesh).material = style.line_fill
+	_line_mesh = _build_line_mesh(tile)
+	if _line_mesh != null:
+		_line_aabb = _line_mesh.get_aabb()
+	_add("LineCasing", _line_mesh).material = style.line_casing
+	_add("Lines", _line_mesh).material = style.line_fill
+
+
+## Расширить границы меша линий на ширину, которую добавляет шейдер (см. MapLineStyle.max_displacement_m).
+func set_line_margin(margin_m: float) -> void:
+	if _line_mesh != null:
+		_line_mesh.custom_aabb = _line_aabb.grow(margin_m)
 
 
 ## Охват вершин всех мешей в плоскости карты (AABB считает Godot при построении меша); null — мешей нет.
@@ -96,7 +106,7 @@ static func _building_mesh(tile: MapTile, outline: bool) -> ArrayMesh:
 	return _mesh(Mesh.PRIMITIVE_TRIANGLES, vertices, tile.sections["building.tri"])
 
 
-static func _line_mesh(tile: MapTile) -> ArrayMesh:
+static func _build_line_mesh(tile: MapTile) -> ArrayMesh:
 	if not tile.has_layer("line"):
 		return null
 	# Код класса уходит в шейдер через COLOR.r (8 бит хватает: классов меньше 16).

@@ -12,6 +12,7 @@ const LEVEL_TILE_M := {1: 8000.0, 2: 2000.0}   # размеры участков
 const MAX_DECODED_BYTES := 512 << 20   # всего данных участка после распаковки
 const MAX_COORD_M := 1.0e7   # |координата| плоскости карты: регион — сотни км; 1e7 точно помещается во float32
 const MAX_SAFE_INTEGER := 9007199254740992.0   # 2^53: целые JSON без потери точности и переполнения int
+const MAX_TILE_INDEX := 1 << 20   # |номер участка|: сетка региона — десятки участков; точно влезает в Vector2i
 const MAX_LEVEL := 2   # уровни 0–2 формата 1: обзор, участки 8 и 2 км
 const PREAMBLE := 16   # магия, u32 версия, u32 длина заголовка
 const MAX_HEADER_BYTES := 1 << 20
@@ -123,7 +124,7 @@ func _read_header(expected: Dictionary) -> String:
 	for key: String in ["level", "tile", "origin", "classes", "counts", "sections", "attribution"]:
 		if not header.has(key):
 			return "в заголовке нет поля %s" % key
-	if not is_integers(header.tile, 2) or not is_coords(header.origin, 2) or not is_integers([header.level], 1):
+	if not is_tile_index(header.tile) or not is_coords(header.origin, 2) or not is_integers([header.level], 1):
 		return "level — целое, tile — два целых, origin — два конечных числа"
 	level = int(header.level)
 	if level < 0 or level > MAX_LEVEL or float(header.level) != level:
@@ -326,6 +327,11 @@ static func is_integers(value: Variant, count: int) -> bool:
 ## Значение — массив из count конечных чисел.
 static func is_finite_numbers(value: Variant, count: int) -> bool:
 	return is_numbers(value, count) and value.all(func(v): return is_finite(float(v)))
+
+
+## Номер участка [ix, iy]: два целых не больше MAX_TILE_INDEX по модулю — без сужения в Vector2i.
+static func is_tile_index(value: Variant) -> bool:
+	return is_integers(value, 2) and value.all(func(v): return absf(float(v)) <= MAX_TILE_INDEX)
 
 
 ## Прямоугольник [minx, miny, maxx, maxy]: координаты плоскости (is_coords), min не больше max.
