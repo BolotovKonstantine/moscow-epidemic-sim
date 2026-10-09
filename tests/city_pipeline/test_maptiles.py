@@ -293,6 +293,13 @@ class FormatTests(unittest.TestCase):
         overflow = overflow.replace(b'"XXXXXX"', b"1e400   ", 1)   # та же длина: смещения разделов не меняются
         with self.assertRaisesRegex(mt.MapTileError, "недопустимое значение JSON 1e400"):
             mt.decode_tile(overflow)
+        with self.assertRaisesRegex(mt.MapTileError, "вложенность"):
+            mt.strict_json(b"[" * 2_000_000 + b"]" * 2_000_000)
+        def trailing(doc):
+            doc["sections"][0]["size"] += 4   # байты после конца потока zlib — в пределах раздела
+        padded = mt.encode_tile({"x": 1}, [("area.xy", "f32", np.ones((50, 2))), ("label.text", "json", ["а"])])
+        with self.assertRaisesRegex(mt.MapTileError, "не завершён или длиннее"):
+            mt.decode_tile(self.rebuild(padded, trailing) + b"\0" * 8)
         empty = mt.encode_tile({"x": 1}, [])
         past_end = empty[:12] + (len(empty) - 16 + 8).to_bytes(4, "little") + empty[16:]
         with self.assertRaisesRegex(mt.MapTileError, "за конец файла"):

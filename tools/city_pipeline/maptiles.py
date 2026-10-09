@@ -126,8 +126,11 @@ def _finite_float(text):
 
 def strict_json(raw: bytes):
     """JSON участка без NaN, Infinity, переполненных чисел (их не принимает и парсер Godot) и повторяющихся ключей (как паспорт)."""
-    return json.loads(raw.decode("utf-8"), parse_constant=_reject_constant, parse_float=_finite_float,
-                      object_pairs_hook=_unique_keys)
+    try:
+        return json.loads(raw.decode("utf-8"), parse_constant=_reject_constant, parse_float=_finite_float,
+                          object_pairs_hook=_unique_keys)
+    except RecursionError as error:
+        raise MapTileError("слишком глубокая вложенность JSON") from error
 
 
 class MapTileError(ValueError):
@@ -466,7 +469,7 @@ def decode_tile(data: bytes):
         if item["codec"] == "deflate":
             stream = zlib.decompressobj()
             raw = stream.decompress(raw, item["raw_size"] + 1)
-            if not stream.eof or stream.unconsumed_tail:
+            if not stream.eof or stream.unconsumed_tail or stream.unused_data:
                 raise MapTileError(f"раздел {item['name']}: поток deflate не завершён или длиннее заявленного")
         elif item["codec"] != "none":
             raise MapTileError(f"раздел {item['name']}: неизвестное сжатие {item['codec']}")
