@@ -240,6 +240,11 @@ class FormatTests(unittest.TestCase):
             value = getattr(mt, name)
             self.assertIn(f"const {name} := {value >> 20} << 20", loader, f"{name} в игре и экспорте разные")
 
+    def test_class_tables_fit_loader_limits(self):
+        for layer, names in mt.CLASSES.items():
+            self.assertLessEqual(len(names), 64, layer)
+            self.assertTrue(all(len(name) <= 64 for name in names), layer)
+
     def test_oversized_json_section_is_rejected(self):
         original = mt.MAX_JSON_SECTION_BYTES
         mt.MAX_JSON_SECTION_BYTES = 10

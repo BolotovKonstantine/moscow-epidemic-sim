@@ -266,6 +266,11 @@ func _test_rejections(fixture: String) -> void:
 	_expect_index_error(doc, "classes.line должен быть списком строк", "классы не строками отклоняются")
 	doc.classes = null
 	_expect_index_error(doc, "classes должен быть словарём", "classes: null отклоняется")
+	var many := []
+	for i in MapTile.MAX_CLASSES_PER_LAYER + 1:
+		many.append("c%d" % i)
+	doc.classes = {"area": many, "line": []}
+	_expect_index_error(doc, "больше 64 классов", "огромная таблица классов отклоняется")
 
 
 func _expect_error(bytes: PackedByteArray, expected: Dictionary, fragment: String, message: String) -> void:

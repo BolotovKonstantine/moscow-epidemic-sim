@@ -19,6 +19,8 @@ const MAX_LABELS := 100000       # подписей в участке (как ma
 const MAX_LABEL_CHARS := 200     # как maptiles.MAX_LABEL_CHARS: экспорт обрезает длиннее
 const ANGLE_TOLERANCE := 1.0e-6   # π/2 во float32 чуть отличается от float64
 const LABEL_TOLERANCE_M := 1.0   # допуск координат участка: считаются в float64, хранятся во float32
+const MAX_CLASSES_PER_LAYER := 64
+const MAX_CLASS_NAME_CHARS := 64
 const MAX_LEVEL := 2   # уровни 0–2 формата 1: обзор, участки 8 и 2 км
 const PREAMBLE := 16   # магия, u32 версия, u32 длина заголовка
 const MAX_HEADER_BYTES := 1 << 20   # как maptiles.MAX_HEADER_BYTES экспорта
@@ -393,6 +395,10 @@ static func check_classes(value: Variant) -> String:
 		var names: Variant = value[layer]
 		if not names is Array or not names.all(func(v): return v is String):
 			return "classes.%s должен быть списком строк" % layer
+		# Таблицы классов малы (сейчас до 16); без предела огромная таблица ушла бы в стили вида.
+		if names.size() > MAX_CLASSES_PER_LAYER or names.any(func(v): return v.length() > MAX_CLASS_NAME_CHARS):
+			return "classes.%s: больше %d классов или имя длиннее %d символов" % [
+				layer, MAX_CLASSES_PER_LAYER, MAX_CLASS_NAME_CHARS]
 	return ""
 
 
