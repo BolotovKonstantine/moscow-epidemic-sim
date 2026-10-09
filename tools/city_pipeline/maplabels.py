@@ -25,6 +25,7 @@ from shapely import ops
 from . import maptiles as mt
 from .geo import Projector
 
+F32_MAX = float(np.finfo(np.float32).max)   # вес подписи пишется во float32
 PLACE_CLASS = {"city": "city", "town": "town", "village": "village", "suburb": "suburb", "quarter": "suburb",
                "hamlet": "hamlet"}
 ADMIN_CLASS = {"5": "okrug", "6": "municipality", "8": "district"}
@@ -219,7 +220,8 @@ def read_label_sources(pbf: Path, projector: Projector) -> LabelSources:
     water = [item for item in water if item[1] is not None]
     if water:
         geometry = projector.to_metric(shapely.from_wkb([item[1] for item in water]))
-        found.water = [(name, g) for (name, _), g in zip(water, geometry)]
+        # Самопересечения OSM ломают пересечение с регионом: чиним, как площади подложки и границы.
+        found.water = [(name, shapely.make_valid(g)) for (name, _), g in zip(water, geometry)]
     if rivers:
         geometry = projector.to_metric(shapely.from_wkb([item[1] for item in rivers]))
         for (name, _), g in zip(rivers, geometry):
@@ -245,10 +247,12 @@ def _wkb_area(wkb, obj):
 
 
 def _population(value):
+    """Население из тега для веса подписи; нечисловое, бесконечное или вне float32 — неизвестно (0)."""
     try:
-        return float(str(value).replace(" ", ""))
+        number = float(str(value).replace(" ", ""))
     except (TypeError, ValueError):
         return 0.0
+    return number if math.isfinite(number) and abs(number) <= F32_MAX else 0.0
 
 
 def read_stations(package: Path, projector: Projector):

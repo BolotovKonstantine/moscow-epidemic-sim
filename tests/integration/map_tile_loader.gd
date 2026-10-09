@@ -125,6 +125,10 @@ func _test_rejections(fixture: String) -> void:
 	tile_ok.sections["line.off"][0] = 100.0
 	check("line.off" in tile_ok._check_layers(), "смещение ленты за пределом отклоняется")
 	tile_ok.sections["line.off"][0] = 0.0
+	var attrs_backup: Dictionary = tile_ok.sections["pick.attrs"]
+	tile_ok.sections["pick.attrs"] = {}
+	check("нужны колонки" in tile_ok._check_pick(), "pick.attrs без колонок отклоняется")
+	tile_ok.sections["pick.attrs"] = attrs_backup
 	tile_ok.sections["pick.ring"][1] = 999
 	check("pick.ring" in tile_ok._check_pick(), "кольцо с вершинами вне building.xy отклоняется")
 	tile_ok.sections["pick.ring"][1] = 0

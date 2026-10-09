@@ -93,6 +93,12 @@ class LabelGeometryTests(unittest.TestCase):
         labels = ml.Labels.from_rows([(5, 5, 0, 0, "street", 1, "внутри"), (50, 5, 0, 0, "street", 1, "снаружи")])
         self.assertEqual(labels.within(shapely.box(0, 0, 10, 10)).text, ["внутри"])
 
+    def test_bad_population_is_unknown(self):
+        self.assertEqual(ml._population("12 630 289"), 12630289.0)
+        for value in ("NaN", "1e999", "-inf", "1e300", "много", None):
+            with self.subTest(value=value):
+                self.assertEqual(ml._population(value), 0.0)
+
     def test_okrug_name_is_shortened(self):
         self.assertEqual(ml.okrug_name("Центральный административный округ"), "Центральный АО")
 

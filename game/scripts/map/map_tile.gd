@@ -29,6 +29,9 @@ const COLUMNS := {
 	"pick.ring": 3, "pick.bbox": 4,
 	"label.xy": 2, "label.angle": 1, "label.span": 1, "label.cls": 1, "label.weight": 1,
 }
+# Колонки карточки здания в pick.attrs (docs/city-package.md#участки-карты).
+const PICK_COLUMNS := ["id", "name", "function", "function_source", "levels", "levels_source", "footprint_m2",
+	"residents", "zone_id", "territory"]
 const INT_SECTIONS := ["area.tri", "line.tri", "building.tri", "building.outline", "pick.ring"]
 const JSON_SECTIONS := ["pick.attrs", "label.text"]
 const PER_VERTEX := ["area.cls", "line.off", "line.cls", "building.cls",
@@ -314,7 +317,9 @@ func _check_pick() -> String:
 		return "данные выбора неполны или без зданий: %s" % [present]
 	var buildings := (sections["pick.bbox"] as PackedFloat32Array).size() / 4
 	var attrs: Variant = sections["pick.attrs"]
-	if not attrs is Dictionary or not attrs.values().all(func(c): return c is Array and c.size() == buildings):
+	if not attrs is Dictionary or not attrs.has_all(PICK_COLUMNS):
+		return "pick.attrs: нужны колонки %s" % [PICK_COLUMNS]
+	if not attrs.values().all(func(c): return c is Array and c.size() == buildings):
 		return "pick.attrs: каждая колонка — список из %d значений" % buildings
 	var rings: PackedInt32Array = sections["pick.ring"]
 	var vertices := vertex_count("building")
