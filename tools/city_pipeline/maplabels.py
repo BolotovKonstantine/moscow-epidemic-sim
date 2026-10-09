@@ -359,12 +359,15 @@ def street_labels(roads, road_names, level, box=None) -> Labels:
     rows = []
     for name in sorted(groups):
         items = groups[name]
-        top = max(code for code, _ in items)
-        kind = "street_major" if mt.LINE_CLASSES[top] in STREET_MAJOR else "street"
-        lines = [g for _, g in items]
-        if query is not None and not shapely.intersects(np.array(lines, dtype=object), query).any():
+        codes = np.array([code for code, _ in items])
+        lines = np.array([g for _, g in items], dtype=object)
+        if query is not None and not shapely.intersects(lines, query).any():
             continue
         for part in merged_lines(lines):
+            # Класс — по рёбрам этой связной части: одноимённые улицы в разных местах независимы.
+            own = codes[shapely.covers(part, lines)] if len(lines) else codes
+            top = int(own.max()) if own.size else int(codes[shapely.intersects(part, lines)].max())
+            kind = "street_major" if mt.LINE_CLASSES[top] in STREET_MAJOR else "street"
             for x, y, angle, span in line_anchors(part, STREET_SPACING_M[level]):
                 rows.append((x, y, angle, span, kind, top + part.length / 1e6, name))
     labels = Labels.from_rows(rows)

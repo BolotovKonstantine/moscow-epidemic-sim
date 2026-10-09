@@ -256,8 +256,8 @@ func _check_layers() -> String:
 			if values.size() != vertices * COLUMNS[name]:
 				return "раздел %s: %d значений на %d вершин" % [name, values.size(), vertices]
 		if layer == "label" and not (sections["label.text"] is Array and sections["label.text"].size() == vertices
-				and sections["label.text"].all(func(t): return t is String)):
-			return "раздел label.text: нужен список строк по одной на подпись label.xy"
+				and sections["label.text"].all(func(t): return t is String and not t.strip_edges().is_empty())):
+			return "раздел label.text: нужен список непустых строк по одной на подпись label.xy"
 		if layer == "label":
 			var problem := _check_label_anchors()
 			if not problem.is_empty():

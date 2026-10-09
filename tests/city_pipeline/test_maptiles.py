@@ -14,7 +14,7 @@ from tools.city_pipeline import maplabels as ml
 from tools.city_pipeline import maptiles as mt
 from tools.city_pipeline.build import build_package, make_boundary
 from tools.city_pipeline.geo import Projector
-from tools.city_pipeline.mapbuild import area_class, export_test_tiles, line_class
+from tools.city_pipeline.mapbuild import Layer, area_class, export_test_tiles, line_class
 
 
 def triangle_area(xy, triangles):
@@ -98,6 +98,15 @@ class LabelGeometryTests(unittest.TestCase):
         for value in ("NaN", "1e999", "-inf", "1e300", "много", None):
             with self.subTest(value=value):
                 self.assertEqual(ml._population(value), 0.0)
+
+    def test_same_name_streets_are_classified_per_part(self):
+        main = shapely.LineString([(0, 0), (1000, 0)])
+        far = shapely.LineString([(0, 5000), (1000, 5000)])
+        roads = Layer(["a", "b"], np.array([mt.LINE_CLASSES.index("secondary"), mt.LINE_CLASSES.index("residential")]),
+                      np.array([main, far], dtype=object))
+        labels = ml.street_labels(roads, ["Центральная улица"] * 2, 2)
+        kinds = {round(float(y)): mt.LABEL_CLASSES[int(c)] for (_, y), c in zip(labels.xy, labels.cls)}
+        self.assertEqual(kinds, {0: "street_major", 5000: "street"})
 
     def test_okrug_name_is_shortened(self):
         self.assertEqual(ml.okrug_name("Центральный административный округ"), "Центральный АО")

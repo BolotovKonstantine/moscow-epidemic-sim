@@ -110,8 +110,14 @@ func _test_rejections(fixture: String) -> void:
 	var rings := _section_descriptor(source, "pick.ring")
 	check(rings.codec == "none" or rings.codec == "deflate", "у pick.ring известное сжатие")
 	var tile_ok := MapTile.open(_write("pick.mtile", source))
+	tile_ok.sections["label.text"][0] = "  "
+	check("непустых строк" in tile_ok._check_layers(), "пустой текст подписи отклоняется")
+	tile_ok.sections["label.text"][0] = "Главная улица"
 	tile_ok.sections["label.angle"][0] = PI
 	check("label.angle" in tile_ok._check_label_anchors(), "угол подписи π (вверх ногами) отклоняется")
+	tile_ok.sections["label.text"][0] = "  "
+	check("непустых строк" in tile_ok._check_layers(), "пустой текст подписи отклоняется")
+	tile_ok.sections["label.text"][0] = "Главная улица"
 	tile_ok.sections["label.angle"][0] = PI / 2.0
 	check(tile_ok._check_label_anchors().is_empty(), "угол π/2 допустим")
 	tile_ok.sections["label.angle"][0] = 0.0
