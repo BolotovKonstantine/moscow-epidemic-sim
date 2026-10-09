@@ -385,14 +385,25 @@ def decode_tile(data: bytes):
     version, head_len = struct.unpack_from("<II", data, 8)
     if version != FORMAT_VERSION:
         raise MapTileError(f"неподдерживаемая версия формата участка {version}")
+    if head_len > MAX_HEADER_BYTES:
+        raise MapTileError(f"заголовок {head_len} байт, предел формата {MAX_HEADER_BYTES}")
     header = json.loads(data[16:16 + head_len].decode("utf-8"))
     sections = {}
+    decoded = 0
     for item in header["sections"]:
+        # Как MapTile в игре: заявленные размеры проверяются до распаковки, поток — с потолком.
+        if type(item.get("raw_size")) is not int or not 0 <= item["raw_size"] <= MAX_SECTION_BYTES:
+            raise MapTileError(f"раздел {item.get('name')}: размер после распаковки вне предела {MAX_SECTION_BYTES}")
+        decoded += item["raw_size"]
+        if decoded > MAX_DECODED_BYTES:
+            raise MapTileError(f"участок: больше {MAX_DECODED_BYTES} байт данных после распаковки")
         raw = data[item["offset"]:item["offset"] + item["size"]]
         if len(raw) != item["size"]:
             raise MapTileError(f"раздел {item['name']} обрезан")
         if item["codec"] == "deflate":
-            raw = zlib.decompress(raw)
+            raw = zlib.decompressobj().decompress(raw, item["raw_size"] + 1)
+        elif item["codec"] != "none":
+            raise MapTileError(f"раздел {item['name']}: неизвестное сжатие {item['codec']}")
         if len(raw) != item["raw_size"]:
             raise MapTileError(f"раздел {item['name']}: размер {len(raw)} вместо {item['raw_size']}")
         if item["dtype"] == "json":

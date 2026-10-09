@@ -221,6 +221,19 @@ class FormatTests(unittest.TestCase):
         with self.assertRaises(mt.MapTileError):
             mt.decode_tile(bytes(data))
 
+    def test_decode_bounds_decompression_by_declared_size(self):
+        data = bytearray(mt.encode_tile({"x": 1}, [("area.xy", "f32", np.zeros((50_000, 2)))]))
+        head_len = int.from_bytes(data[12:16], "little")
+        # Заявленный raw_size меньше реального потока: распаковка обрывается на пределе, а не растёт.
+        text = data[16:16 + head_len].decode("utf-8").replace('"raw_size":400000', '"raw_size":    16')
+        patched = bytes(data[:16]) + text.encode("utf-8").ljust(head_len) + bytes(data[16 + head_len:])
+        with self.assertRaisesRegex(mt.MapTileError, "размер"):
+            mt.decode_tile(patched)
+        text = data[16:16 + head_len].decode("utf-8").replace('"raw_size":400000', '"raw_size":2.7e10')
+        patched = bytes(data[:16]) + text.encode("utf-8").ljust(head_len) + bytes(data[16 + head_len:])
+        with self.assertRaisesRegex(mt.MapTileError, "вне предела"):
+            mt.decode_tile(patched)
+
     def test_size_limits_match_loader(self):
         xy = np.zeros((4, 2))   # 32 байта во float32
         for limit, value, sections in (("MAX_SECTION_BYTES", 16, [("area.xy", "f32", xy)]),

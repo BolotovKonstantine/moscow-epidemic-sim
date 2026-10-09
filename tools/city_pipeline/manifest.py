@@ -233,7 +233,8 @@ def _check_map_tile(data: bytes, entry: dict, index: dict, asset_id: str):
     except (MapTileError, ValueError, KeyError, TypeError, IndexError, struct.error, zlib.error) as error:
         raise ManifestError(f"{name} не читается: {error}") from error
     expected = {"package_id": index["package_id"], "package_version": index["package_version"], "level": entry["level"],
-                "tile": entry["tile"], "classes": index["classes"], "attribution": index["attribution"]}
+                "tile": entry["tile"], "tile_size_m": LEVEL_TILE_M[entry["level"]], "classes": index["classes"],
+                "attribution": index["attribution"]}
     for key, value in expected.items():
         if header.get(key) != value:
             raise ManifestError(f"{name}: {key} в заголовке {str(header.get(key))[:100]!r}, в индексе {str(value)[:100]!r}")

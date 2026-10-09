@@ -192,6 +192,7 @@ class BuildTests(unittest.TestCase):
         for name, mutate, message in (
             ("tile-other-level", lambda header, entry: header.update(level=1), "level в заголовке"),
             ("tile-moved-bbox", lambda header, entry: header.update(bbox=[0, 0, 1, 1]), "bbox участка не совпадает"),
+            ("tile-wrong-size", lambda header, entry: header.update(tile_size_m=8000), "tile_size_m в заголовке"),
             ("tile-garbage", None, "не читается"),
         ):
             with self.subTest(name=name):
