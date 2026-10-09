@@ -247,7 +247,8 @@ def read_label_sources(pbf: Path, projector: Projector) -> LabelSources:
                 kind = ADMIN_CLASS.get(tags.get("admin_level"))
                 if kind:
                     admin.append((kind, name, _wkb_area(wkb, obj)))
-            elif tags.get("natural") == "water" or tags.get("waterway") == "riverbank" \
+            # Вода — тоже независимо: area_class() рисует площадь водой при любых других тегах.
+            if tags.get("natural") == "water" or tags.get("waterway") == "riverbank" \
                     or tags.get("landuse") in WATER_LANDUSE:
                 water.append((name, _wkb_area(wkb, obj)))
         elif obj.is_way() and tags.get("waterway") == "river" and tags.get("tunnel") in (None, "no"):
