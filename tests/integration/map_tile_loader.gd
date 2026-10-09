@@ -57,6 +57,9 @@ func _test_fixture(fixture: String) -> void:
 			check((tile.sections["building.outline"] as PackedInt32Array).size() == 32, "16 отрезков контуров")
 			check(tile.sections["pick.attrs"].id == ["b1", "b2", "b3"], "ID зданий из пакета")
 			check(tile.vertex_count("building") == 16, "16 вершин зданий")
+			check(tile.sections["label.text"].size() == 3 and tile.vertex_count("label") == 3, "три подписи улиц")
+		if tile.level == 0:
+			check("Тестград" in tile.sections["label.text"], "подпись города в обзоре")
 
 
 func _test_rejections(fixture: String) -> void:
@@ -364,10 +367,38 @@ func _test_views(fixture: String) -> void:
 	map.look_at_point(Vector2(1000, 1000), 0.01)
 	check(is_equal_approx(map.meters_per_pixel, MapTheme.MIN_MPP), "приближение ограничено %.2f м/пикс." % MapTheme.MIN_MPP)
 	check(map.level_for(map.meters_per_pixel) == 2, "при сильном приближении — уровень 2")
+	_test_labels(map)
 	check(map.level_for(2.0) == 2 and map.level_for(10.0) == 1 and map.level_for(100.0) == 0, "уровни по масштабу")
 	map.fit_region()
 	check(map.meters_per_pixel > 4000.0 / 1280.0, "весь регион помещается в окно")
 	map.free()
+
+
+func _test_labels(map: MapView) -> void:
+	var labels := map.label_layer()
+	check(labels.get_child_count() == 0 and labels.label_count() == 7, "все подписи в одном узле без детей")
+	map.max_meters_per_pixel = 1000.0   # фикстура мала: разрешить масштаб обзора большого региона
+	# Уровень 2: станция и улица участка; длинное имя не помещается в проезд 100 м; подписи обзора скрыты.
+	map.look_at_point(Vector2(1300, 1100), 1.0)
+	_expect_labels(labels, ["Станция", "Главная улица"], "вблизи")
+	# Обзор: река в 13 пикселях от столицы уступает ей место; при 45 м/пикс. (29 пикселей) помещаются обе.
+	map.look_at_point(Vector2(2000, 2000), 100.0)
+	_expect_labels(labels, ["Тестград"], "на обзоре, без перекрытия")
+	map.look_at_point(Vector2(2000, 2000), 45.0)
+	_expect_labels(labels, ["Тестград", "Тестовая"], "на обзоре крупнее")
+	map.look_at_point(Vector2(1500, 1500), 20.0)
+	_expect_labels(labels, ["район Тестовый"], "на среднем масштабе")
+	map.look_at_point(Vector2(1250, 1500), 0.25)
+	_expect_labels(labels, ["Очень длинное название короткого проезда"], "предельное приближение: имя помещается в 100 м")
+
+
+func _expect_labels(labels: MapLabelLayer, expected: Array, where: String) -> void:
+	var shown := labels.texts(labels.layout())
+	var sorted_shown := Array(shown)
+	sorted_shown.sort()
+	var sorted_expected := expected.duplicate()
+	sorted_expected.sort()
+	check(sorted_shown == sorted_expected, "%s: подписи %s вместо %s" % [where, shown, expected])
 
 
 func _test_real_export(map_dir: String) -> void:
@@ -382,6 +413,10 @@ func _test_real_export(map_dir: String) -> void:
 	check(nodes.all(func(n): return n == MapTileView.NODE_COUNT), "узлов на участок не зависит от числа зданий: %s" % [nodes])
 	for entry in map.index.tiles:
 		print("  %s: %.1f МБ" % [entry.path, entry.size_bytes / 1048576.0])
+	check(map.label_layer().label_count() > 0, "в настоящем экспорте есть подписи")
+	map.fit_region()
+	var shown := map.label_layer().layout().size()
+	check(shown > 10 and shown <= MapTheme.LABEL_MAX, "на обзоре от 10 до %d подписей: %d" % [MapTheme.LABEL_MAX, shown])
 	print("Настоящий экспорт %s %s: участков %d, загрузка %.0f мс, статическая память +%.1f МБ" % [
 		map.index.package_id, map.index.package_version, map.load_stats.tiles, map.load_stats.usec / 1000.0,
 		map.load_stats.static_bytes / 1048576.0])

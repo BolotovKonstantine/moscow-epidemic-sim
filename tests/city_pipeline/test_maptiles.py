@@ -1,4 +1,5 @@
 import csv
+import math
 import gzip
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ import shapely
 
 from tests.city_pipeline.map_fixture import FIXTURE_DIR, write_fixture
 from tests.city_pipeline.synthetic_city import CENTER, OsmBuilder, build_city, mini_city_config, synthetic_sources
+from tools.city_pipeline import maplabels as ml
 from tools.city_pipeline import maptiles as mt
 from tools.city_pipeline.build import build_package, make_boundary
 from tools.city_pipeline.geo import Projector
@@ -61,6 +63,34 @@ class GeometryTests(unittest.TestCase):
         xy, _, cls, tri = mt.ribbons(np.array([clipped], dtype=object), np.array([2]))
         self.assertEqual(len(xy), 8)       # две части по две точки
         self.assertEqual(len(tri), 4)
+
+
+class LabelGeometryTests(unittest.TestCase):
+    def test_upright_keeps_text_readable(self):
+        self.assertAlmostEqual(ml.upright(math.pi), 0.0)
+        self.assertAlmostEqual(ml.upright(-math.pi * 0.75), math.pi / 4)
+        self.assertAlmostEqual(ml.upright(math.pi / 2), math.pi / 2)
+
+    def test_straight_line_gets_long_span_and_plane_angle(self):
+        # Метрическая линия на северо-восток: в плоскости карты (ось Y вниз) угол отрицательный.
+        anchors = ml.line_anchors(shapely.LineString([(0, 0), (1000, 1000)]), 5000)
+        self.assertEqual(len(anchors), 1)
+        x, y, angle, span = anchors[0]
+        self.assertAlmostEqual(angle, -math.pi / 4)
+        self.assertGreaterEqual(span, 960)
+        self.assertAlmostEqual(x, 500, delta=1)
+
+    def test_bend_limits_span(self):
+        corner = shapely.LineString([(0, 0), (100, 0), (100, 100)])
+        anchors = ml.line_anchors(corner, 1000)
+        self.assertEqual(len(anchors), 1)
+        self.assertLessEqual(anchors[0][3], 120)
+
+    def test_spacing_gives_several_anchors(self):
+        self.assertEqual(len(ml.line_anchors(shapely.LineString([(0, 0), (3000, 0)]), 1000)), 3)
+
+    def test_okrug_name_is_shortened(self):
+        self.assertEqual(ml.okrug_name("Центральный административный округ"), "Центральный АО")
 
 
 class PlaneTests(unittest.TestCase):
@@ -149,6 +179,12 @@ class ExportTests(unittest.TestCase):
         base.square(lon + 0.004, lat, 0.0015, {"leisure": "park"})
         line = [base.node(lon - 0.01, lat - 0.003), base.node(lon + 0.01, lat - 0.003)]
         base.way(line, {"railway": "rail"})
+        # Названия для подписей: город, район Москвы, река.
+        base.node(lon + 0.003, lat + 0.003, {"place": "city", "name": "Тестград", "population": "1000"})
+        district = base.square(lon - 0.01, lat - 0.01, 0.008)
+        base.relation(50, [("way", district, "outer")], {"type": "boundary", "boundary": "administrative",
+                                                          "admin_level": "8", "name": "район Тестовый"})
+        base.way([base.node(lon - 0.02, lat + 0.006), base.node(lon + 0.02, lat + 0.006)], {"waterway": "river", "name": "Тестовая"})
         cls.basemap = root / "basemap.osm"
         cls.basemap.write_text(base.xml(), encoding="utf-8")
         cls.crs = config["metric_crs"]
@@ -216,6 +252,24 @@ class ExportTests(unittest.TestCase):
         _, (header, sections) = self.tile(0)
         self.assertNotIn("building.xy", sections)
         self.assertEqual(header["origin"], [0.0, 0.0])
+
+    def test_labels_by_level(self):
+        texts = {}
+        for level in (0, 1, 2):
+            _, (header, sections) = self.tile(level)
+            texts[level] = {(mt.LABEL_CLASSES[int(c)], t) for c, t in zip(sections["label.cls"], sections["label.text"])}
+            self.assertEqual(header["counts"]["labels"], len(sections["label.text"]))
+        self.assertTrue({("city", "Тестград"), ("district", "район Тестовый")} <= texts[0])
+        self.assertIn(("river", "Тестовая"), texts[0])
+        self.assertIn(("street_major", "Вторая"), texts[1])
+        self.assertNotIn("Первая", {t for _, t in texts[1]})          # жилые улицы — только в участках 2 км
+        self.assertTrue({("street", "Первая"), ("street_major", "Вторая"), ("river", "Тестовая")} <= texts[2])
+
+    def test_label_anchors_lie_inside_their_tile(self):
+        for level in (1, 2):
+            _, (header, sections) = self.tile(level)
+            xy = sections["label.xy"]
+            self.assertTrue(((xy >= 0) & (xy <= header["tile_size_m"])).all())
 
     def test_export_is_reproducible(self):
         again = export_test_tiles(self.package, self.basemap, self.crs, *CENTER, self.root / "again", log=lambda *_: None)

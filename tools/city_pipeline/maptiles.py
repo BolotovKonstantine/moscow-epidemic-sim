@@ -36,7 +36,12 @@ LINE_CLASSES = (
     "tram", "rail_minor", "rail",
     "boundary_moscow", "boundary_region",
 )
-CLASSES = {"area": AREA_CLASSES, "building": BUILDING_CLASSES, "line": LINE_CLASSES}
+# Подписи: код — позиция; стиль, приоритет и масштабы показа задаёт тема игры.
+LABEL_CLASSES = (
+    "capital", "okrug", "municipality", "city", "town", "district", "village", "suburb", "hamlet",
+    "river_major", "river", "water", "street_major", "street", "metro", "rail_station",
+)
+CLASSES = {"area": AREA_CLASSES, "building": BUILDING_CLASSES, "line": LINE_CLASSES, "label": LABEL_CLASSES}
 
 HIGHWAY_CLASS = {
     "motorway": "motorway", "motorway_link": "motorway", "trunk": "trunk", "trunk_link": "trunk",

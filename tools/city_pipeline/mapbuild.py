@@ -17,6 +17,7 @@ import osmium.filter
 import osmium.geom
 import shapely
 
+from . import maplabels as ml
 from . import maptiles as mt
 from .geo import Projector
 
@@ -151,6 +152,8 @@ class PackageLayers:
     building_rows: dict             # колонки атрибутов зданий (списки), в порядке пакета
     building_xy: np.ndarray         # представительные точки зданий в метрах
     building_class: np.ndarray
+    moscow: object = None           # метрический полигон Москвы
+    road_names: list = field(default_factory=list)   # названия дорог в порядке слоя roads
 
 
 def _read_csv(path: Path):
@@ -175,7 +178,7 @@ def read_package(package: Path, projector: Projector) -> PackageLayers:
         np.array([shapely.boundary(moscow), shapely.boundary(region)], dtype=object),
     )
 
-    road_keys, road_classes, road_texts = [], [], []
+    road_keys, road_classes, road_texts, road_names = [], [], [], []
     with gzip.open(package / "roads.geojsonl.gz", "rt", encoding="utf-8") as stream:
         for line in stream:
             props_text, geometry_text = line.rstrip("\n")[len('{"type":"Feature","properties":'):-1].split(',"geometry":', 1)
@@ -187,6 +190,7 @@ def read_package(package: Path, projector: Projector) -> PackageLayers:
             road_keys.append(("e", int(way), int(number)))
             road_classes.append(mt.LINE_CLASSES.index(kind))
             road_texts.append(geometry_text)
+            road_names.append(props.get("name") or None)
     roads = Layer(road_keys, np.array(road_classes, np.int64), projector.to_metric(shapely.from_geojson(road_texts)))
 
     attributes = _read_csv(package / "building_attributes.csv.gz")
@@ -207,7 +211,7 @@ def read_package(package: Path, projector: Projector) -> PackageLayers:
     classes = np.array([mt.BUILDING_CLASSES.index(kind) if kind in mt.BUILDING_CLASSES else 0 for kind in rows["function"]], np.int64)
     sources = sorted(source["source_id"] for source in manifest["sources"])
     return PackageLayers(manifest["package_id"], manifest["package_version"], sources, source_credits(manifest), region, boundaries, roads,
-                         rows, np.column_stack((x, y)), classes)
+                         rows, np.column_stack((x, y)), classes, moscow, road_names)
 
 
 def read_building_geometry(package: Path, wanted: set, projector: Projector):
@@ -271,8 +275,8 @@ def _query(layer: Layer, box):
     return Layer([layer.keys[i] for i in hits], layer.classes[hits], clipped[keep])
 
 
-def tile_sections(plane: mt.MapPlane, map_origin, box, areas: Layer, lines: Layer, buildings=None, pick=False):
-    """Разделы файла участка: площади, линии и (если есть) здания с данными выбора."""
+def tile_sections(plane: mt.MapPlane, map_origin, box, areas: Layer, lines: Layer, buildings=None, pick=False, labels=None):
+    """Разделы файла участка: площади, линии, (если есть) здания с данными выбора и подписи."""
     areas = _query(areas, box).sorted()
     lines = _query(lines, box).sorted()
     sections, counts = [], {}
@@ -309,6 +313,9 @@ def tile_sections(plane: mt.MapPlane, map_origin, box, areas: Layer, lines: Laye
                     bbox[:, column] = values
             bbox[~np.isfinite(bbox)] = 0.0   # здание без площади после очистки: пустой прямоугольник
             sections += [("pick.ring", "i32", rings), ("pick.bbox", "f32", bbox), ("pick.attrs", "json", attrs)]
+    if labels is not None:
+        sections += labels.sections(plane, map_origin)
+        counts["labels"] = len(labels)
     counts["triangles_dropped"] = int(dropped)
     known = [item for item in bounds if item is not None]
     bbox = [min(item[0] for item in known), min(item[1] for item in known), max(item[2] for item in known), max(item[3] for item in known)] if known else None
@@ -340,6 +347,9 @@ def export_test_tiles(package: Path, region_pbf: Path, metric_crs: str, lon: flo
     all_lines = Layer(base_lines.keys + roads.keys + pkg.boundaries.keys,
                       np.concatenate([base_lines.classes, roads.classes, pkg.boundaries.classes]),
                       np.concatenate([base_lines.geometry, roads.geometry, pkg.boundaries.geometry]))
+    log("Названия…")
+    label_sources = ml.read_label_sources(region_pbf, projector)
+    region_labels = ml.region_labels(label_sources, ml.read_stations(package, projector), pkg.region, pkg.moscow)
     x, y = projector.xy(lon, lat)
     if not shapely.intersects_xy(pkg.region, float(x), float(y)):
         raise mt.MapTileError(f"точка {lon}, {lat} вне региона пакета")
@@ -376,7 +386,8 @@ def export_test_tiles(package: Path, region_pbf: Path, metric_crs: str, lon: flo
             attrs["name"] = [names[pkg.building_rows["id"][i]] for i in rows]
             buildings = (geometry, pkg.building_class[rows], attrs)
         log(f"Участок z{level} {ix}_{iy}…")
-        sections, counts, bbox = tile_sections(plane, origin, box, areas, lines, buildings, pick=rules.pick)
+        labels = region_labels if level == 0 else ml.tile_labels(level, box, pkg.roads, pkg.road_names, label_sources)
+        sections, counts, bbox = tile_sections(plane, origin, box, areas, lines, buildings, pick=rules.pick, labels=labels)
         tiles.append(write_tile(out, pkg, level, ix, iy, origin, sections, counts, bbox))
     return write_index(out, pkg, metric_crs, plane, tiles, "Тестовый экспорт (#11): уровень 0 и по одному участку уровней 1 и 2.")
 

@@ -22,12 +22,18 @@ var _line_style: MapLineStyle
 var _tiles: Array[MapTileView] = []
 var _backgrounds: Dictionary = {}   # уровень → LevelBackground
 var _camera := Camera2D.new()
+var _label_canvas := CanvasLayer.new()
+var _labels := MapLabelLayer.new()
 var _dragging := false
 
 
 func _init() -> void:
 	_camera.name = "Camera"
 	add_child(_camera)
+	_label_canvas.name = "LabelCanvas"
+	_labels.name = "Labels"
+	_label_canvas.add_child(_labels)
+	add_child(_label_canvas)
 
 
 func _ready() -> void:
@@ -47,6 +53,7 @@ func load_map(map_dir: String) -> String:
 	var palette := PackedColorArray()
 	for cls_name: String in index.classes.get("area", []):
 		palette.append(MapTheme.area_color(cls_name))
+	_labels.set_classes(index.classes.get("label", []))
 	var style := {"area_palette": palette, "line_casing": _line_style.casing, "line_fill": _line_style.fill}
 	var entries := index.tiles.duplicate()
 	entries.sort_custom(func(a, b): return [a.level, a.tile.y, a.tile.x] < [b.level, b.tile.y, b.tile.x])
@@ -68,9 +75,11 @@ func load_map(map_dir: String) -> String:
 		if tile.level > 0:
 			_level_background(tile.level).add_square(tile.origin, tile.tile_size_m)
 		_tiles.append(view)
+		_labels.add_tile(tile)
 		if tile.level == 0:
 			# Охват — из заголовка обзора, защищённого SHA256 (с индексом он сверен при загрузке).
 			region_rect = tile.bbox   # у обзора охват обязателен (MapTile)
+	_labels.finalize()
 	if _tiles.is_empty() or _tiles[0].level != 0:
 		# Без обзора нет ни границ региона для камеры, ни подложки: подробные участки не показываем.
 		errors.insert(0, "Обзор региона не загружен")
@@ -78,6 +87,7 @@ func load_map(map_dir: String) -> String:
 			node.free()
 		_tiles.clear()
 		_backgrounds.clear()
+		_labels.clear()
 	load_stats = {
 		"usec": Time.get_ticks_usec() - started,
 		"static_bytes": OS.get_static_memory_usage() - static_before,
@@ -94,6 +104,10 @@ func tile_views() -> Array[MapTileView]:
 	return _tiles
 
 
+func label_layer() -> MapLabelLayer:
+	return _labels
+
+
 func level_for(mpp: float) -> int:
 	for level: int in [2, 1]:
 		if mpp <= MapTheme.LEVEL_MAX_MPP[level]:
@@ -108,12 +122,14 @@ func fit_region() -> void:
 	_camera.position = region_rect.get_center()
 	_set_scale(fit)
 	_clamp_camera()
+	_refresh_labels()
 
 
 ## Показать точку плоскости карты при заданном масштабе (для тестов и скриншотов).
 func look_at_point(map_point: Vector2, mpp: float) -> void:
 	_camera.position = map_point
 	_set_scale(mpp)
+	_refresh_labels()
 
 
 ## Точка плоскости карты (м) под точкой экрана.
@@ -127,11 +143,13 @@ func zoom_at(screen_point: Vector2, factor: float) -> void:
 	_set_scale(meters_per_pixel * factor)
 	_camera.position = anchor - (screen_point - _view_size() / 2.0) * meters_per_pixel
 	_clamp_camera()
+	_refresh_labels()
 
 
 func pan_pixels(delta: Vector2) -> void:
 	_camera.position += delta * meters_per_pixel
 	_clamp_camera()
+	_refresh_labels()
 
 
 func _set_scale(mpp: float) -> void:
@@ -172,6 +190,10 @@ class LevelBackground extends Node2D:
 	func _draw() -> void:
 		for square in squares:
 			draw_rect(square, MapTheme.BACKGROUND)
+
+
+func _refresh_labels() -> void:
+	_labels.update_view(_camera.position, meters_per_pixel, level_for(meters_per_pixel), _view_size())
 
 
 ## Прямоугольник покрывает другой по краям; в отличие от Rect2.encloses, работает и для вырожденной

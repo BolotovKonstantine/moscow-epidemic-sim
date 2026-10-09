@@ -25,14 +25,17 @@ const COLUMNS := {
 	"line.xy": 2, "line.off": 2, "line.cls": 1, "line.tri": 3,
 	"building.xy": 2, "building.cls": 1, "building.tri": 3, "building.outline": 2,
 	"pick.ring": 3, "pick.bbox": 4,
+	"label.xy": 2, "label.angle": 1, "label.span": 1, "label.cls": 1, "label.weight": 1,
 }
 const INT_SECTIONS := ["area.tri", "line.tri", "building.tri", "building.outline", "pick.ring"]
-const JSON_SECTIONS := ["pick.attrs"]
-const PER_VERTEX := ["area.cls", "line.off", "line.cls", "building.cls"]
+const JSON_SECTIONS := ["pick.attrs", "label.text"]
+const PER_VERTEX := ["area.cls", "line.off", "line.cls", "building.cls",
+	"label.angle", "label.span", "label.cls", "label.weight"]
 const LAYERS := {
 	"area": ["area.xy", "area.cls", "area.tri"],
 	"line": ["line.xy", "line.off", "line.cls", "line.tri"],
 	"building": ["building.xy", "building.cls", "building.tri", "building.outline"],
+	"label": ["label.xy", "label.angle", "label.span", "label.cls", "label.weight", "label.text"],
 }
 
 var error := ""
@@ -247,6 +250,9 @@ func _check_layers() -> String:
 			var values: PackedFloat32Array = sections[name]
 			if values.size() != vertices * COLUMNS[name]:
 				return "раздел %s: %d значений на %d вершин" % [name, values.size(), vertices]
+		if layer == "label" and not (sections["label.text"] is Array and sections["label.text"].size() == vertices
+				and sections["label.text"].all(func(t): return t is String)):
+			return "раздел label.text: нужен список строк по одной на подпись label.xy"
 		for name: String in names:
 			if sections[name] is PackedInt32Array and not _indices_within(sections[name], vertices):
 				return "раздел %s ссылается на вершину вне 0..%d" % [name, vertices - 1]
