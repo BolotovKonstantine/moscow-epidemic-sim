@@ -13,6 +13,7 @@ const MAX_DECODED_BYTES := 512 << 20   # всего данных участка 
 const MAX_COORD_M := 1.0e7   # |координата| плоскости карты: регион — сотни км; 1e7 точно помещается во float32
 const MAX_SAFE_INTEGER := 9007199254740992.0   # 2^53: целые JSON без потери точности и переполнения int
 const MAX_TILE_INDEX := 1 << 20   # |номер участка|: сетка региона — десятки участков; точно влезает в Vector2i
+const LABEL_TOLERANCE_M := 1.0   # точка подписи считается в float64, хранится во float32
 const MAX_LEVEL := 2   # уровни 0–2 формата 1: обзор, участки 8 и 2 км
 const PREAMBLE := 16   # магия, u32 версия, u32 длина заголовка
 const MAX_HEADER_BYTES := 1 << 20
@@ -253,6 +254,10 @@ func _check_layers() -> String:
 		if layer == "label" and not (sections["label.text"] is Array and sections["label.text"].size() == vertices
 				and sections["label.text"].all(func(t): return t is String)):
 			return "раздел label.text: нужен список строк по одной на подпись label.xy"
+		if layer == "label":
+			var problem := _check_label_anchors()
+			if not problem.is_empty():
+				return problem
 		for name: String in names:
 			if sections[name] is PackedInt32Array and not _indices_within(sections[name], vertices):
 				return "раздел %s ссылается на вершину вне 0..%d" % [name, vertices - 1]
@@ -265,6 +270,27 @@ func _check_layers() -> String:
 	if level == 0 and has_layer("building"):
 		return "в обзоре региона не должно быть зданий"
 	return _check_pick()
+
+
+## Подпись принадлежит участку, где лежит её точка (у обзора — внутри охвата), а длина прямого
+## участка под текстом не отрицательна: иначе подпись встала бы у соседа или обошла бы проверку длины.
+func _check_label_anchors() -> String:
+	var span: PackedFloat32Array = sections["label.span"]
+	if not span.is_empty() and _min(span) < 0.0:
+		return "label.span: длина прямого участка не может быть отрицательной"
+	var area := Rect2(Vector2.ZERO, Vector2.ONE * tile_size_m) if level > 0 else Rect2(bbox.position - origin, bbox.size)
+	area = area.grow(LABEL_TOLERANCE_M)
+	var xy: PackedFloat32Array = sections["label.xy"]
+	for i in range(0, xy.size(), 2):
+		if xy[i] < area.position.x or xy[i] > area.end.x or xy[i + 1] < area.position.y or xy[i + 1] > area.end.y:
+			return "label.xy: подпись %d в (%.0f, %.0f) вне своего участка %s" % [i / 2, xy[i], xy[i + 1], area]
+	return ""
+
+
+static func _min(values: PackedFloat32Array) -> float:
+	var sorted := values.duplicate()
+	sorted.sort()
+	return sorted[0]
 
 
 ## Данные выбора зданий (уровень 2): кольцо ссылается на строку здания и на вершины building.xy,

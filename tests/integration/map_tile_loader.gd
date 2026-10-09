@@ -110,6 +110,13 @@ func _test_rejections(fixture: String) -> void:
 	var rings := _section_descriptor(source, "pick.ring")
 	check(rings.codec == "none" or rings.codec == "deflate", "у pick.ring известное сжатие")
 	var tile_ok := MapTile.open(_write("pick.mtile", source))
+	tile_ok.sections["label.span"][0] = -5.0
+	check("label.span" in tile_ok._check_label_anchors(), "отрицательная длина прямого участка отклоняется")
+	tile_ok.sections["label.span"][0] = 100.0
+	tile_ok.sections["label.xy"][0] = 2500.0
+	check("вне своего участка" in tile_ok._check_label_anchors(), "подпись за краем участка 2 км отклоняется")
+	tile_ok.sections["label.xy"][0] = 1500.0
+	check(tile_ok._check_label_anchors().is_empty(), "подписи фикстуры в пределах участка")
 	tile_ok.sections["line.off"][0] = 100.0
 	check("line.off" in tile_ok._check_layers(), "смещение ленты за пределом отклоняется")
 	tile_ok.sections["line.off"][0] = 0.0
@@ -311,7 +318,9 @@ func _test_undersized_bbox(fixture: String) -> void:
 	var map := MapView.new()
 	root.add_child(map)
 	var problem := map.load_map(dir)
-	check("не покрывает геометрию" in problem and map.tile_views().is_empty(), "заниженный охват отклоняется: %s" % problem)
+	# Отклоняет либо сверка с геометрией, либо раньше — проверка подписей обзора по тому же охвату.
+	check(("не покрывает геометрию" in problem or "вне своего участка" in problem) and map.tile_views().is_empty(),
+		"заниженный охват отклоняется: %s" % problem)
 	map.free()
 	DirAccess.remove_absolute(dir.path_join("z0/0_0.mtile"))
 	DirAccess.remove_absolute(dir.path_join("index.json"))

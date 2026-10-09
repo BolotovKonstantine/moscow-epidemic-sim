@@ -386,7 +386,9 @@ def export_test_tiles(package: Path, region_pbf: Path, metric_crs: str, lon: flo
             attrs["name"] = [names[pkg.building_rows["id"][i]] for i in rows]
             buildings = (geometry, pkg.building_class[rows], attrs)
         log(f"Участок z{level} {ix}_{iy}…")
-        labels = region_labels if level == 0 else ml.tile_labels(level, box, pkg.roads, pkg.road_names, label_sources)
+        # Подписи участка — только внутри региона: дороги и реки на карте обрезаны по нему же.
+        labels = region_labels if level == 0 else \
+            ml.tile_labels(level, box, pkg.roads, pkg.road_names, label_sources).within(pkg.region)
         sections, counts, bbox = tile_sections(plane, origin, box, areas, lines, buildings, pick=rules.pick, labels=labels)
         tiles.append(write_tile(out, pkg, level, ix, iy, origin, sections, counts, bbox))
     return write_index(out, pkg, metric_crs, plane, tiles, "Тестовый экспорт (#11): уровень 0 и по одному участку уровней 1 и 2.")

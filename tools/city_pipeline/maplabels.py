@@ -28,7 +28,8 @@ from .geo import Projector
 PLACE_CLASS = {"city": "city", "town": "town", "village": "village", "suburb": "suburb", "quarter": "suburb",
                "hamlet": "hamlet"}
 ADMIN_CLASS = {"5": "okrug", "6": "municipality", "8": "district"}
-LABEL_KEYS = ("place", "boundary", "waterway", "natural")
+LABEL_KEYS = ("place", "boundary", "waterway", "natural", "landuse")
+WATER_LANDUSE = ("reservoir", "basin")   # как area_class() в mapbuild: эти площади рисуются водой
 
 # Правила размещения — настройки отображения, не данные.
 RIVER_MAJOR_MIN_M = 20_000.0     # реки длиннее подписываются и на обзоре
@@ -71,6 +72,13 @@ class Labels:
         mask = np.asarray(mask, bool)
         return Labels(self.xy[mask], self.angle[mask], self.span[mask], self.cls[mask], self.weight[mask],
                       [t for t, keep in zip(self.text, mask) if keep])
+
+    def within(self, polygon):
+        """Только якоря внутри полигона (региона пакета)."""
+        if not len(self):
+            return self
+        shapely.prepare(polygon)
+        return self.select(shapely.contains_xy(polygon, self.xy[:, 0], self.xy[:, 1]))
 
     def inside(self, box):
         minx, miny, maxx, maxy = box
@@ -192,7 +200,8 @@ def read_label_sources(pbf: Path, projector: Projector) -> LabelSources:
                 kind = ADMIN_CLASS.get(tags.get("admin_level"))
                 if kind:
                     admin.append((kind, name, _wkb_area(wkb, obj)))
-            elif tags.get("natural") == "water" or tags.get("waterway") == "riverbank":
+            elif tags.get("natural") == "water" or tags.get("waterway") == "riverbank" \
+                    or tags.get("landuse") in WATER_LANDUSE:
                 water.append((name, _wkb_area(wkb, obj)))
         elif obj.is_way() and tags.get("waterway") == "river" and tags.get("tunnel") in (None, "no"):
             try:
@@ -232,21 +241,26 @@ def _population(value):
 
 
 def read_stations(package: Path, projector: Projector):
-    """Станции метро и железной дороги внутри региона из остановок пакета: [(класс, название, x, y)]."""
+    """Станции метро и железной дороги внутри региона из остановок пакета: [(класс, название, x, y)].
+
+    Берутся все остановки с режимом subway или train — станции, платформы и места остановки: маршрут
+    может ссылаться на любую из них. Одноимённые остановки ближе STATION_DEDUP_M — одна подпись,
+    в точке станции, если она есть.
+    """
     rows = []
     with gzip.open(package / "transit_stops.csv.gz", "rt", encoding="utf-8", newline="") as stream:
         for row in csv.DictReader(stream):
-            if row["kind"] != "station" or row["inside"] != "1" or not row["name"]:
+            if row["inside"] != "1" or not row["name"]:
                 continue
             modes = set(row["modes"].split(";"))
             kind = "metro" if "subway" in modes else "rail_station" if "train" in modes else None
             if kind:
-                rows.append((kind, row["name"], float(row["lon"]), float(row["lat"])))
+                rows.append((kind, row["name"], row["kind"] != "station", float(row["lon"]), float(row["lat"])))
     if not rows:
         return []
-    x, y = projector.xy([r[2] for r in rows], [r[3] for r in rows])
+    x, y = projector.xy([r[3] for r in rows], [r[4] for r in rows])
     kept = []
-    for (kind, name, _, _), px, py in sorted(zip(rows, x, y), key=lambda item: (item[0][0], item[0][1], item[1], item[2])):
+    for (kind, name, _, _, _), px, py in sorted(zip(rows, x, y), key=lambda item: (item[0][:3], item[1], item[2])):
         if any(k == kind and n == name and math.hypot(px - kx, py - ky) < STATION_DEDUP_M for k, n, kx, ky in kept):
             continue
         kept.append((kind, name, float(px), float(py)))

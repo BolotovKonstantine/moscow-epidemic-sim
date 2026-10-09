@@ -89,6 +89,10 @@ class LabelGeometryTests(unittest.TestCase):
     def test_spacing_gives_several_anchors(self):
         self.assertEqual(len(ml.line_anchors(shapely.LineString([(0, 0), (3000, 0)]), 1000)), 3)
 
+    def test_labels_within_polygon(self):
+        labels = ml.Labels.from_rows([(5, 5, 0, 0, "street", 1, "внутри"), (50, 5, 0, 0, "street", 1, "снаружи")])
+        self.assertEqual(labels.within(shapely.box(0, 0, 10, 10)).text, ["внутри"])
+
     def test_okrug_name_is_shortened(self):
         self.assertEqual(ml.okrug_name("Центральный административный округ"), "Центральный АО")
 
@@ -185,6 +189,7 @@ class ExportTests(unittest.TestCase):
         base.relation(50, [("way", district, "outer")], {"type": "boundary", "boundary": "administrative",
                                                           "admin_level": "8", "name": "район Тестовый"})
         base.way([base.node(lon - 0.02, lat + 0.006), base.node(lon + 0.02, lat + 0.006)], {"waterway": "river", "name": "Тестовая"})
+        base.square(lon + 0.03, lat - 0.03, 0.004, {"landuse": "reservoir", "name": "Тестовое водохранилище"})   # ~45 га
         cls.basemap = root / "basemap.osm"
         cls.basemap.write_text(base.xml(), encoding="utf-8")
         cls.crs = config["metric_crs"]
@@ -261,6 +266,7 @@ class ExportTests(unittest.TestCase):
             self.assertEqual(header["counts"]["labels"], len(sections["label.text"]))
         self.assertTrue({("city", "Тестград"), ("district", "район Тестовый")} <= texts[0])
         self.assertIn(("river", "Тестовая"), texts[0])
+        self.assertIn(("water", "Тестовое водохранилище"), texts[0])   # landuse=reservoir — тоже вода
         self.assertIn(("street_major", "Вторая"), texts[1])
         self.assertNotIn("Первая", {t for _, t in texts[1]})          # жилые улицы — только в участках 2 км
         self.assertTrue({("street", "Первая"), ("street_major", "Вторая"), ("river", "Тестовая")} <= texts[2])
