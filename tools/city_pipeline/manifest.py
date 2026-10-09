@@ -154,7 +154,7 @@ MAP_INDEX_MAX_BYTES = 8 << 20   # как MapIndex.MAX_INDEX_BYTES в игре
 def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
     """Проверить индекс участков карты: формат, пакет и каждый участок (путь внутри каталога карты,
     размер и SHA256). Хеш индекса записан в паспорте, хеши участков — в индексе. Возвращает число участков."""
-    from .maptiles import FORMAT_VERSION, INDEX_FORMAT, LEVEL_TILE_M
+    from .maptiles import CLASSES, FORMAT_VERSION, INDEX_FORMAT, LEVEL_TILE_M, MAP_CREDIT
 
     try:
         size = path.stat().st_size
@@ -170,6 +170,13 @@ def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
     for key in ("package_id", "package_version"):
         if index.get(key) != manifest[key]:
             raise ManifestError(f"{asset_id}: {key} индекса карты {index.get(key)!r} не совпадает с паспортом {manifest[key]!r}")
+    # Те же требования, что у MapIndex в игре: иначе validate пропустил бы пакет, который игра не откроет.
+    attribution = index.get("attribution")
+    if not isinstance(attribution, list) or not attribution or not all(isinstance(item, str) for item in attribution) \
+            or attribution[0] != MAP_CREDIT:
+        raise ManifestError(f"{asset_id}: attribution индекса карты — список строк, первая — «{MAP_CREDIT}»")
+    if index.get("classes") != {name: list(values) for name, values in CLASSES.items()}:
+        raise ManifestError(f"{asset_id}: таблицы классов индекса карты не совпадают с форматом")
     tiles = index.get("tiles")
     if not isinstance(tiles, list) or not tiles:
         raise ManifestError(f"{asset_id}: в индексе карты нет участков")
@@ -180,6 +187,8 @@ def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
                 or not isinstance(tile.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", tile["sha256"]) \
                 or not isinstance(tile.get("tile"), list) or len(tile["tile"]) != 2 or any(type(v) is not int for v in tile["tile"]):
             raise ManifestError(f"{asset_id}: некорректная запись участка {str(tile)[:200]}")
+        if not _map_box(tile.get("bbox")):
+            raise ManifestError(f"{asset_id}: bbox участка {tile['path']} — упорядоченные minx, miny, maxx, maxy или null")
         key = (tile["level"], *tile["tile"])
         if tile["path"] in seen_paths or key in seen_tiles:
             raise ManifestError(f"{asset_id}: участок {tile['path']} указан дважды")
@@ -195,4 +204,15 @@ def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
                 raise ManifestError(f"{asset_id}: SHA256 участка {tile['path']} не совпадает с индексом")
         except OSError as error:
             raise ManifestError(f"{asset_id}: ошибка чтения участка {tile['path']}: {error}") from error
+    if [key for key in seen_tiles if key[0] == 0] != [(0, 0, 0)]:
+        raise ManifestError(f"{asset_id}: нужен ровно один обзор региона — участок уровня 0 с номером (0, 0)")
     return len(tiles)
+
+
+def _map_box(value):
+    """bbox записи индекса: null или четыре числа minx <= maxx, miny <= maxy."""
+    if value is None:
+        return True
+    if not isinstance(value, list) or len(value) != 4 or any(type(v) not in (int, float) for v in value):
+        return False
+    return value[0] <= value[2] and value[1] <= value[3]

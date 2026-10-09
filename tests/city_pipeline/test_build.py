@@ -163,15 +163,22 @@ class BuildTests(unittest.TestCase):
         (missing / "map" / detail["path"]).unlink()
         with self.assertRaisesRegex(ManifestError, "участок отсутствует"):
             validate_manifest(missing / "manifest.json")
+        overview = lambda doc: next(t for t in doc["tiles"] if t["level"] == 0)
         for name, change, message in (
-            ("index-escape", lambda tiles: tiles[0].update(path="../manifest.json"), "Некорректный относительный путь"),
-            ("index-twice", lambda tiles: tiles.append(dict(tiles[-1])), "указан дважды"),
-            ("index-empty", lambda tiles: tiles.clear(), "нет участков"),
+            ("index-escape", lambda doc: doc["tiles"][0].update(path="../manifest.json"), "Некорректный относительный путь"),
+            ("index-twice", lambda doc: doc["tiles"].append(dict(doc["tiles"][-1])), "указан дважды"),
+            ("index-empty", lambda doc: doc["tiles"].clear(), "нет участков"),
+            # Те же требования, что у MapIndex в игре.
+            ("index-no-overview", lambda doc: doc["tiles"].remove(overview(doc)), "ровно один обзор"),
+            ("index-moved-overview", lambda doc: overview(doc).update(tile=[1, 0]), "ровно один обзор"),
+            ("index-bad-bbox", lambda doc: overview(doc).update(bbox=[10, 0, 0, 10]), "bbox участка"),
+            ("index-no-credit", lambda doc: doc.update(attribution=["кто-то"]), "attribution"),
+            ("index-no-classes", lambda doc: doc.pop("classes"), "таблицы классов"),
         ):
             with self.subTest(name=name):
                 package = copy(name)
                 edited = json.loads((package / "map" / "index.json").read_text(encoding="utf-8"))
-                change(edited["tiles"])
+                change(edited)
                 (package / "map" / "index.json").write_text(json.dumps(edited), encoding="utf-8")
                 reseal(package)
                 with self.assertRaisesRegex(ManifestError, message):
@@ -183,6 +190,30 @@ class BuildTests(unittest.TestCase):
         reseal(other)
         with self.assertRaisesRegex(ManifestError, "package_version индекса карты"):
             validate_manifest(other / "manifest.json")
+
+    def test_region_export_replaces_previous_set_only_whole(self):
+        from tools.city_pipeline import mapbuild
+        from tools.city_pipeline import maptiles as mt
+        region_pbf, crs = self.osm, self.config["metric_crs"]
+        out = self.root / "region-map"
+        mapbuild.export_region_tiles(self.out, region_pbf, crs, out, log=lambda *_: None)
+        before = {p.relative_to(out): p.read_bytes() for p in out.rglob("*") if p.is_file()}
+        original = mapbuild.coverage_summary
+        mapbuild.coverage_summary = lambda *_: (_ for _ in ()).throw(mt.MapTileError("сбой проверки"))
+        try:
+            with self.assertRaisesRegex(mt.MapTileError, "сбой проверки"):
+                mapbuild.export_region_tiles(self.out, region_pbf, crs, out, log=lambda *_: None)
+        finally:
+            mapbuild.coverage_summary = original
+        after = {p.relative_to(out): p.read_bytes() for p in out.rglob("*") if p.is_file()}
+        self.assertEqual(after, before)   # прежний набор цел, временный каталог убран
+        self.assertEqual([p.name for p in self.root.iterdir() if p.name.startswith(".region-map")], [])
+        foreign = self.root / "not-a-map"
+        foreign.mkdir()
+        (foreign / "notes.txt").write_text("чужое", encoding="utf-8")
+        with self.assertRaisesRegex(mt.MapTileError, "не является набором участков"):
+            mapbuild.export_region_tiles(self.out, region_pbf, crs, foreign, log=lambda *_: None)
+        self.assertTrue((foreign / "notes.txt").exists())
 
     def test_build_is_reproducible(self):
         manifest, _ = self.build(self.root / "second")

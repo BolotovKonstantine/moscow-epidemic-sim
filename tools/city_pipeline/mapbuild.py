@@ -8,6 +8,8 @@
 import csv
 import gzip
 import json
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -21,7 +23,7 @@ from . import maplabels as ml
 from . import maptiles as mt
 from .geo import Projector
 
-MAP_CREDIT = "© участники OpenStreetMap, ODbL"   # короткая подпись, всегда видимая на карте
+MAP_CREDIT = mt.MAP_CREDIT
 
 
 def source_credits(manifest):
@@ -490,22 +492,64 @@ def export_region_tiles(package: Path, region_pbf: Path, metric_crs: str, out: P
     который воспроизводится побайтно). Нарушение покрытия — ошибка экспорта. manifest — паспорт
     пакета, если package/manifest.json ещё не записан (сборка пакета).
     """
+    _check_replaceable(out)
     source = MapSource(package, region_pbf, metric_crs, log, manifest)
     pkg = source.pkg
     log(f"Контуры {len(pkg.building_rows['id'])} зданий…")
     source.load_buildings()
     targets = [(level, ix, iy) for level in sorted(mt.LEVEL_TILE_M) for ix, iy in source.region_tiles(level)]
-    tiles = []
-    out.mkdir(parents=True, exist_ok=True)
-    for number, (level, ix, iy) in enumerate(targets, 1):
-        if number == 1 or number % 200 == 0 or number == len(targets):
-            log(f"  участок {number}/{len(targets)} (z{level} {ix}_{iy})…")
-        sections, counts, bbox, origin = source.tile(level, ix, iy)
-        tiles.append(write_tile(out, pkg, level, ix, iy, origin, sections, counts, bbox))
-    summary = coverage_summary(source, tiles)
-    index = write_index(out, pkg, metric_crs, source.plane, tiles,
-                        "Весь регион (#13): обзор и все участки уровней 1 и 2, задевающие регион.")
+    # Набор пишется рядом и подменяет прежний только целиком: частичная перезапись оставила бы
+    # старый index.json с хешами, не совпадающими с новыми участками.
+    out.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{out.name}.", suffix=".partial", dir=out.parent))
+    try:
+        tiles = []
+        for number, (level, ix, iy) in enumerate(targets, 1):
+            if number == 1 or number % 200 == 0 or number == len(targets):
+                log(f"  участок {number}/{len(targets)} (z{level} {ix}_{iy})…")
+            sections, counts, bbox, origin = source.tile(level, ix, iy)
+            tiles.append(write_tile(staging, pkg, level, ix, iy, origin, sections, counts, bbox))
+        summary = coverage_summary(source, tiles)
+        index = write_index(staging, pkg, metric_crs, source.plane, tiles,
+                            "Весь регион (#13): обзор и все участки уровней 1 и 2, задевающие регион.")
+        staging.chmod(0o755)   # mkdtemp создаёт каталог только для владельца
+        _install(staging, out)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
     return index, summary
+
+
+def _check_replaceable(out: Path):
+    """Заменять можно только отсутствующий или пустой каталог либо прежний набор участков (index.json карты)."""
+    if not out.exists():
+        return
+    if not out.is_dir():
+        raise mt.MapTileError(f"{out} — не каталог")
+    if not any(out.iterdir()):
+        return
+    try:
+        index = json.loads((out / "index.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        index = None
+    if not isinstance(index, dict) or index.get("format") != mt.INDEX_FORMAT:
+        raise mt.MapTileError(f"{out} не пуст и не является набором участков карты (нет index.json карты): не заменяю")
+
+
+def _install(staging: Path, out: Path):
+    """Подменить out готовым каталогом; прежний набор возвращается, если подмена не удалась."""
+    backup = None
+    if out.exists():
+        backup = out.with_name(f".{out.name}.{staging.name}.previous")
+        out.rename(backup)
+    try:
+        staging.rename(out)
+    except BaseException:
+        if backup is not None:
+            backup.rename(out)
+        raise
+    if backup is not None:
+        shutil.rmtree(backup, ignore_errors=True)
 
 
 def coverage_summary(source: MapSource, tiles):

@@ -22,6 +22,7 @@ FORMAT_VERSION = 1
 MAGIC = b"MESMTILE"
 INDEX_FORMAT = "mesim-map-index"
 TILE_FORMAT = "mesim-map-tile"
+MAP_CREDIT = "© участники OpenStreetMap, ODbL"   # первая строка атрибуции, всегда видимая на карте (ODbL)
 
 # Размер участка по уровням подробности; уровень 0 — один участок на весь регион.
 LEVEL_TILE_M = {0: None, 1: 8000, 2: 2000}
