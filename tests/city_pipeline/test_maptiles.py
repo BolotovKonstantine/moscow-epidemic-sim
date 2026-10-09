@@ -253,7 +253,9 @@ class ExportTests(unittest.TestCase):
         base.relation(50, [("way", district, "outer")], {"type": "boundary", "boundary": "administrative",
                                                           "admin_level": "8", "name": "район Тестовый"})
         base.way([base.node(lon - 0.02, lat + 0.006), base.node(lon + 0.02, lat + 0.006)], {"waterway": "river", "name": "Тестовая"})
-        base.square(lon + 0.03, lat - 0.03, 0.004, {"landuse": "reservoir", "name": "Тестовое водохранилище"})   # ~45 га
+        reservoir = base.square(lon + 0.03, lat - 0.03, 0.004, {"landuse": "reservoir", "name": "Тестовое водохранилище"})   # ~45 га
+        base.relation(53, [("way", reservoir, "outer")], {"type": "multipolygon", "natural": "water",
+                                                           "name": "Тестовое водохранилище"})   # тот же контур отношением
         base.square(lon - 0.03, lat - 0.03, 0.004, {"natural": "water", "boundary": "administrative",
                                                     "name": "Пограничный пруд"})   # вода с тегом границы
         cls.basemap = root / "basemap.osm"
@@ -339,6 +341,7 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(sum(t == "Тестград" for t in sections["label.text"]), 1)   # точка и контур — одна подпись
         self.assertIn(("river", "Тестовая"), texts[0])
         self.assertIn(("water", "Тестовое водохранилище"), texts[0])   # landuse=reservoir — тоже вода
+        self.assertEqual(sum(t == "Тестовое водохранилище" for t in self.tile(0)[1][1]["label.text"]), 1)
         self.assertIn(("water", "Пограничный пруд"), texts[0])   # тег границы не мешает подписи воды
         self.assertIn(("street_major", "Вторая"), texts[1])
         self.assertNotIn("Первая", {t for _, t in texts[1]})          # жилые улицы — только в участках 2 км

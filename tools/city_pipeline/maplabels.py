@@ -268,7 +268,8 @@ def read_label_sources(pbf: Path, projector: Projector) -> LabelSources:
     if water:
         geometry = projector.to_metric(shapely.from_wkb([item[1] for item in water]))
         # Самопересечения OSM ломают пересечение с регионом: чиним, как площади подложки и границы.
-        found.water = [(name, shapely.make_valid(g)) for (name, _), g in zip(water, geometry)]
+        # Водоём бывает и отношением, и замкнутой линией: одноимённые совпадающие площади — одна подпись.
+        found.water = _dedup_water([(name, shapely.make_valid(g)) for (name, _), g in zip(water, geometry)])
     if rivers:
         geometry = projector.to_metric(shapely.from_wkb([item[1] for item in rivers]))
         for (name, _), g in zip(rivers, geometry):
@@ -301,6 +302,16 @@ def _area_places(items, nodes, projector):
         point = label_point(polygon)
         result.append((kind, name, point.x, point.y, population))
     return sorted(result, key=lambda item: (item[0], item[1], item[2], item[3]))
+
+
+def _dedup_water(items):
+    """Водоёмы без дублей: то же название и перекрытие больше SAME_SHARE — одна площадь, большая."""
+    kept = []
+    for name, polygon in sorted(items, key=lambda item: (item[0], -item[1].area)):
+        if polygon.is_empty or any(n == name and _same_area(p, polygon) for n, p in kept):
+            continue
+        kept.append((name, polygon))
+    return kept
 
 
 def _same_area(a, b):
