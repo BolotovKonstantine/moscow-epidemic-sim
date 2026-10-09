@@ -16,6 +16,11 @@ def read_csv(path):
         return list(csv.DictReader(stream))
 
 
+def read_csv_lines(path):
+    with gzip.open(path, "rt", encoding="utf-8") as stream:
+        return stream.readlines()
+
+
 class BuildTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -85,7 +90,7 @@ class BuildTests(unittest.TestCase):
     def test_manifest_is_valid_and_lists_all_roles(self):
         manifest = validate_manifest(self.out / "manifest.json")
         roles = {asset["role"] for asset in manifest["assets"]}
-        self.assertEqual(roles, {"boundary", "buildings", "roads", "transport", "facilities", "population", "zones", "config", "quality_report"})
+        self.assertEqual(roles, {"boundary", "buildings", "roads", "transport", "facilities", "population", "zones", "config", "quality_report", "map"})
         # Снимок конфигурации в пакете совпадает с хешем источника build-config.
         source = next(s for s in manifest["sources"] if s["source_id"].startswith("build-config-"))
         import hashlib
@@ -102,6 +107,178 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(assets["transit-service"]["source_ids"], ["build-config-synthetic-mini-city"])
         sources = {source["source_id"]: source for source in manifest["sources"]}
         self.assertEqual(sources["build-config-synthetic-mini-city"]["source_type"], "synthetic")
+
+    def test_map_tiles_cover_package(self):
+        from tools.city_pipeline import maptiles as mt
+        index = json.loads((self.out / "map" / "index.json").read_text(encoding="utf-8"))
+        self.assertEqual((index["package_id"], index["package_version"]), (self.manifest["package_id"], self.manifest["package_version"]))
+        levels = {tile["level"] for tile in index["tiles"]}
+        self.assertEqual(levels, {0, 1, 2})
+        self.assertEqual(sum(tile["level"] == 0 for tile in index["tiles"]), 1)
+        ids = []
+        for tile in index["tiles"]:
+            if tile["level"] == 2:
+                header, sections = mt.decode_tile((self.out / "map" / tile["path"]).read_bytes())
+                ids += sections["pick.attrs"]["id"]
+                self.assertEqual(header["package_version"], self.manifest["package_version"])
+        package_ids = [row["building_id"] for row in read_csv(self.out / "building_attributes.csv.gz")]
+        self.assertEqual(sorted(ids), sorted(package_ids))   # каждое здание ровно в одном участке 2 км
+        summary = self.report["map"]
+        self.assertEqual(summary["buildings_in_detail_tiles"], len(package_ids))
+        self.assertEqual(sum(summary["tiles"].values()), len(index["tiles"]))
+        self.assertEqual(summary["road_edges"], len(read_csv_lines(self.out / "roads.geojsonl.gz")))
+        check = next(c for c in self.report["checks"] if c["check"] == "map_tiles_cover_package")
+        self.assertEqual(check["status"], "pass")
+        self.assertIn("## map", (self.out / "quality_report.md").read_text(encoding="utf-8"))
+
+    def test_validate_checks_every_map_tile(self):
+        import hashlib
+        import shutil
+        from tools.city_pipeline import maptiles as mt
+        from tools.city_pipeline.manifest import ManifestError
+
+        def copy(name):
+            target = self.root / name
+            shutil.copytree(self.out, target)
+            return target
+
+        def reseal(package):
+            """Переписать хеш индекса в паспорте: проверка должна дойти до участков."""
+            manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+            asset = next(a for a in manifest["assets"] if a["role"] == "map")
+            data = (package / asset["path"]).read_bytes()
+            asset["size_bytes"], asset["sha256"] = len(data), hashlib.sha256(data).hexdigest()
+            (package / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+        index = json.loads((self.out / "map" / "index.json").read_text(encoding="utf-8"))
+        detail = next(tile for tile in index["tiles"] if tile["level"] == 2)
+        broken = copy("tile-damaged")
+        tile = broken / "map" / detail["path"]
+        data = bytearray(tile.read_bytes())
+        data[-1] ^= 1
+        tile.write_bytes(bytes(data))
+        with self.assertRaisesRegex(ManifestError, "SHA256 участка"):
+            validate_manifest(broken / "manifest.json")
+        validate_manifest(broken / "manifest.json", check_files=False)   # без чтения файлов участки не открываются
+        missing = copy("tile-missing")
+        (missing / "map" / detail["path"]).unlink()
+        with self.assertRaisesRegex(ManifestError, "участок отсутствует"):
+            validate_manifest(missing / "manifest.json")
+        overview = lambda doc: next(t for t in doc["tiles"] if t["level"] == 0)
+        for name, change, message in (
+            ("index-escape", lambda doc: doc["tiles"][0].update(path="../manifest.json"), "Некорректный относительный путь"),
+            ("index-twice", lambda doc: doc["tiles"].append(dict(doc["tiles"][-1])), "указан дважды"),
+            ("index-empty", lambda doc: doc["tiles"].clear(), "нет участков"),
+            # Те же требования, что у MapIndex в игре.
+            ("index-no-overview", lambda doc: doc["tiles"].remove(overview(doc)), "ровно один обзор"),
+            ("index-moved-overview", lambda doc: overview(doc).update(tile=[1, 0]), "tile в заголовке|ровно один обзор"),
+            ("index-bad-bbox", lambda doc: overview(doc).update(bbox=[10, 0, 0, 10]), "bbox участка"),
+            ("index-far-bbox", lambda doc: overview(doc).update(bbox=[0, 0, 2e7, 10]), "bbox участка"),
+            ("index-far-tile", lambda doc: doc["tiles"][-1].update(tile=[(1 << 20) + 1, 0]), "некорректная запись участка"),
+            ("index-list-level", lambda doc: doc["tiles"][-1].update(level=[]), "некорректная запись участка"),
+            ("index-huge-tile", lambda doc: doc["tiles"][-1].update(size_bytes=mt.MAX_TILE_BYTES + 1), "некорректная запись участка"),
+            ("index-no-credit", lambda doc: doc.update(attribution=["кто-то"]), "attribution"),
+            ("index-no-classes", lambda doc: doc.pop("classes"), "таблицы классов"),
+            ("index-extra-credit", lambda doc: doc["attribution"].append("Кто-то — CC0"), "внешние источники"),
+        ):
+            with self.subTest(name=name):
+                package = copy(name)
+                edited = json.loads((package / "map" / "index.json").read_text(encoding="utf-8"))
+                change(edited)
+                (package / "map" / "index.json").write_text(json.dumps(edited), encoding="utf-8")
+                reseal(package)
+                with self.assertRaisesRegex(ManifestError, message):
+                    validate_manifest(package / "manifest.json")
+        # Участок с верными размером и хешем в индексе, но чужим заголовком или битым содержимым.
+        for name, mutate, message in (
+            ("tile-other-level", lambda header, entry: header.update(level=1), "level в заголовке"),
+            ("tile-moved-bbox", lambda header, entry: header.update(bbox=[0, 0, 1, 1]), "bbox участка не совпадает"),
+            ("tile-wrong-size", lambda header, entry: header.update(tile_size_m=8000), "tile_size_m в заголовке"),
+            ("tile-counts-list", lambda header, entry: header.update(counts=[]), "counts в заголовке"),
+            ("tile-bool-level", lambda header, entry: header.update(level=True) if entry["level"] == 1 else header.update(tile=[True, 0]),
+             "должны быть целыми"),
+            ("tile-overview-no-bbox", lambda header, entry: (header.update(bbox=None), entry.update(bbox=None)), "у обзора нужен bbox"),
+            ("tile-overview-shifted", lambda header, entry: (header.update(origin=[0.005, 0.0]),
+                                                             entry.update(bbox=[b + (0.005 if i % 2 == 0 else 0) for i, b in enumerate(entry["bbox"])])),
+             "угол обзора"),
+            ("tile-garbage", None, "не читается"),
+        ):
+            with self.subTest(name=name):
+                package = copy(name)
+                edited = json.loads((package / "map" / "index.json").read_text(encoding="utf-8"))
+                entry = next(t for t in edited["tiles"] if t["level"] == (0 if "overview" in name else 2))
+                target = package / "map" / entry["path"]
+                if mutate is None:
+                    data = b"MESMTILE" + b"\xff" * 32
+                else:
+                    header, sections = mt.decode_tile(target.read_bytes())
+                    mutate(header, entry)
+                    data = mt.encode_tile({k: v for k, v in header.items() if k not in ("format", "format_version", "sections")},
+                                          [(item["name"], item["dtype"], sections[item["name"]]) for item in header["sections"]])
+                target.write_bytes(data)
+                entry.update(size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+                (package / "map" / "index.json").write_text(json.dumps(edited), encoding="utf-8")
+                reseal(package)
+                with self.assertRaisesRegex(ManifestError, message):
+                    validate_manifest(package / "manifest.json")
+        empty = copy("tile-empty")
+        edited = json.loads((empty / "map" / "index.json").read_text(encoding="utf-8"))
+        entry = edited["tiles"][-1]
+        (empty / "map" / entry["path"]).write_bytes(b"")
+        entry.update(size_bytes=0, sha256=hashlib.sha256(b"").hexdigest())
+        (empty / "map" / "index.json").write_text(json.dumps(edited), encoding="utf-8")
+        reseal(empty)
+        with self.assertRaisesRegex(ManifestError, "некорректная запись участка"):
+            validate_manifest(empty / "manifest.json")
+        other = copy("index-other-package")
+        edited = json.loads((other / "map" / "index.json").read_text(encoding="utf-8"))
+        edited["package_version"] = "9.9.9"
+        (other / "map" / "index.json").write_text(json.dumps(edited), encoding="utf-8")
+        reseal(other)
+        with self.assertRaisesRegex(ManifestError, "package_version индекса карты"):
+            validate_manifest(other / "manifest.json")
+
+    def test_region_export_replaces_previous_set_only_whole(self):
+        from tools.city_pipeline import mapbuild
+        from tools.city_pipeline import maptiles as mt
+        region_pbf, crs = self.osm, self.config["metric_crs"]
+        out = self.root / "region-map"
+        mapbuild.export_region_tiles(self.out, region_pbf, crs, out, log=lambda *_: None)
+        before = {p.relative_to(out): p.read_bytes() for p in out.rglob("*") if p.is_file()}
+        original = mapbuild.coverage_summary
+        mapbuild.coverage_summary = lambda *_: (_ for _ in ()).throw(mt.MapTileError("сбой проверки"))
+        try:
+            with self.assertRaisesRegex(mt.MapTileError, "сбой проверки"):
+                mapbuild.export_region_tiles(self.out, region_pbf, crs, out, log=lambda *_: None)
+        finally:
+            mapbuild.coverage_summary = original
+        after = {p.relative_to(out): p.read_bytes() for p in out.rglob("*") if p.is_file()}
+        self.assertEqual(after, before)   # прежний набор цел, временный каталог убран
+        self.assertEqual([p.name for p in self.root.iterdir() if p.name.startswith(".region-map") and p.suffix != ".lock"], [])
+        # Чужой каталог, появившийся за время сборки, не заменяется: проверка повторяется перед подменой.
+        late = self.root / "late-map"
+        original_lock = mapbuild._locked
+
+        def locked(path):
+            if not late.exists():
+                late.mkdir()
+                (late / "notes.txt").write_text("чужое", encoding="utf-8")
+            return original_lock(path)
+
+        mapbuild._locked = locked
+        try:
+            with self.assertRaisesRegex(mt.MapTileError, "не является набором участков"):
+                mapbuild.export_region_tiles(self.out, region_pbf, crs, late, log=lambda *_: None)
+        finally:
+            mapbuild._locked = original_lock
+        self.assertEqual((late / "notes.txt").read_text(encoding="utf-8"), "чужое")
+        self.assertEqual([p.name for p in self.root.iterdir() if p.name.startswith(".late-map") and p.suffix != ".lock"], [])
+        foreign = self.root / "not-a-map"
+        foreign.mkdir()
+        (foreign / "notes.txt").write_text("чужое", encoding="utf-8")
+        with self.assertRaisesRegex(mt.MapTileError, "не является набором участков"):
+            mapbuild.export_region_tiles(self.out, region_pbf, crs, foreign, log=lambda *_: None)
+        self.assertTrue((foreign / "notes.txt").exists())
 
     def test_build_is_reproducible(self):
         manifest, _ = self.build(self.root / "second")

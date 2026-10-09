@@ -22,6 +22,7 @@ FORMAT_VERSION = 1
 MAGIC = b"MESMTILE"
 INDEX_FORMAT = "mesim-map-index"
 TILE_FORMAT = "mesim-map-tile"
+MAP_CREDIT = "© участники OpenStreetMap, ODbL"   # первая строка атрибуции, всегда видимая на карте (ODbL)
 
 # Размер участка по уровням подробности; уровень 0 — один участок на весь регион.
 LEVEL_TILE_M = {0: None, 1: 8000, 2: 2000}
@@ -88,6 +89,48 @@ LEVEL_RULES = {
 }
 
 MITER_LIMIT = 3.0   # смещение стыка ленты не длиннее 3 полуширин: острый угол не даёт длинного шипа
+
+
+def source_credits(manifest):
+    """Атрибуция: подпись OSM и все внешние источники пакета (владелец и лицензия из паспорта).
+
+    Участки несут не только геометрию OSM, но и производные данные других источников
+    (жители зданий — из сетки GHS-POP), поэтому их условия перечисляются вместе.
+    """
+    credits = [MAP_CREDIT]
+    for source in sorted(manifest["sources"], key=lambda item: item["source_id"]):
+        if source.get("source_type") == "external":
+            credits.append(f"{source['owner']} — {source['license']}")
+    return credits
+
+
+def _reject_constant(value):
+    raise MapTileError(f"недопустимое значение JSON {value}")
+
+
+def _unique_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise MapTileError(f"повторяющийся ключ JSON {key}")
+        result[key] = value
+    return result
+
+
+def _finite_float(text):
+    value = float(text)
+    if not np.isfinite(value):
+        raise MapTileError(f"недопустимое значение JSON {text}")   # 1e400 стало бы бесконечностью
+    return value
+
+
+def strict_json(raw: bytes):
+    """JSON участка без NaN, Infinity, переполненных чисел (их не принимает и парсер Godot) и повторяющихся ключей (как паспорт)."""
+    try:
+        return json.loads(raw.decode("utf-8"), parse_constant=_reject_constant, parse_float=_finite_float,
+                          object_pairs_hook=_unique_keys)
+    except RecursionError as error:
+        raise MapTileError("слишком глубокая вложенность JSON") from error
 
 
 class MapTileError(ValueError):
@@ -304,6 +347,15 @@ def explode_lines(geometries):
 # ---------------------------------------------------------------- кодирование
 
 DTYPES = {"f32": "<f4", "i32": "<i4"}
+# Имя раздела → тип; как MapTile.COLUMNS, INT_SECTIONS и JSON_SECTIONS в игре: другие разделы игра не читает.
+SECTION_DTYPES = {name: "f32" for name in (
+    "area.xy", "area.cls", "line.xy", "line.off", "line.cls", "building.xy", "building.cls", "pick.bbox",
+    "label.xy", "label.angle", "label.span", "label.cls", "label.weight")}
+SECTION_DTYPES.update({name: "i32" for name in ("area.tri", "line.tri", "building.tri", "building.outline", "pick.ring")})
+SECTION_DTYPES.update({"pick.attrs": "json", "label.text": "json"})
+# Число столбцов числового раздела, как MapTile.COLUMNS: 1 — одномерный массив (V), иначе (N, столбцы).
+SECTION_COLUMNS = {"area.xy": 2, "area.tri": 3, "line.xy": 2, "line.off": 2, "line.tri": 3, "building.xy": 2,
+                   "building.tri": 3, "building.outline": 2, "pick.ring": 3, "pick.bbox": 4, "label.xy": 2}
 
 
 def encode_tile(header: dict, sections) -> bytes:
@@ -384,20 +436,57 @@ def decode_tile(data: bytes):
     version, head_len = struct.unpack_from("<II", data, 8)
     if version != FORMAT_VERSION:
         raise MapTileError(f"неподдерживаемая версия формата участка {version}")
-    header = json.loads(data[16:16 + head_len].decode("utf-8"))
+    if head_len > MAX_HEADER_BYTES:
+        raise MapTileError(f"заголовок {head_len} байт, предел формата {MAX_HEADER_BYTES}")
+    if 16 + head_len > len(data):
+        raise MapTileError(f"заголовок {head_len} байт выходит за конец файла ({len(data)} байт)")
+    header = strict_json(data[16:16 + head_len])
+    if not isinstance(header, dict) or not isinstance(header.get("sections"), list) \
+            or not all(isinstance(item, dict) for item in header["sections"]):
+        raise MapTileError("заголовок участка — не объект со списком разделов")
+    if header.get("format") != TILE_FORMAT or header.get("format_version") != FORMAT_VERSION \
+            or type(header.get("format_version")) is not int:
+        raise MapTileError(f"заголовок: формат {header.get('format')} версии {header.get('format_version')}, нужен {TILE_FORMAT} {FORMAT_VERSION}")
+    data_start = 16 + head_len
     sections = {}
+    decoded = 0
     for item in header["sections"]:
-        raw = data[item["offset"]:item["offset"] + item["size"]]
-        if len(raw) != item["size"]:
-            raise MapTileError(f"раздел {item['name']} обрезан")
+        # Как MapTile в игре: имя и тип, смещение, заявленные размеры и их сумма проверяются до распаковки, поток — с потолком.
+        if SECTION_DTYPES.get(item.get("name")) != item.get("dtype"):
+            raise MapTileError(f"раздел {item.get('name')}: неизвестное имя или тип {item.get('dtype')} "
+                               f"(нужен {SECTION_DTYPES.get(item.get('name'))})")
+        limit = MAX_JSON_SECTION_BYTES if item.get("dtype") == "json" else MAX_SECTION_BYTES
+        if type(item.get("raw_size")) is not int or not 0 <= item["raw_size"] <= limit:
+            raise MapTileError(f"раздел {item.get('name')}: размер после распаковки вне предела {limit}")
+        offset, size = item.get("offset"), item.get("size")
+        if type(offset) is not int or type(size) is not int or offset % 4 or offset < data_start or size < 0 \
+                or offset + size > len(data):
+            raise MapTileError(f"раздел {item.get('name')}: смещение {offset} и размер {size} вне данных участка")
+        decoded += item["raw_size"]
+        if decoded > MAX_DECODED_BYTES:
+            raise MapTileError(f"участок: больше {MAX_DECODED_BYTES} байт данных после распаковки")
+        raw = data[offset:offset + size]
         if item["codec"] == "deflate":
-            raw = zlib.decompress(raw)
+            stream = zlib.decompressobj()
+            raw = stream.decompress(raw, item["raw_size"] + 1)
+            if not stream.eof or stream.unconsumed_tail or stream.unused_data:
+                raise MapTileError(f"раздел {item['name']}: поток deflate не завершён или длиннее заявленного")
+        elif item["codec"] != "none":
+            raise MapTileError(f"раздел {item['name']}: неизвестное сжатие {item['codec']}")
         if len(raw) != item["raw_size"]:
             raise MapTileError(f"раздел {item['name']}: размер {len(raw)} вместо {item['raw_size']}")
         if item["dtype"] == "json":
-            sections[item["name"]] = json.loads(raw.decode("utf-8"))
-        else:
-            sections[item["name"]] = np.frombuffer(raw, dtype=DTYPES[item["dtype"]]).reshape(item["shape"])
+            sections[item["name"]] = strict_json(raw)
+            continue
+        columns = SECTION_COLUMNS.get(item["name"], 1)
+        count, shape = item.get("count"), item.get("shape")
+        if type(count) is not int or count < 0 or count % columns or item["raw_size"] != count * 4 \
+                or not isinstance(shape, list) or any(type(v) is not int for v in shape) or shape != ([count] if columns == 1 else [count // columns, columns]):
+            raise MapTileError(f"раздел {item['name']}: count {count} и shape {shape} не соответствуют формату и размеру")
+        array = np.frombuffer(raw, dtype=DTYPES[item["dtype"]])
+        if item["dtype"] == "f32" and not np.isfinite(array).all():
+            raise MapTileError(f"раздел {item['name']}: нечисловые значения")
+        sections[item["name"]] = array.reshape(shape)
     return header, sections
 
 
