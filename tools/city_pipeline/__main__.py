@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -260,9 +261,9 @@ def command_build(args) -> int:
 
 
 def command_map_tile(args) -> int:
-    """Тестовый экспорт участков карты (#11) из собранного пакета и его вырезки OSM."""
+    """Экспорт участков карты из собранного пакета и его вырезки OSM: вокруг точки (#11) или весь регион (#13)."""
     from .build import config_digest
-    from .mapbuild import export_test_tiles
+    from .mapbuild import export_region_tiles, export_test_tiles
 
     config = load_config(args.config)
     package = package_dir(args.packages, config.get("package_id"), config.get("package_version"))
@@ -275,16 +276,39 @@ def command_map_tile(args) -> int:
     region_pbf = work_dir(args.work, config["package_id"]) / f"{config['package_version']}-{config_digest(config)}" / "region.osm.pbf"
     if not region_pbf.is_file():
         raise ManifestError(f"Нет вырезки OSM {region_pbf}: сначала выполните build для этой конфигурации")
+    out = args.out.resolve()
+    if args.all:
+        started = time.monotonic()
+        index, summary = export_region_tiles(package, region_pbf, config["metric_crs"], out)
+        for line in map_summary_lines(summary):
+            print(line)
+        print(f"Время: {time.monotonic() - started:.0f} с")
+        print(f"OK: {out / 'index.json'}")
+        return 0
     try:
         lon, lat = (float(value) for value in args.at.split(","))
     except ValueError as error:
         raise ManifestError(f"--at ожидает «долгота,широта», получено {args.at!r}") from error
-    out = args.out.resolve()
     index = export_test_tiles(package, region_pbf, config["metric_crs"], lon, lat, out)
     for tile in index["tiles"]:
         print(f"z{tile['level']} {tile['tile'][0]}_{tile['tile'][1]}: {tile['size_bytes'] / 1e6:.2f} МБ · {tile['counts']}")
     print(f"OK: {out / 'index.json'}")
     return 0
+
+
+def map_summary_lines(summary):
+    """Сводка участков всего региона для вывода в консоль."""
+    lines = []
+    for level, count in summary["tiles"].items():
+        size = summary["size_bytes"][level]
+        lines.append(f"z{level}: {count} участков, {size['total'] / 1e6:.1f} МБ (мин {size['min'] / 1e6:.3f}, "
+                     f"медиана {size['median'] / 1e6:.3f}, макс {size['max'] / 1e6:.2f} МБ)")
+    heaviest = summary["heaviest"]
+    lines.append(f"Всего {summary['total_bytes'] / 1e6:.1f} МБ; самый тяжёлый {heaviest['path']} — {heaviest['size_bytes'] / 1e6:.2f} МБ")
+    lines.append(f"Здания {summary['buildings_in_detail_tiles']}/{summary['buildings']}; рёбра дорог: на карте {summary['road_edges_drawn']}, "
+                 f"тоннели {summary['road_edges_tunnel']}, вне региона после обрезки {summary['road_edges_outside_region']}; "
+                 f"зоны 1 км {summary['zones']} — все задевают участки уровней 1 и 2")
+    return lines
 
 
 def main() -> int:
@@ -306,9 +330,10 @@ def main() -> int:
             sub.add_argument("--out", type=Path, default=ROOT / "data" / "packages", help="Каталог готовых пакетов")
         sub.set_defaults(handler=handler)
 
-    tile = commands.add_parser("map-tile", help="Тестовый экспорт участков карты вокруг точки (уровни 0–2)")
+    tile = commands.add_parser("map-tile", help="Экспорт участков карты: вокруг точки или весь регион (--all)")
     tile.add_argument("config", type=Path, help="Конфигурация сборки собранного пакета")
     tile.add_argument("--at", default="37.6175,55.7520", help="Точка «долгота,широта» внутри региона (по умолчанию — центр Москвы)")
+    tile.add_argument("--all", action="store_true", help="Все участки региона (как в пакете), а не вокруг точки")
     tile.add_argument("--packages", type=Path, default=ROOT / "data" / "packages", help="Каталог готовых пакетов")
     tile.add_argument("--work", type=Path, default=ROOT / "data" / "processed", help="Каталог промежуточных файлов (вырезка OSM)")
     tile.add_argument("--out", type=Path, default=ROOT / "data" / "processed" / "map-test", help="Каталог участков")

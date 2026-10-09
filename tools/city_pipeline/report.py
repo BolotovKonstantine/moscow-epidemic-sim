@@ -135,10 +135,16 @@ def build_report(context):
         _check("facilities_reach_main_graph", len(f_ok) == 0 or float(f_ok.mean()) >= 0.95,
                f"{_pct(int(f_ok.sum()), len(f_ok))}% учреждений ближе всего к ребру крупнейшей компоненты"),
     ]
+    tiles = context.get("map")
+    if tiles is not None:
+        # Экспорт карты сам отказывается писать участки с нарушенным покрытием; здесь — итог для отчёта.
+        checks.append(_check("map_tiles_cover_package", tiles["buildings_in_detail_tiles"] == tiles["buildings"],
+                             f"{tiles['buildings_in_detail_tiles']} зданий по одному в участках 2 км, {tiles['road_edges_drawn']} рёбер дорог на карте "
+                             f"(тоннели {tiles['road_edges_tunnel']} не рисуются), каждая из {tiles['zones']} зон 1 км задевает участки 8 и 2 км"))
     if population.allocated_total != int(residents.sum()) or zone_total != int(residents.sum()):
         raise ReportError("Нарушено сохранение населения между зданиями и зонами")
 
-    return {
+    report = {
         "report_version": 1,
         "package": {"package_id": config["package_id"], "package_version": config["package_version"], "kind": context["kind"], "created_at": context["created_at"], "metric_crs": config["metric_crs"]},
         "sources": [{key: source[key] for key in ("source_id", "owner", "license", "data_date", "url", "sha256")} for source in context["sources"]],
@@ -234,6 +240,9 @@ def build_report(context):
         ],
         "manual_sample": {"status": "не проверено вручную", "items": _manual_sample(context)},
     }
+    if tiles is not None:
+        report["map"] = tiles
+    return report
 
 
 def write_markdown(path, report):
@@ -243,7 +252,9 @@ def write_markdown(path, report):
     lines += [f"| {c['check']} | {c['status']} | {c['detail']} |" for c in report["checks"]]
     lines += ["", "## Источники", "", "| ID | Владелец | Лицензия | Дата данных |", "| --- | --- | --- | --- |"]
     lines += [f"| {s['source_id']} | {s['owner']} | {s['license']} | {s['data_date'] or 'не указана'} |" for s in report["sources"]]
-    for section in ("boundary", "buildings", "population", "roads", "reachability", "transit", "facilities", "zones"):
+    for section in ("boundary", "buildings", "population", "roads", "reachability", "transit", "facilities", "zones", "map"):
+        if section not in report:
+            continue
         lines += ["", f"## {section}", "", "```json"]
         lines.append(json.dumps(report[section], ensure_ascii=False, indent=2))
         lines.append("```")

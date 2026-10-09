@@ -143,4 +143,56 @@ def validate_manifest(path: Path, *, check_files: bool = True) -> dict:
                 raise ManifestError(f"{asset['asset_id']}: SHA256 не совпадает с паспортом")
         except OSError as error:
             raise ManifestError(f"{asset['asset_id']}: ошибка чтения файла: {error}") from error
+        if asset["role"] == "map":
+            validate_map_index(target, manifest, asset["asset_id"])
     return manifest
+
+
+MAP_INDEX_MAX_BYTES = 8 << 20   # как MapIndex.MAX_INDEX_BYTES в игре
+
+
+def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
+    """Проверить индекс участков карты: формат, пакет и каждый участок (путь внутри каталога карты,
+    размер и SHA256). Хеш индекса записан в паспорте, хеши участков — в индексе. Возвращает число участков."""
+    from .maptiles import FORMAT_VERSION, INDEX_FORMAT, LEVEL_TILE_M
+
+    try:
+        size = path.stat().st_size
+        if size > MAP_INDEX_MAX_BYTES:
+            raise ManifestError(f"{asset_id}: индекс карты {size} байт, предел {MAP_INDEX_MAX_BYTES}")
+        index = parse_json_bytes(path.read_bytes(), path)
+    except OSError as error:
+        raise ManifestError(f"{asset_id}: ошибка чтения индекса карты: {error}") from error
+    if not isinstance(index, dict) or index.get("format") != INDEX_FORMAT or type(index.get("format_version")) is not int:
+        raise ManifestError(f"{asset_id}: не индекс участков карты {INDEX_FORMAT}")
+    if index["format_version"] != FORMAT_VERSION:
+        raise ManifestError(f"{asset_id}: версия индекса карты {index['format_version']}, поддерживается {FORMAT_VERSION}")
+    for key in ("package_id", "package_version"):
+        if index.get(key) != manifest[key]:
+            raise ManifestError(f"{asset_id}: {key} индекса карты {index.get(key)!r} не совпадает с паспортом {manifest[key]!r}")
+    tiles = index.get("tiles")
+    if not isinstance(tiles, list) or not tiles:
+        raise ManifestError(f"{asset_id}: в индексе карты нет участков")
+    seen_paths, seen_tiles = set(), set()
+    for tile in tiles:
+        if not isinstance(tile, dict) or not isinstance(tile.get("path"), str) or tile.get("level") not in LEVEL_TILE_M \
+                or type(tile.get("level")) is not int or type(tile.get("size_bytes")) is not int \
+                or not isinstance(tile.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", tile["sha256"]) \
+                or not isinstance(tile.get("tile"), list) or len(tile["tile"]) != 2 or any(type(v) is not int for v in tile["tile"]):
+            raise ManifestError(f"{asset_id}: некорректная запись участка {str(tile)[:200]}")
+        key = (tile["level"], *tile["tile"])
+        if tile["path"] in seen_paths or key in seen_tiles:
+            raise ManifestError(f"{asset_id}: участок {tile['path']} указан дважды")
+        seen_paths.add(tile["path"])
+        seen_tiles.add(key)
+        target = _asset_path(path.parent, tile["path"])
+        try:
+            if not target.is_file():
+                raise ManifestError(f"{asset_id}: участок отсутствует: {tile['path']}")
+            if target.stat().st_size != tile["size_bytes"]:
+                raise ManifestError(f"{asset_id}: размер участка {tile['path']} не совпадает с индексом")
+            if sha256_file(target) != tile["sha256"]:
+                raise ManifestError(f"{asset_id}: SHA256 участка {tile['path']} не совпадает с индексом")
+        except OSError as error:
+            raise ManifestError(f"{asset_id}: ошибка чтения участка {tile['path']}: {error}") from error
+    return len(tiles)

@@ -446,21 +446,63 @@ def region_labels(sources: LabelSources, stations, region, moscow) -> Labels:
     return Labels.from_rows(rows)
 
 
-def tile_labels(level, box, roads, road_names, sources: LabelSources, region=None) -> Labels:
+class NamedLines:
+    """Линии, сгруппированные по названию, с пространственным индексом.
+
+    groups: название → (коды классов, метрические линии). Участок спрашивает только названия,
+    чьи линии его задевают, а не перебирает все улицы региона.
+    """
+
+    def __init__(self, groups):
+        self.groups = groups
+        names, geometry = [], []
+        for name in sorted(groups):
+            for line in groups[name][1]:
+                names.append(name)
+                geometry.append(line)
+        self.names = names
+        self.tree = shapely.STRtree(np.array(geometry, dtype=object)) if geometry else None
+
+    def names_in(self, box=None):
+        """Названия по алфавиту: все или только с линией, пересекающей прямоугольник."""
+        if box is None:
+            return sorted(self.groups)
+        if self.tree is None:
+            return []
+        hits = self.tree.query(shapely.box(*box), predicate="intersects")
+        return sorted({self.names[i] for i in hits})
+
+
+def street_groups(roads, road_names, level) -> NamedLines:
+    """Названные улицы классов уровня 1 или 2."""
+    allowed = {mt.LINE_CLASSES.index(name) for name in STREET_LEVEL_CLASSES[level]}
+    groups = {}
+    for code, name, geometry in zip(roads.classes, road_names, roads.geometry):
+        if name and int(code) in allowed:
+            groups.setdefault(name, []).append((int(code), geometry))
+    return NamedLines({name: (np.array([code for code, _ in items]), np.array([g for _, g in items], dtype=object))
+                       for name, items in groups.items()})
+
+
+def river_groups(sources: LabelSources) -> NamedLines:
+    return NamedLines({name: (np.zeros(len(lines), np.int64), np.array(lines, dtype=object))
+                       for name, lines in sources.rivers.items()})
+
+
+def tile_labels(level, box, roads, road_names, sources: LabelSources, region=None, streets=None, rivers=None) -> Labels:
     """Подписи участка уровня 1 или 2: улицы, а в участках 2 км ещё и реки.
 
     roads — уже обрезанные по региону дороги; реки обрезаются по region здесь, чтобы длина
     прямого участка под текстом считалась по той же геометрии, что видна на карте.
+    streets и rivers — готовые группы (street_groups, river_groups) для сборки многих участков.
     """
-    labels = street_labels(roads, road_names, level, box)
+    labels = street_labels(roads, road_names, level, box, streets)
     if level < 2:
         return labels
-    query = shapely.box(*box)
+    rivers = rivers if rivers is not None else river_groups(sources)
     rows = []
-    for name, lines in sorted(sources.rivers.items()):
-        lines = np.array(lines, dtype=object)
-        if not shapely.intersects(lines, query).any():
-            continue
+    for name in rivers.names_in(box):
+        lines = rivers.groups[name][1]
         if region is not None:
             lines = shapely.intersection(lines, region)
         lines = [g for g in shapely.clip_by_rect(lines, *box) if not g.is_empty]   # как геометрия участка
@@ -477,22 +519,14 @@ def _rows(labels: Labels):
             for (x, y), a, s, c, w, t in zip(labels.xy, labels.angle, labels.span, labels.cls, labels.weight, labels.text)]
 
 
-def street_labels(roads, road_names, level, box=None) -> Labels:
-    """Подписи улиц уровня 1 или 2. roads — слой дорог пакета; box — ограничить метрическим прямоугольником."""
-    allowed = {mt.LINE_CLASSES.index(name) for name in STREET_LEVEL_CLASSES[level]}
-    groups = {}
-    for code, name, geometry in zip(roads.classes, road_names, roads.geometry):
-        if name and int(code) in allowed:
-            groups.setdefault(name, []).append((int(code), geometry))
-    query = None if box is None else shapely.box(*box)
+def street_labels(roads, road_names, level, box=None, groups=None) -> Labels:
+    """Подписи улиц уровня 1 или 2. roads — слой дорог пакета; box — ограничить метрическим прямоугольником;
+    groups — готовые street_groups(roads, road_names, level)."""
+    groups = groups if groups is not None else street_groups(roads, road_names, level)
     rows = []
-    for name in sorted(groups):
-        items = groups[name]
-        codes = np.array([code for code, _ in items])
-        lines = np.array([g for _, g in items], dtype=object)
-        if query is not None:
-            if not shapely.intersects(lines, query).any():
-                continue
+    for name in groups.names_in(box):
+        codes, lines = groups.groups[name]
+        if box is not None:
             # Под текстом — только видимая в участке часть линии: участок обрезан по своему квадрату.
             lines = shapely.clip_by_rect(lines, *box)
             keep = ~shapely.is_empty(lines)
