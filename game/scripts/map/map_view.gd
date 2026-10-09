@@ -80,8 +80,11 @@ func load_map(map_dir: String) -> String:
 		view.setup(tile, style)
 		# Заявленный охват должен покрывать геометрию: по нему ограничивается камера.
 		var geometry: Variant = view.geometry_bounds()
-		if geometry != null and not _encloses(tile.bbox.grow(BBOX_TOLERANCE_M), geometry):
-			errors.append("%s: охват %s не покрывает геометрию %s" % [entry.path, tile.bbox, geometry])
+		# Охват должен совпадать с геометрией: и не меньше (камера не дойдёт до края), и не больше
+		# (обзор отдалится на пустоту) — сравниваем четыре края с допуском.
+		if geometry != null and not (_encloses(tile.bbox.grow(BBOX_TOLERANCE_M), geometry)
+				and _encloses((geometry as Rect2).grow(BBOX_TOLERANCE_M), tile.bbox)):
+			errors.append("%s: охват %s не совпадает с геометрией %s" % [entry.path, tile.bbox, geometry])
 			view.free()
 			continue
 		if tile.level > 0:

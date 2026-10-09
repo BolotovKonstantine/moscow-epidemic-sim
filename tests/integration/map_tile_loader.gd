@@ -23,6 +23,7 @@ func _initialize() -> void:
 	_test_views(fixture)
 	_test_overview_failure(fixture)
 	_test_undersized_bbox(fixture)
+	_test_oversized_bbox(fixture)
 	_test_real_export(root.path_join(REAL_EXPORT).simplify_path())
 	for name in DirAccess.get_files_at(_scratch):
 		DirAccess.remove_absolute(_scratch.path_join(name))
@@ -344,8 +345,43 @@ func _test_undersized_bbox(fixture: String) -> void:
 	root.add_child(map)
 	var problem := map.load_map(dir)
 	# Отклоняет либо сверка с геометрией, либо раньше — проверка подписей обзора по тому же охвату.
-	check(("не покрывает геометрию" in problem or "вне своего участка" in problem) and map.tile_views().is_empty(),
+	check(("не совпадает с геометрией" in problem or "вне своего участка" in problem) and map.tile_views().is_empty(),
 		"заниженный охват отклоняется: %s" % problem)
+	map.free()
+	DirAccess.remove_absolute(dir.path_join("z0/0_0.mtile"))
+	DirAccess.remove_absolute(dir.path_join("index.json"))
+	DirAccess.remove_absolute(dir.path_join("z0"))
+	DirAccess.remove_absolute(dir)
+
+
+func _test_oversized_bbox(fixture: String) -> void:
+	# Индекс и заголовок согласно заявляют охват заметно больше геометрии: участок отклоняется.
+	var dir := _scratch.path_join("big_bbox")
+	DirAccess.make_dir_recursive_absolute(dir.path_join("z0"))
+	var source := FileAccess.get_file_as_bytes(fixture.path_join("z0/0_0.mtile"))
+	var head := source.slice(16, 16 + source.decode_u32(12)).get_string_from_utf8()
+	var at := head.find("\"bbox\":[")
+	var from := head.substr(at, head.find("]", at) - at + 1)
+	var to := "\"bbox\":[0,0,9000,9000]"
+	var patched := head.replace(from, to + " ".repeat(from.length() - to.length())).to_utf8_buffer()
+	var bytes := source.duplicate()
+	for i in patched.size():
+		bytes[16 + i] = patched[i]
+	var file := FileAccess.open(dir.path_join("z0/0_0.mtile"), FileAccess.WRITE)
+	file.store_buffer(bytes)
+	file.close()
+	var doc: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(fixture.path_join("index.json")))
+	doc.tiles = [doc.tiles[0]]
+	doc.tiles[0].bbox = [0, 0, 9000, 9000]
+	doc.tiles[0].sha256 = _sha256(bytes)
+	doc.tiles[0].size_bytes = bytes.size()
+	file = FileAccess.open(dir.path_join("index.json"), FileAccess.WRITE)
+	file.store_string(JSON.stringify(doc))
+	file.close()
+	var map := MapView.new()
+	root.add_child(map)
+	var problem := map.load_map(dir)
+	check("не совпадает с геометрией" in problem and map.tile_views().is_empty(), "завышенный охват отклоняется: %s" % problem)
 	map.free()
 	DirAccess.remove_absolute(dir.path_join("z0/0_0.mtile"))
 	DirAccess.remove_absolute(dir.path_join("index.json"))

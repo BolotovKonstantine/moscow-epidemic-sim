@@ -152,6 +152,14 @@ class LabelGeometryTests(unittest.TestCase):
         finally:
             mt.MAX_LABELS = original
 
+    def test_street_span_stops_at_tile_edge(self):
+        road = Layer(["a"], np.array([mt.LINE_CLASSES.index("residential")]),
+                     np.array([shapely.LineString([(0, 50), (4000, 50)])], dtype=object))
+        labels = ml.street_labels(road, ["Длинная улица"], 2, box=(0, 0, 2000, 100))
+        self.assertTrue(len(labels))
+        for (x, _), span in zip(labels.xy, labels.span):
+            self.assertLessEqual(x + span / 2, 2000 + 1e-6)   # текст не за краем участка
+
     def test_okrug_name_is_shortened(self):
         self.assertEqual(ml.okrug_name("Центральный административный округ"), "Центральный АО")
 

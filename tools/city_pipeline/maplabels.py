@@ -447,7 +447,8 @@ def tile_labels(level, box, roads, road_names, sources: LabelSources, region=Non
         if not shapely.intersects(lines, query).any():
             continue
         if region is not None:
-            lines = [g for g in shapely.intersection(lines, region) if not g.is_empty]
+            lines = shapely.intersection(lines, region)
+        lines = [g for g in shapely.clip_by_rect(lines, *box) if not g.is_empty]   # как геометрия участка
         for part in merged_lines(lines):
             for x, y, angle, span in line_anchors(part, RIVER_TILE_SPACING_M):
                 rows.append((x, y, angle, span, "river", part.length, name))
@@ -474,8 +475,13 @@ def street_labels(roads, road_names, level, box=None) -> Labels:
         items = groups[name]
         codes = np.array([code for code, _ in items])
         lines = np.array([g for _, g in items], dtype=object)
-        if query is not None and not shapely.intersects(lines, query).any():
-            continue
+        if query is not None:
+            if not shapely.intersects(lines, query).any():
+                continue
+            # Под текстом — только видимая в участке часть линии: участок обрезан по своему квадрату.
+            lines = shapely.clip_by_rect(lines, *box)
+            keep = ~shapely.is_empty(lines)
+            lines, codes = lines[keep], codes[keep]
         for part in merged_lines(lines):
             # Класс — по рёбрам этой связной части: одноимённые улицы в разных местах независимы.
             own = codes[shapely.covers(part, lines)] if len(lines) else codes
