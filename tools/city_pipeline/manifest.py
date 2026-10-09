@@ -204,13 +204,51 @@ def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
                 raise ManifestError(f"{asset_id}: участок отсутствует: {tile['path']}")
             if target.stat().st_size != tile["size_bytes"]:
                 raise ManifestError(f"{asset_id}: размер участка {tile['path']} не совпадает с индексом")
-            if sha256_file(target) != tile["sha256"]:
+            data = target.read_bytes()
+            if hashlib.sha256(data).hexdigest() != tile["sha256"]:
                 raise ManifestError(f"{asset_id}: SHA256 участка {tile['path']} не совпадает с индексом")
+            _check_map_tile(data, tile, index, asset_id)
         except OSError as error:
             raise ManifestError(f"{asset_id}: ошибка чтения участка {tile['path']}: {error}") from error
     if [key for key in seen_tiles if key[0] == 0] != [(0, 0, 0)]:
         raise ManifestError(f"{asset_id}: нужен ровно один обзор региона — участок уровня 0 с номером (0, 0)")
     return len(tiles)
+
+
+MAP_TOLERANCE_M = 0.01   # как MapTile.ORIGIN_TOLERANCE_M: угол и bbox участка против индекса
+
+
+def _check_map_tile(data: bytes, entry: dict, index: dict, asset_id: str):
+    """Разобрать участок и сверить заголовок с записью индекса: магия и версия, распаковка и размеры
+    разделов, пакет, уровень, номер, угол по сетке, bbox, классы и атрибуция. Смысл массивов
+    (индексы вершин, коды классов, подписи) по-прежнему проверяет загрузчик игры при чтении."""
+    import struct
+    import zlib
+
+    from .maptiles import LEVEL_TILE_M, MapTileError, decode_tile
+
+    name = f"{asset_id}: участок {entry['path']}"
+    try:
+        header, _ = decode_tile(data)
+    except (MapTileError, ValueError, KeyError, TypeError, IndexError, struct.error, zlib.error) as error:
+        raise ManifestError(f"{name} не читается: {error}") from error
+    expected = {"package_id": index["package_id"], "package_version": index["package_version"], "level": entry["level"],
+                "tile": entry["tile"], "classes": index["classes"], "attribution": index["attribution"]}
+    for key, value in expected.items():
+        if header.get(key) != value:
+            raise ManifestError(f"{name}: {key} в заголовке {str(header.get(key))[:100]!r}, в индексе {str(value)[:100]!r}")
+    size = LEVEL_TILE_M[entry["level"]]
+    origin = header.get("origin")
+    grid = [0.0, 0.0] if size is None else [entry["tile"][0] * size, entry["tile"][1] * size]
+    if not _map_box((origin or []) * 2) or any(abs(o - g) > MAP_TOLERANCE_M for o, g in zip(origin, grid)):
+        raise ManifestError(f"{name}: угол {origin} не совпадает с сеткой {grid}")
+    bbox = header.get("bbox")
+    if not _map_box(bbox):
+        raise ManifestError(f"{name}: некорректный bbox в заголовке")
+    shifted = None if bbox is None else [bbox[0] + origin[0], bbox[1] + origin[1], bbox[2] + origin[0], bbox[3] + origin[1]]
+    if (shifted is None) != (entry.get("bbox") is None) or (
+            shifted is not None and any(abs(a - b) > MAP_TOLERANCE_M for a, b in zip(shifted, entry["bbox"]))):
+        raise ManifestError(f"{name}: bbox участка не совпадает с индексом")
 
 
 def _map_box(value):

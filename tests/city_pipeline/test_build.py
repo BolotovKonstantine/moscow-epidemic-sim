@@ -171,7 +171,7 @@ class BuildTests(unittest.TestCase):
             ("index-empty", lambda doc: doc["tiles"].clear(), "нет участков"),
             # Те же требования, что у MapIndex в игре.
             ("index-no-overview", lambda doc: doc["tiles"].remove(overview(doc)), "ровно один обзор"),
-            ("index-moved-overview", lambda doc: overview(doc).update(tile=[1, 0]), "ровно один обзор"),
+            ("index-moved-overview", lambda doc: overview(doc).update(tile=[1, 0]), "tile в заголовке|ровно один обзор"),
             ("index-bad-bbox", lambda doc: overview(doc).update(bbox=[10, 0, 0, 10]), "bbox участка"),
             ("index-far-bbox", lambda doc: overview(doc).update(bbox=[0, 0, 2e7, 10]), "bbox участка"),
             ("index-far-tile", lambda doc: doc["tiles"][-1].update(tile=[(1 << 20) + 1, 0]), "некорректная запись участка"),
@@ -184,6 +184,30 @@ class BuildTests(unittest.TestCase):
                 package = copy(name)
                 edited = json.loads((package / "map" / "index.json").read_text(encoding="utf-8"))
                 change(edited)
+                (package / "map" / "index.json").write_text(json.dumps(edited), encoding="utf-8")
+                reseal(package)
+                with self.assertRaisesRegex(ManifestError, message):
+                    validate_manifest(package / "manifest.json")
+        # Участок с верными размером и хешем в индексе, но чужим заголовком или битым содержимым.
+        for name, mutate, message in (
+            ("tile-other-level", lambda header, entry: header.update(level=1), "level в заголовке"),
+            ("tile-moved-bbox", lambda header, entry: header.update(bbox=[0, 0, 1, 1]), "bbox участка не совпадает"),
+            ("tile-garbage", None, "не читается"),
+        ):
+            with self.subTest(name=name):
+                package = copy(name)
+                edited = json.loads((package / "map" / "index.json").read_text(encoding="utf-8"))
+                entry = next(t for t in edited["tiles"] if t["level"] == 2)
+                target = package / "map" / entry["path"]
+                if mutate is None:
+                    data = b"MESMTILE" + b"\xff" * 32
+                else:
+                    header, sections = mt.decode_tile(target.read_bytes())
+                    mutate(header, entry)
+                    data = mt.encode_tile({k: v for k, v in header.items() if k not in ("format", "format_version", "sections")},
+                                          [(item["name"], item["dtype"], sections[item["name"]]) for item in header["sections"]])
+                target.write_bytes(data)
+                entry.update(size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
                 (package / "map" / "index.json").write_text(json.dumps(edited), encoding="utf-8")
                 reseal(package)
                 with self.assertRaisesRegex(ManifestError, message):
