@@ -198,6 +198,9 @@ class BuildTests(unittest.TestCase):
             ("tile-bool-level", lambda header, entry: header.update(level=True) if entry["level"] == 1 else header.update(tile=[True, 0]),
              "должны быть целыми"),
             ("tile-overview-no-bbox", lambda header, entry: (header.update(bbox=None), entry.update(bbox=None)), "у обзора нужен bbox"),
+            ("tile-overview-shifted", lambda header, entry: (header.update(origin=[0.005, 0.0]),
+                                                             entry.update(bbox=[b + (0.005 if i % 2 == 0 else 0) for i, b in enumerate(entry["bbox"])])),
+             "угол обзора"),
             ("tile-garbage", None, "не читается"),
         ):
             with self.subTest(name=name):

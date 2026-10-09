@@ -269,6 +269,7 @@ class FormatTests(unittest.TestCase):
             (lambda doc: doc["sections"][0].update(offset=doc["sections"][0]["offset"] + 2), "вне данных"),
             (lambda doc: doc["sections"][1].update(raw_size=mt.MAX_JSON_SECTION_BYTES + 1), "вне предела"),
             (lambda doc: doc.update(counts=float("nan")), "недопустимое значение"),
+            (lambda doc: doc.update(counts=1e300 * 1e300), "недопустимое значение"),
             (lambda doc: doc["sections"][1].update(name="extra.json"), "неизвестное имя"),
             (lambda doc: doc["sections"][0].update(dtype="json"), "неизвестное имя или тип"),
             (lambda doc: doc["sections"][0].pop("count"), "count"),
@@ -288,6 +289,14 @@ class FormatTests(unittest.TestCase):
         doubled = duplicate[:12] + len(text.encode()).to_bytes(4, "little") + text.encode() + duplicate[16 + head_len:]
         with self.assertRaisesRegex(mt.MapTileError, "повторяющийся ключ"):
             mt.decode_tile(doubled)
+        overflow = self.rebuild(data, lambda doc: doc.update(counts="XXXXXX"))
+        overflow = overflow.replace(b'"XXXXXX"', b"1e400   ", 1)   # та же длина: смещения разделов не меняются
+        with self.assertRaisesRegex(mt.MapTileError, "недопустимое значение JSON 1e400"):
+            mt.decode_tile(overflow)
+        empty = mt.encode_tile({"x": 1}, [])
+        past_end = empty[:12] + (len(empty) - 16 + 8).to_bytes(4, "little") + empty[16:]
+        with self.assertRaisesRegex(mt.MapTileError, "за конец файла"):
+            mt.decode_tile(past_end)
         array_root = data[:12] + (4).to_bytes(4, "little") + b"[1] "   # заголовок — массив, не объект
         with self.assertRaisesRegex(mt.MapTileError, "не объект"):
             mt.decode_tile(array_root)

@@ -117,9 +117,17 @@ def _unique_keys(pairs):
     return result
 
 
+def _finite_float(text):
+    value = float(text)
+    if not np.isfinite(value):
+        raise MapTileError(f"недопустимое значение JSON {text}")   # 1e400 стало бы бесконечностью
+    return value
+
+
 def strict_json(raw: bytes):
-    """JSON участка без NaN, Infinity (их не принимает и парсер Godot) и повторяющихся ключей (как паспорт)."""
-    return json.loads(raw.decode("utf-8"), parse_constant=_reject_constant, object_pairs_hook=_unique_keys)
+    """JSON участка без NaN, Infinity, переполненных чисел (их не принимает и парсер Godot) и повторяющихся ключей (как паспорт)."""
+    return json.loads(raw.decode("utf-8"), parse_constant=_reject_constant, parse_float=_finite_float,
+                      object_pairs_hook=_unique_keys)
 
 
 class MapTileError(ValueError):
@@ -427,6 +435,8 @@ def decode_tile(data: bytes):
         raise MapTileError(f"неподдерживаемая версия формата участка {version}")
     if head_len > MAX_HEADER_BYTES:
         raise MapTileError(f"заголовок {head_len} байт, предел формата {MAX_HEADER_BYTES}")
+    if 16 + head_len > len(data):
+        raise MapTileError(f"заголовок {head_len} байт выходит за конец файла ({len(data)} байт)")
     header = strict_json(data[16:16 + head_len])
     if not isinstance(header, dict) or not isinstance(header.get("sections"), list) \
             or not all(isinstance(item, dict) for item in header["sections"]):
