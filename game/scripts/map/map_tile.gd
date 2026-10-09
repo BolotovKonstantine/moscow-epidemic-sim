@@ -9,6 +9,7 @@ const MAGIC := "MESMTILE"
 const FORMAT := "mesim-map-tile"
 const FORMAT_VERSION := 1
 const LEVEL_TILE_M := {1: 8000.0, 2: 2000.0}   # размеры участков уровней формата 1
+const MAX_JSON_SECTION_BYTES := 16 << 20   # подписи обзора центра — ~70 КБ, карточки участка 2 км — ~130 КБ
 const MAX_DECODED_BYTES := 512 << 20   # всего данных участка после распаковки
 const MAX_COORD_M := 1.0e7   # |координата| плоскости карты: регион — сотни км; 1e7 точно помещается во float32
 const MAX_SAFE_INTEGER := 9007199254740992.0   # 2^53: целые JSON без потери точности и переполнения int
@@ -210,6 +211,10 @@ func _read_section(bytes: PackedByteArray, data_start: int, item: Variant) -> St
 		return "раздел %s выходит за пределы файла (смещение %d, размер %d из %d)" % [name, offset, size, bytes.size()]
 	if raw_size > MAX_SECTION_BYTES:
 		return "раздел %s: %d байт после распаковки, больше предела %d" % [name, raw_size, MAX_SECTION_BYTES]
+	# JSON разбирается в объекты Godot целиком и занимает в памяти в разы больше исходного текста:
+	# ограничиваем его отдельно и до распаковки, не полагаясь на проверки числа подписей после разбора.
+	if dtype == "json" and raw_size > MAX_JSON_SECTION_BYTES:
+		return "раздел %s: JSON %d байт, больше предела %d" % [name, raw_size, MAX_JSON_SECTION_BYTES]
 	_decoded_bytes += raw_size
 	if _decoded_bytes > MAX_DECODED_BYTES:
 		return "данные участка после распаковки больше предела %d байт" % MAX_DECODED_BYTES

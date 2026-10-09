@@ -157,6 +157,8 @@ func _test_rejections(fixture: String) -> void:
 	var attrs := _section_descriptor(source, "pick.attrs")
 	_expect_header_patch(source, "\"raw_size\":%d" % attrs.raw_size, "\"raw_size\":1e9",
 		"больше предела", "огромный raw_size отклоняется до распаковки")
+	_expect_header_patch(source, "\"raw_size\":%d" % attrs.raw_size, "\"raw_size\":2e7",
+		"JSON", "JSON-раздел больше своего предела отклоняется до распаковки")
 	var counts_at := header_text.find("\"counts\":{")
 	var counts_text := header_text.substr(counts_at, header_text.find("}", counts_at) - counts_at + 1)
 	_expect_header_patch(source, counts_text, "\"counts\":0", "counts должен быть словарём", "counts не словарь отклоняется")
