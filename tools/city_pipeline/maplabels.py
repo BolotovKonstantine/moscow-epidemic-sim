@@ -37,6 +37,7 @@ RIVER_MAJOR_MIN_M = 20_000.0     # реки длиннее подписываю�
 WATER_MIN_M2 = 300_000.0         # водоёмы от 30 га
 STATION_DEDUP_M = 400.0          # станции с одним названием ближе этого — одна подпись
 RIVER_SPACING_M = 5_000.0
+RIVER_GAP_M = 200.0              # части реки ближе этого — одна река (разрывы у тоннелей)
 RIVER_TILE_SPACING_M = 600.0     # в участках 2 км река подписывается чаще, чем на обзоре
 STREET_SPACING_M = {1: 2_500.0, 2: 350.0}
 STREET_MAJOR = frozenset({"secondary", "primary", "trunk", "motorway"})
@@ -146,6 +147,26 @@ def _straight_at(line, length, s):
             break
         best = (upright(-math.atan2(y1 - y0, x1 - x0)), 2 * half)
     return best
+
+
+def _connected(parts, gap):
+    """Группы линий, связанных цепочкой расстояний не больше gap (в порядке первой части)."""
+    parent = list(range(len(parts)))
+
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    tree = shapely.STRtree(parts)
+    for i, part in enumerate(parts):
+        for j in tree.query(part, predicate="dwithin", distance=gap):
+            parent[root(int(j))] = root(i)
+    groups = {}
+    for i in range(len(parts)):
+        groups.setdefault(root(i), []).append(parts[i])
+    return [groups[key] for key in sorted(groups, key=lambda k: min(parts.index(p) for p in groups[k]))]
 
 
 def merged_lines(geometries):
@@ -339,11 +360,13 @@ def region_labels(sources: LabelSources, stations, region, moscow) -> Labels:
         parts = merged_lines(clipped)
         if not parts:
             continue
-        total = sum(p.length for p in parts)
-        if total >= RIVER_MAJOR_MIN_M:
-            longest = max(parts, key=lambda p: p.length)
-            mid = longest.interpolate(0.5, normalized=True)
-            rows.append((mid.x, mid.y, 0.0, 0.0, "river_major", total, name))
+        # Одноимённые реки в разных местах — разные реки: порог и подпись обзора — по каждой системе
+        # связанных частей (разрывы у тоннелей и стыков до RIVER_GAP_M считаются одной рекой).
+        for system in _connected(parts, RIVER_GAP_M):
+            total = sum(p.length for p in system)
+            if total >= RIVER_MAJOR_MIN_M:
+                mid = max(system, key=lambda p: p.length).interpolate(0.5, normalized=True)
+                rows.append((mid.x, mid.y, 0.0, 0.0, "river_major", total, name))
         for part in parts:
             for x, y, angle, span in line_anchors(part, RIVER_SPACING_M):
                 rows.append((x, y, angle, span, "river", part.length, name))

@@ -14,6 +14,8 @@ const MAX_COORD_M := 1.0e7   # |координата| плоскости кар�
 const MAX_SAFE_INTEGER := 9007199254740992.0   # 2^53: целые JSON без потери точности и переполнения int
 const MAX_TILE_INDEX := 1 << 20   # |номер участка|: сетка региона — десятки участков; точно влезает в Vector2i
 const ORIGIN_TOLERANCE_M := 0.01
+const MAX_LABELS := 100000       # подписей в участке; обзор центра — ~3 тыс.
+const MAX_LABEL_CHARS := 200     # длиннейшие названия OSM — около сотни символов
 const ANGLE_TOLERANCE := 1.0e-6   # π/2 во float32 чуть отличается от float64
 const LABEL_TOLERANCE_M := 1.0   # допуск координат участка: считаются в float64, хранятся во float32
 const MAX_LEVEL := 2   # уровни 0–2 формата 1: обзор, участки 8 и 2 км
@@ -263,6 +265,8 @@ func _check_layers() -> String:
 		if layer == "label" and not (sections["label.text"] is Array and sections["label.text"].size() == vertices
 				and sections["label.text"].all(func(t): return t is String and not t.strip_edges().is_empty())):
 			return "раздел label.text: нужен список непустых строк по одной на подпись label.xy"
+		if layer == "label" and (vertices > MAX_LABELS or sections["label.text"].any(func(t): return t.length() > MAX_LABEL_CHARS)):
+			return "подписей %d (предел %d) или подпись длиннее %d символов" % [vertices, MAX_LABELS, MAX_LABEL_CHARS]
 		if layer == "label":
 			var problem := _check_label_anchors()
 			if not problem.is_empty():

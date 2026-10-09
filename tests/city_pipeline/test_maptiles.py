@@ -108,6 +108,19 @@ class LabelGeometryTests(unittest.TestCase):
         kinds = {round(float(y)): mt.LABEL_CLASSES[int(c)] for (_, y), c in zip(labels.xy, labels.cls)}
         self.assertEqual(kinds, {0: "street_major", 5000: "street"})
 
+    def test_same_name_rivers_are_separate(self):
+        def river(y, length):
+            return shapely.LineString([(0, y), (length, y)])
+        sources = ml.LabelSources(rivers={
+            "Речка": [river(0, 12_000), river(50_000, 12_000)],          # две разные по 12 км — не крупная
+            "Большая": [river(100_000, 25_000), river(150_000, 25_000)],  # две разные по 25 км — две подписи
+            "Длинная": [river(200_000, 15_000), shapely.LineString([(15_100, 200_000), (30_000, 200_000)])],  # разрыв 100 м
+        })
+        region = shapely.box(-1, -1, 300_000, 300_000)
+        labels = ml.region_labels(sources, [], region, region)
+        major = sorted(t for t, c in zip(labels.text, labels.cls) if mt.LABEL_CLASSES[int(c)] == "river_major")
+        self.assertEqual(major, ["Большая", "Большая", "Длинная"])
+
     def test_okrug_name_is_shortened(self):
         self.assertEqual(ml.okrug_name("Центральный административный округ"), "Центральный АО")
 
