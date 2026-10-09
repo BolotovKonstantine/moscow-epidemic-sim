@@ -149,6 +149,8 @@ def validate_manifest(path: Path, *, check_files: bool = True) -> dict:
 
 
 MAP_INDEX_MAX_BYTES = 8 << 20   # как MapIndex.MAX_INDEX_BYTES в игре
+MAP_MAX_TILE_INDEX = 1 << 20    # как MapTile.MAX_TILE_INDEX: |номер участка|
+MAP_MAX_COORD_M = 1.0e7         # как MapTile.MAX_COORD_M: |координата| плоскости карты
 
 
 def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
@@ -185,7 +187,8 @@ def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
         if not isinstance(tile, dict) or not isinstance(tile.get("path"), str) or tile.get("level") not in LEVEL_TILE_M \
                 or type(tile.get("level")) is not int or type(tile.get("size_bytes")) is not int \
                 or not isinstance(tile.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", tile["sha256"]) \
-                or not isinstance(tile.get("tile"), list) or len(tile["tile"]) != 2 or any(type(v) is not int for v in tile["tile"]):
+                or not isinstance(tile.get("tile"), list) or len(tile["tile"]) != 2 \
+                or any(type(v) is not int or abs(v) > MAP_MAX_TILE_INDEX for v in tile["tile"]):
             raise ManifestError(f"{asset_id}: некорректная запись участка {str(tile)[:200]}")
         if not _map_box(tile.get("bbox")):
             raise ManifestError(f"{asset_id}: bbox участка {tile['path']} — упорядоченные minx, miny, maxx, maxy или null")
@@ -210,9 +213,9 @@ def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
 
 
 def _map_box(value):
-    """bbox записи индекса: null или четыре числа minx <= maxx, miny <= maxy."""
+    """bbox записи индекса: null или четыре числа не больше MAP_MAX_COORD_M по модулю, minx <= maxx, miny <= maxy."""
     if value is None:
         return True
-    if not isinstance(value, list) or len(value) != 4 or any(type(v) not in (int, float) for v in value):
+    if not isinstance(value, list) or len(value) != 4 or any(type(v) not in (int, float) or abs(v) > MAP_MAX_COORD_M for v in value):
         return False
     return value[0] <= value[2] and value[1] <= value[3]

@@ -172,6 +172,8 @@ class BuildTests(unittest.TestCase):
             ("index-no-overview", lambda doc: doc["tiles"].remove(overview(doc)), "ровно один обзор"),
             ("index-moved-overview", lambda doc: overview(doc).update(tile=[1, 0]), "ровно один обзор"),
             ("index-bad-bbox", lambda doc: overview(doc).update(bbox=[10, 0, 0, 10]), "bbox участка"),
+            ("index-far-bbox", lambda doc: overview(doc).update(bbox=[0, 0, 2e7, 10]), "bbox участка"),
+            ("index-far-tile", lambda doc: doc["tiles"][-1].update(tile=[(1 << 20) + 1, 0]), "некорректная запись участка"),
             ("index-no-credit", lambda doc: doc.update(attribution=["кто-то"]), "attribution"),
             ("index-no-classes", lambda doc: doc.pop("classes"), "таблицы классов"),
         ):
