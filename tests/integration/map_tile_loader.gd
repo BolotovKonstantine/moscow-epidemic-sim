@@ -205,6 +205,10 @@ func _test_rejections(fixture: String) -> void:
 	var doc: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(fixture.path_join("index.json")))
 	doc.format_version = 2
 	_expect_index_error(doc, "версии 2", "индекс чужой версии отклоняется")
+	var huge_index := FileAccess.open(_scratch.path_join("index.json"), FileAccess.WRITE)
+	huge_index.store_buffer(_zeros(MapIndex.MAX_INDEX_BYTES + 1))
+	huge_index.close()
+	check("больше предела" in MapIndex.open(_scratch).error, "индекс больше предела отклоняется до разбора")
 	doc.format_version = 1.5
 	_expect_index_error(doc, "версии 1.5", "дробная версия формата отклоняется")
 	doc.format_version = 1
@@ -394,6 +398,12 @@ func _test_oversized_bbox(fixture: String) -> void:
 	DirAccess.remove_absolute(dir.path_join("index.json"))
 	DirAccess.remove_absolute(dir.path_join("z0"))
 	DirAccess.remove_absolute(dir)
+
+
+func _zeros(size: int) -> PackedByteArray:
+	var bytes := PackedByteArray()
+	bytes.resize(size)
+	return bytes
 
 
 func _sha256(bytes: PackedByteArray) -> String:

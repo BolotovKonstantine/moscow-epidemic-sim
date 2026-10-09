@@ -6,7 +6,9 @@ extends RefCounted
 
 const FORMAT := "mesim-map-index"
 const FORMAT_VERSION := 1
-const MAX_INDEX_BYTES := 64 << 20   # индекс всего региона — десятки тысяч записей, единицы МБ
+# Индекс разбирается в объекты Godot целиком, в памяти в разы больше текста: предел невелик.
+# Весь регион — ~4 тыс. участков по ~400 байт, около 1,5 МБ.
+const MAX_INDEX_BYTES := 8 << 20
 const OSM_CREDIT := "© участники OpenStreetMap, ODbL"   # обязательная первая строка атрибуции (ODbL)
 
 var error := ""
