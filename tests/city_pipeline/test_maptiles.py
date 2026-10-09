@@ -86,6 +86,11 @@ class LabelGeometryTests(unittest.TestCase):
         self.assertEqual(len(anchors), 1)
         self.assertLessEqual(anchors[0][3], 120)
 
+    def test_short_straight_line_gets_an_anchor(self):
+        anchors = ml.line_anchors(shapely.LineString([(0, 0), (20, 0)]), 350)
+        self.assertEqual(len(anchors), 1)
+        self.assertAlmostEqual(anchors[0][3], 20, delta=0.5)   # вся линия под текстом
+
     def test_spacing_gives_several_anchors(self):
         self.assertEqual(len(ml.line_anchors(shapely.LineString([(0, 0), (3000, 0)]), 1000)), 3)
 

@@ -6,7 +6,7 @@ extends Node2D
 # показываются те, что попадают в масштаб своего класса и на экран, помещаются в прямой участок
 # линии и не пересекаются с уже поставленными. Не больше MapTheme.LABEL_MAX за кадр.
 
-const SCREEN_MARGIN_PX := 120.0
+const COARSE_MARGIN_PX := 3000.0   # не меньше полуширины самой длинной подписи (200 символов крупным шрифтом)
 const GRID_PX := 96.0
 const MARKER_GAP_PX := 6.0
 
@@ -101,7 +101,10 @@ func update_view(center: Vector2, mpp: float, level: int, view_size: Vector2) ->
 ## Раскладка подписей для текущего вида: [[индекс, точка экрана, ширина, маркер], ...] по приоритету.
 func layout() -> Array:
 	var placed := []
-	var bounds := Rect2(Vector2.ZERO, _view_size).grow(SCREEN_MARGIN_PX)
+	var view := Rect2(Vector2.ZERO, _view_size)
+	# Грубый отбор по точке с большим запасом, затем точный — по прямоугольнику подписи:
+	# длинная подпись видна частично, даже когда её точка далеко за краем.
+	var coarse := view.grow(COARSE_MARGIN_PX)
 	var grid := {}
 	for i in _order:
 		var style: Dictionary = _styles[_cls[i]]
@@ -111,7 +114,7 @@ func layout() -> Array:
 		elif _mpp < style.mpp[0] or _mpp > style.mpp[1]:
 			continue
 		var screen := (_pos[i] - _center) / _mpp + _view_size / 2.0
-		if not bounds.has_point(screen):
+		if not coarse.has_point(screen):
 			continue
 		var width := _text_width(i, style)
 		if _span[i] > 0.0 and width * _mpp > _span[i]:
@@ -121,6 +124,8 @@ func layout() -> Array:
 		var local := Rect2(Vector2(-MARKER_GAP_PX, -height / 2.0), Vector2(width + 2.0 * MARKER_GAP_PX, height)) \
 			if marker else Rect2(Vector2(-width / 2.0, -height / 2.0), Vector2(width, height))
 		var rect := _rotated_bounds(local, screen, _angle[i]).grow(MapTheme.LABEL_PADDING_PX)
+		if not rect.intersects(view):
+			continue
 		if _collides(rect, grid):
 			continue
 		_occupy(rect, grid)

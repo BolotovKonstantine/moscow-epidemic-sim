@@ -46,6 +46,8 @@ STREET_LEVEL_CLASSES = {
     1: frozenset({"tertiary"}) | STREET_MAJOR,
     2: frozenset({"pedestrian", "residential", "tertiary"}) | STREET_MAJOR,
 }
+SHORT_WINDOWS_M = (8.0, 4.0)   # запасные полуокна, если стандартное (15 м) не подошло
+MIN_HALF_WINDOW_M = 2.0
 STRAIGHT_WINDOWS_M = (15.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0)
 
 
@@ -155,6 +157,17 @@ def _straight_at(line, length, s):
         if chord.length == 0 or shapely.hausdorff_distance(piece, chord) > max(2.0, 0.08 * half):
             break
         best = (upright(-math.atan2(y1 - y0, x1 - x0)), 2 * half)
+    if best is None:
+        # Короткая линия или изгиб рядом: окна меньше стандартных, вплоть до всей короткой линии.
+        for half in SHORT_WINDOWS_M + (min(s, length - s),):
+            if half < MIN_HALF_WINDOW_M or s - half < 0 or s + half > length:
+                continue
+            piece = ops.substring(line, s - half, s + half)
+            (x0, y0), (x1, y1) = piece.coords[0], piece.coords[-1]
+            chord = shapely.LineString([(x0, y0), (x1, y1)])
+            if chord.length > 0 and shapely.hausdorff_distance(piece, chord) <= max(1.0, 0.08 * half):
+                if best is None or 2 * half > best[1]:
+                    best = (upright(-math.atan2(y1 - y0, x1 - x0)), 2 * half)
     return best
 
 
