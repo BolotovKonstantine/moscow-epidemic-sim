@@ -195,6 +195,8 @@ class BuildTests(unittest.TestCase):
             ("tile-moved-bbox", lambda header, entry: header.update(bbox=[0, 0, 1, 1]), "bbox участка не совпадает"),
             ("tile-wrong-size", lambda header, entry: header.update(tile_size_m=8000), "tile_size_m в заголовке"),
             ("tile-counts-list", lambda header, entry: header.update(counts=[]), "counts в заголовке"),
+            ("tile-bool-level", lambda header, entry: header.update(level=True) if entry["level"] == 1 else header.update(tile=[True, 0]),
+             "должны быть целыми"),
             ("tile-overview-no-bbox", lambda header, entry: (header.update(bbox=None), entry.update(bbox=None)), "у обзора нужен bbox"),
             ("tile-garbage", None, "не читается"),
         ):

@@ -234,6 +234,9 @@ def _check_map_tile(data: bytes, entry: dict, index: dict, asset_id: str):
         header, _ = decode_tile(data)
     except (MapTileError, ValueError, KeyError, TypeError, IndexError, struct.error, zlib.error) as error:
         raise ManifestError(f"{name} не читается: {error}") from error
+    if type(header.get("level")) is not int or not isinstance(header.get("tile"), list) \
+            or any(type(v) is not int for v in header["tile"]):
+        raise ManifestError(f"{name}: level и tile в заголовке должны быть целыми")
     expected = {"package_id": index["package_id"], "package_version": index["package_version"], "level": entry["level"],
                 "tile": entry["tile"], "tile_size_m": LEVEL_TILE_M[entry["level"]], "classes": index["classes"],
                 "attribution": index["attribution"]}

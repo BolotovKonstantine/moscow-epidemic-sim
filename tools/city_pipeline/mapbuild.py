@@ -357,7 +357,10 @@ class MapSource:
         base_areas, base_lines = read_basemap(region_pbf, self.projector)
         self.base_areas = clip_to_region(base_areas, pkg.region)
         base_lines = clip_to_region(base_lines, pkg.region)
-        self.roads = clip_to_region(pkg.roads, pkg.region)   # рёбра на границе в пакете выходят за регион целиком
+        roads = clip_to_region(pkg.roads, pkg.region)   # рёбра на границе в пакете выходят за регион целиком
+        # Ребро, лишь касающееся границы, после обрезки — точка: на карте его нет, считаем его вне региона.
+        drawn = shapely.length(roads.geometry) > 0 if roads.keys else np.empty(0, bool)
+        self.roads = Layer([key for key, flag in zip(roads.keys, drawn) if flag], roads.classes[drawn], roads.geometry[drawn])
         # Названия обрезанных дорог — по ключу: подписи считаются по той же геометрии, что рисуется.
         name_of = dict(zip(pkg.roads.keys, pkg.road_names))
         self.road_names = [name_of[key] for key in self.roads.keys]

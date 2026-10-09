@@ -271,6 +271,8 @@ class FormatTests(unittest.TestCase):
             (lambda doc: doc.update(counts=float("nan")), "недопустимое значение"),
             (lambda doc: doc["sections"][1].update(name="extra.json"), "неизвестное имя"),
             (lambda doc: doc["sections"][0].update(dtype="json"), "неизвестное имя или тип"),
+            (lambda doc: doc["sections"][0].pop("count"), "count"),
+            (lambda doc: doc["sections"][0].update(shape=[25, 4]), "shape"),
         )
         for mutate, message in cases:
             with self.subTest(message=message):

@@ -333,6 +333,9 @@ SECTION_DTYPES = {name: "f32" for name in (
     "label.xy", "label.angle", "label.span", "label.cls", "label.weight")}
 SECTION_DTYPES.update({name: "i32" for name in ("area.tri", "line.tri", "building.tri", "building.outline", "pick.ring")})
 SECTION_DTYPES.update({"pick.attrs": "json", "label.text": "json"})
+# Число столбцов числового раздела, как MapTile.COLUMNS: 1 — одномерный массив (V), иначе (N, столбцы).
+SECTION_COLUMNS = {"area.xy": 2, "area.tri": 3, "line.xy": 2, "line.off": 2, "line.tri": 3, "building.xy": 2,
+                   "building.tri": 3, "building.outline": 2, "pick.ring": 3, "pick.bbox": 4, "label.xy": 2}
 
 
 def encode_tile(header: dict, sections) -> bytes:
@@ -452,11 +455,16 @@ def decode_tile(data: bytes):
             raise MapTileError(f"раздел {item['name']}: размер {len(raw)} вместо {item['raw_size']}")
         if item["dtype"] == "json":
             sections[item["name"]] = strict_json(raw)
-        else:
-            array = np.frombuffer(raw, dtype=DTYPES[item["dtype"]])
-            if item["dtype"] == "f32" and not np.isfinite(array).all():
-                raise MapTileError(f"раздел {item['name']}: нечисловые значения")
-            sections[item["name"]] = array.reshape(item["shape"])
+            continue
+        columns = SECTION_COLUMNS.get(item["name"], 1)
+        count, shape = item.get("count"), item.get("shape")
+        if type(count) is not int or count < 0 or count % columns or item["raw_size"] != count * 4 \
+                or shape != ([count] if columns == 1 else [count // columns, columns]):
+            raise MapTileError(f"раздел {item['name']}: count {count} и shape {shape} не соответствуют формату и размеру")
+        array = np.frombuffer(raw, dtype=DTYPES[item["dtype"]])
+        if item["dtype"] == "f32" and not np.isfinite(array).all():
+            raise MapTileError(f"раздел {item['name']}: нечисловые значения")
+        sections[item["name"]] = array.reshape(shape)
     return header, sections
 
 
