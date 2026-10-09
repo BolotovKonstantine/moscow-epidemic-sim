@@ -44,6 +44,7 @@ LABEL_CLASSES = (
 # Пределы подписей; те же проверяет игра (MapTile.MAX_LABELS, MAX_LABEL_CHARS).
 MAX_LABELS = 100_000
 MAX_LABEL_CHARS = 200
+MAX_JSON_SECTION_BYTES = 16 << 20   # как MapTile.MAX_JSON_SECTION_BYTES: больший JSON игра не разбирает
 CLASSES = {"area": AREA_CLASSES, "building": BUILDING_CLASSES, "line": LINE_CLASSES, "label": LABEL_CLASSES}
 
 HIGHWAY_CLASS = {
@@ -307,6 +308,8 @@ def encode_tile(header: dict, sections) -> bytes:
     for name, dtype, value in sections:
         if dtype == "json":
             raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+            if len(raw) > MAX_JSON_SECTION_BYTES:
+                raise MapTileError(f"раздел {name}: JSON {len(raw)} байт, предел формата {MAX_JSON_SECTION_BYTES}")
             count = None
             shape = None
         elif dtype in DTYPES:

@@ -9,7 +9,7 @@ const MAGIC := "MESMTILE"
 const FORMAT := "mesim-map-tile"
 const FORMAT_VERSION := 1
 const LEVEL_TILE_M := {1: 8000.0, 2: 2000.0}   # размеры участков уровней формата 1
-const MAX_JSON_SECTION_BYTES := 16 << 20   # подписи обзора центра — ~70 КБ, карточки участка 2 км — ~130 КБ
+const MAX_JSON_SECTION_BYTES := 16 << 20   # как maptiles.MAX_JSON_SECTION_BYTES экспорта; подписи обзора центра — ~70 КБ, карточки участка 2 км — ~130 КБ
 const MAX_DECODED_BYTES := 512 << 20   # всего данных участка после распаковки
 const MAX_COORD_M := 1.0e7   # |координата| плоскости карты: регион — сотни км; 1e7 точно помещается во float32
 const MAX_SAFE_INTEGER := 9007199254740992.0   # 2^53: целые JSON без потери точности и переполнения int
@@ -54,7 +54,8 @@ var level := -1
 var tile := Vector2i.ZERO
 var origin := Vector2.ZERO   # левый верхний угол в плоскости карты, м
 var tile_size_m := 0.0       # 0 — обзор региона (уровень 0)
-var bbox := Rect2()          # охват геометрии в плоскости карты (из заголовка под SHA256), пустой — нет геометрии
+var bbox := Rect2()          # охват геометрии в плоскости карты (из заголовка под SHA256)
+var bbox_declared := false   # bbox в заголовке не null; у линии вдоль оси охват может быть нулевой площади
 var classes: Dictionary = {}
 var counts: Dictionary = {}
 var sections: Dictionary = {}
@@ -165,6 +166,7 @@ func _read_header(expected: Dictionary) -> String:
 		return "bbox должен быть упорядоченными minx, miny, maxx, maxy или null"
 	if box != null:
 		bbox = Rect2(origin + Vector2(box[0], box[1]), Vector2(box[2] - box[0], box[3] - box[1]))
+		bbox_declared = true
 	if level == 0 and not bbox.has_area():
 		return "у обзора региона нет охвата bbox: камере не на что опереться"
 	var credits: Variant = header.attribution
@@ -172,9 +174,11 @@ func _read_header(expected: Dictionary) -> String:
 		return "attribution должна быть списком строк"
 	if expected.has("attribution") and PackedStringArray(credits) != expected.attribution:
 		return "атрибуция участка не совпадает с индексом: в индексе не хватает источников или они другие"
-	if expected.has("bbox") and expected.bbox is Rect2 and expected.bbox.has_area() \
-			and not _same_rect(expected.bbox, bbox):
-		return "охват участка %s не совпадает с индексом %s" % [bbox, expected.bbox]
+	# Индекс и заголовок сверяются всегда: оба null или оба заданы и совпадают по краям.
+	if expected.has("bbox"):
+		var indexed: Variant = expected.bbox
+		if (indexed == null) != (not bbox_declared) or (indexed != null and not _same_rect(indexed, bbox)):
+			return "охват участка %s не совпадает с индексом %s" % [bbox if bbox_declared else null, indexed]
 	var problem := MapTile.check_classes(header.classes)
 	if not problem.is_empty():
 		return problem

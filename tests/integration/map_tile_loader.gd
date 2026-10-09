@@ -187,13 +187,17 @@ func _test_rejections(fixture: String) -> void:
 	var box := Rect2(0, 0, 100, 100)
 	check(MapView._bbox_problem(box, Rect2(0, 0, 100, 100)).is_empty(), "охват, равный геометрии, принимается")
 	check("геометрии нет" in MapView._bbox_problem(box, null), "охват без геометрии отклоняется")
-	check(MapView._bbox_problem(Rect2(), null).is_empty(), "пустой участок без охвата принимается")
+	check(MapView._bbox_problem(null, null).is_empty(), "пустой участок без охвата принимается")
+	check("не заявлен" in MapView._bbox_problem(null, Rect2(0, 0, 10, 0)), "геометрия без охвата отклоняется")
+	check(MapView._bbox_problem(Rect2(0, 5, 100, 0), Rect2(0, 5, 100, 0)).is_empty(), "вырожденный охват линии принимается")
 	check("не совпадает" in MapView._bbox_problem(box, Rect2(0, 0, 50, 50)), "охват больше геометрии отклоняется")
 	check(MapView._encloses(Rect2(0, 0, 10, 10), Rect2(1, 5, 8, 0)) and not MapView._encloses(Rect2(0, 0, 10, 10), Rect2(1, 5, 20, 0)),
 		"вырожденный охват (горизонтальная линия) сравнивается по краям")
 
 	check(not MapTile._same_rect(Rect2(500000, 500000, 2000, 2000), Rect2(500003, 500000, 2000, 2000)),
 		"сдвиг охвата на 3 м далеко от начала координат замечается")
+	var no_bbox := MapTile.open(_write("no_bbox.mtile", source), {"bbox": null})
+	check("не совпадает с индексом" in no_bbox.error, "охват в заголовке при null в индексе отклоняется: " + no_bbox.error)
 	var stale := MapTile.open(_write("stale_bbox.mtile", source), {"bbox": Rect2(0, 0, 1000, 1000)})
 	check("не совпадает с индексом" in stale.error, "устаревший bbox индекса отклоняется: " + stale.error)
 

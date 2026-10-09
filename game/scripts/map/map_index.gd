@@ -17,7 +17,7 @@ var package_id := ""
 var package_version := ""
 var attribution := PackedStringArray()
 var classes: Dictionary = {}
-var tiles: Array[Dictionary] = []   # {level, tile: Vector2i, path, sha256, size_bytes, bbox: Rect2}
+var tiles: Array[Dictionary] = []   # {level, tile: Vector2i, path, sha256, size_bytes, bbox: Rect2 или null}
 
 
 static func open(map_dir: String) -> MapIndex:
@@ -109,7 +109,7 @@ func _read(index_path: String) -> String:
 			"path": rel_path,
 			"sha256": String(item.sha256),
 			"size_bytes": int(size_bytes),
-			"bbox": Rect2() if bbox == null else Rect2(bbox[0], bbox[1], bbox[2] - bbox[0], bbox[3] - bbox[1]),
+			"bbox": null if bbox == null else Rect2(bbox[0], bbox[1], bbox[2] - bbox[0], bbox[3] - bbox[1]),
 		})
 	var overview := tiles_of_level(0)
 	if overview.size() != 1 or overview[0].tile != Vector2i.ZERO:

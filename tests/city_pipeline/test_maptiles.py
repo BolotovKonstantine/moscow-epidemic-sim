@@ -221,6 +221,15 @@ class FormatTests(unittest.TestCase):
         with self.assertRaises(mt.MapTileError):
             mt.decode_tile(bytes(data))
 
+    def test_oversized_json_section_is_rejected(self):
+        original = mt.MAX_JSON_SECTION_BYTES
+        mt.MAX_JSON_SECTION_BYTES = 10
+        try:
+            with self.assertRaises(mt.MapTileError):
+                mt.encode_tile({}, [("label.text", "json", ["очень длинный текст"])])
+        finally:
+            mt.MAX_JSON_SECTION_BYTES = original
+
     def test_non_finite_coordinates_are_rejected(self):
         with self.assertRaises(mt.MapTileError):
             mt.encode_tile({}, [("a.xy", "f32", np.array([[0.0, np.nan]]))])
