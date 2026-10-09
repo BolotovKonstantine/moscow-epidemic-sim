@@ -197,6 +197,13 @@ def read_label_sources(pbf: Path, projector: Projector) -> LabelSources:
             places.append(("capital" if capital else kind, name, obj.location.lon, obj.location.lat,
                            _population(tags.get("population"))))
         elif obj.is_area():
+            if tags.get("place") in PLACE_CLASS:
+                # Населённый пункт задан площадью, а не точкой: подпись — в её внутренней точке.
+                # Независимо от границы ниже: одна площадь бывает и местом, и административной единицей.
+                kind = PLACE_CLASS[tags.get("place")]
+                capital = tags.get("capital") == "yes" and kind == "city"
+                place_areas.append(("capital" if capital else kind, name, _population(tags.get("population")),
+                                    _wkb_area(wkb, obj)))
             # Граница бывает и отношением, и замкнутой линией: берём обе формы.
             if tags.get("boundary") == "administrative":
                 kind = ADMIN_CLASS.get(tags.get("admin_level"))
@@ -205,12 +212,6 @@ def read_label_sources(pbf: Path, projector: Projector) -> LabelSources:
             elif tags.get("natural") == "water" or tags.get("waterway") == "riverbank" \
                     or tags.get("landuse") in WATER_LANDUSE:
                 water.append((name, _wkb_area(wkb, obj)))
-            elif tags.get("place") in PLACE_CLASS:
-                # Населённый пункт задан площадью, а не точкой: подпись — в её внутренней точке.
-                kind = PLACE_CLASS[tags.get("place")]
-                capital = tags.get("capital") == "yes" and kind == "city"
-                place_areas.append(("capital" if capital else kind, name, _population(tags.get("population")),
-                                    _wkb_area(wkb, obj)))
         elif obj.is_way() and tags.get("waterway") == "river" and tags.get("tunnel") in (None, "no"):
             try:
                 rivers.append((name, bytes.fromhex(wkb.create_linestring(obj))))

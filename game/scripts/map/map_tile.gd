@@ -13,6 +13,7 @@ const MAX_DECODED_BYTES := 512 << 20   # всего данных участка 
 const MAX_COORD_M := 1.0e7   # |координата| плоскости карты: регион — сотни км; 1e7 точно помещается во float32
 const MAX_SAFE_INTEGER := 9007199254740992.0   # 2^53: целые JSON без потери точности и переполнения int
 const MAX_TILE_INDEX := 1 << 20   # |номер участка|: сетка региона — десятки участков; точно влезает в Vector2i
+const ORIGIN_TOLERANCE_M := 0.01
 const ANGLE_TOLERANCE := 1.0e-6   # π/2 во float32 чуть отличается от float64
 const LABEL_TOLERANCE_M := 1.0   # допуск координат участка: считаются в float64, хранятся во float32
 const MAX_LEVEL := 2   # уровни 0–2 формата 1: обзор, участки 8 и 2 км
@@ -148,8 +149,12 @@ func _read_header(expected: Dictionary) -> String:
 		tile_size_m = 0.0
 	elif is_numbers([size], 1) and float(size) == LEVEL_TILE_M[level]:
 		tile_size_m = float(size)
-		if not origin.is_equal_approx(Vector2(tile) * tile_size_m):
+		# Начало — из номера участка; заголовок должен совпасть с ним с абсолютным допуском
+		# (is_equal_approx масштабирует допуск с величиной координат и пропустил бы метры сдвига).
+		var grid := Vector2(tile) * tile_size_m
+		if absf(origin.x - grid.x) > ORIGIN_TOLERANCE_M or absf(origin.y - grid.y) > ORIGIN_TOLERANCE_M:
 			return "начало участка %s не совпадает с его местом в сетке %s × %.0f м" % [origin, tile, tile_size_m]
+		origin = grid
 	else:
 		return "у участка уровня %d tile_size_m %s, а формат задаёт %.0f м" % [level, size, LEVEL_TILE_M[level]]
 	var box: Variant = header.get("bbox")
