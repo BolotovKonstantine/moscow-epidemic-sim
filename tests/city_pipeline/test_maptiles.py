@@ -197,8 +197,8 @@ class PlaneTests(unittest.TestCase):
 
 class FormatTests(unittest.TestCase):
     def sections(self):
-        return [("a.xy", "f32", np.arange(12, dtype=float).reshape(6, 2)), ("a.tri", "i32", np.array([[0, 1, 2], [3, 4, 5]])),
-                ("pick.attrs", "json", {"id": ["w1", "w2"], "name": ["Дом", None]}), ("empty", "i32", np.empty((0, 3)))]
+        return [("area.xy", "f32", np.arange(12, dtype=float).reshape(6, 2)), ("area.tri", "i32", np.array([[0, 1, 2], [3, 4, 5]])),
+                ("pick.attrs", "json", {"id": ["w1", "w2"], "name": ["Дом", None]}), ("line.tri", "i32", np.empty((0, 3)))]
 
     def test_roundtrip_and_alignment(self):
         data = mt.encode_tile({"level": 2}, self.sections())
@@ -207,9 +207,9 @@ class FormatTests(unittest.TestCase):
         self.assertEqual(data[:8], b"MESMTILE")
         for item in header["sections"]:
             self.assertEqual(item["offset"] % 4, 0)
-        np.testing.assert_array_equal(sections["a.tri"], [[0, 1, 2], [3, 4, 5]])
+        np.testing.assert_array_equal(sections["area.tri"], [[0, 1, 2], [3, 4, 5]])
         self.assertEqual(sections["pick.attrs"]["name"], ["Дом", None])
-        self.assertEqual(sections["empty"].shape, (0, 3))
+        self.assertEqual(sections["line.tri"].shape, (0, 3))
 
     def test_encoding_is_deterministic(self):
         self.assertEqual(mt.encode_tile({"level": 2}, self.sections()), mt.encode_tile({"level": 2}, self.sections()))
@@ -269,11 +269,28 @@ class FormatTests(unittest.TestCase):
             (lambda doc: doc["sections"][0].update(offset=doc["sections"][0]["offset"] + 2), "вне данных"),
             (lambda doc: doc["sections"][1].update(raw_size=mt.MAX_JSON_SECTION_BYTES + 1), "вне предела"),
             (lambda doc: doc.update(counts=float("nan")), "недопустимое значение"),
+            (lambda doc: doc["sections"][1].update(name="extra.json"), "неизвестное имя"),
+            (lambda doc: doc["sections"][0].update(dtype="json"), "неизвестное имя или тип"),
         )
         for mutate, message in cases:
             with self.subTest(message=message):
                 with self.assertRaisesRegex(mt.MapTileError, message):
                     mt.decode_tile(self.rebuild(data, mutate))
+        array_root = data[:12] + (4).to_bytes(4, "little") + b"[1] "   # заголовок — массив, не объект
+        with self.assertRaisesRegex(mt.MapTileError, "не объект"):
+            mt.decode_tile(array_root)
+        raw = np.full((2, 2), np.nan, np.float32).tobytes()
+        head = json.dumps({"format": mt.TILE_FORMAT, "format_version": 1, "sections": [
+            {"name": "area.xy", "dtype": "f32", "codec": "none", "offset": 0, "size": len(raw), "raw_size": len(raw), "count": 4, "shape": [2, 2]}]})
+        for _ in range(3):
+            padded = head.encode() + b" " * ((-len(head.encode())) % 4)
+            doc = json.loads(head)
+            doc["sections"][0]["offset"] = 16 + len(padded)
+            head = json.dumps(doc)
+        padded = head.encode() + b" " * ((-len(head.encode())) % 4)
+        nan_tile = mt.MAGIC + (1).to_bytes(4, "little") + len(padded).to_bytes(4, "little") + padded + raw
+        with self.assertRaisesRegex(mt.MapTileError, "нечисловые"):
+            mt.decode_tile(nan_tile)
         # Обрезанный конец потока zlib: заявленный размер распаковывается, но поток не завершён.
         def truncate(doc):
             doc["sections"][0]["size"] -= 2

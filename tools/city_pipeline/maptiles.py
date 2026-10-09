@@ -327,6 +327,12 @@ def explode_lines(geometries):
 # ---------------------------------------------------------------- кодирование
 
 DTYPES = {"f32": "<f4", "i32": "<i4"}
+# Имя раздела → тип; как MapTile.COLUMNS, INT_SECTIONS и JSON_SECTIONS в игре: другие разделы игра не читает.
+SECTION_DTYPES = {name: "f32" for name in (
+    "area.xy", "area.cls", "line.xy", "line.off", "line.cls", "building.xy", "building.cls", "pick.bbox",
+    "label.xy", "label.angle", "label.span", "label.cls", "label.weight")}
+SECTION_DTYPES.update({name: "i32" for name in ("area.tri", "line.tri", "building.tri", "building.outline", "pick.ring")})
+SECTION_DTYPES.update({"pick.attrs": "json", "label.text": "json"})
 
 
 def encode_tile(header: dict, sections) -> bytes:
@@ -410,6 +416,9 @@ def decode_tile(data: bytes):
     if head_len > MAX_HEADER_BYTES:
         raise MapTileError(f"заголовок {head_len} байт, предел формата {MAX_HEADER_BYTES}")
     header = strict_json(data[16:16 + head_len])
+    if not isinstance(header, dict) or not isinstance(header.get("sections"), list) \
+            or not all(isinstance(item, dict) for item in header["sections"]):
+        raise MapTileError("заголовок участка — не объект со списком разделов")
     if header.get("format") != TILE_FORMAT or header.get("format_version") != FORMAT_VERSION \
             or type(header.get("format_version")) is not int:
         raise MapTileError(f"заголовок: формат {header.get('format')} версии {header.get('format_version')}, нужен {TILE_FORMAT} {FORMAT_VERSION}")
@@ -417,7 +426,10 @@ def decode_tile(data: bytes):
     sections = {}
     decoded = 0
     for item in header["sections"]:
-        # Как MapTile в игре: смещение, заявленные размеры и их сумма проверяются до распаковки, поток — с потолком.
+        # Как MapTile в игре: имя и тип, смещение, заявленные размеры и их сумма проверяются до распаковки, поток — с потолком.
+        if SECTION_DTYPES.get(item.get("name")) != item.get("dtype"):
+            raise MapTileError(f"раздел {item.get('name')}: неизвестное имя или тип {item.get('dtype')} "
+                               f"(нужен {SECTION_DTYPES.get(item.get('name'))})")
         limit = MAX_JSON_SECTION_BYTES if item.get("dtype") == "json" else MAX_SECTION_BYTES
         if type(item.get("raw_size")) is not int or not 0 <= item["raw_size"] <= limit:
             raise MapTileError(f"раздел {item.get('name')}: размер после распаковки вне предела {limit}")
@@ -441,7 +453,10 @@ def decode_tile(data: bytes):
         if item["dtype"] == "json":
             sections[item["name"]] = strict_json(raw)
         else:
-            sections[item["name"]] = np.frombuffer(raw, dtype=DTYPES[item["dtype"]]).reshape(item["shape"])
+            array = np.frombuffer(raw, dtype=DTYPES[item["dtype"]])
+            if item["dtype"] == "f32" and not np.isfinite(array).all():
+                raise MapTileError(f"раздел {item['name']}: нечисловые значения")
+            sections[item["name"]] = array.reshape(item["shape"])
     return header, sections
 
 

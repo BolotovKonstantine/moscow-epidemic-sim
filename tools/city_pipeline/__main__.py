@@ -267,6 +267,10 @@ def command_map_tile(args) -> int:
 
     config = load_config(args.config)
     package = package_dir(args.packages, config.get("package_id"), config.get("package_version"))
+    # Как build: пока экспорт читает пакет и его вырезку OSM, сборка того же пакета ждёт (и наоборот).
+    package.parent.mkdir(parents=True, exist_ok=True)
+    package_lock = (package.parent / f".{package.name}.lock").open("w")
+    fcntl.flock(package_lock, fcntl.LOCK_EX)
     validate_manifest(package / "manifest.json", check_files=True)
     # Пакет перезаписывается при той же версии, а вырезка OSM лежит по хешу конфигурации:
     # другая конфигурация дала бы чужую вырезку и CRS к этому пакету.
