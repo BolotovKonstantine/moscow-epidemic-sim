@@ -14,7 +14,7 @@ from tools.city_pipeline import maplabels as ml
 from tools.city_pipeline import maptiles as mt
 from tools.city_pipeline.build import build_package, make_boundary
 from tools.city_pipeline.geo import Projector
-from tools.city_pipeline.mapbuild import Layer, area_class, export_test_tiles, line_class
+from tools.city_pipeline.mapbuild import Layer, area_class, export_test_tiles, line_class, read_package
 
 
 def triangle_area(xy, triangles):
@@ -351,6 +351,17 @@ class ExportTests(unittest.TestCase):
         self.assertIn(("street_major", "Вторая"), texts[1])
         self.assertNotIn("Первая", {t for _, t in texts[1]})          # жилые улицы — только в участках 2 км
         self.assertTrue({("street", "Первая"), ("street_major", "Вторая"), ("river", "Тестовая")} <= texts[2])
+
+    def test_simplified_layers_stay_inside_region(self):
+        region = shapely.make_valid(read_package(self.package, Projector(self.crs)).region).buffer(1.0)
+        for level in (0, 1):
+            entry, (header, sections) = self.tile(level)
+            plane = mt.MapPlane(*self.index["plane"]["origin_metric"])
+            ox, oy = plane.x0 + header["origin"][0], plane.y0 - header["origin"][1]
+            for name in ("area.xy", "line.xy"):
+                xy = sections[name]
+                if len(xy):
+                    self.assertTrue(shapely.contains_xy(region, xy[:, 0] + ox, oy - xy[:, 1]).all(), f"z{level} {name}")
 
     def test_label_anchors_lie_inside_their_tile(self):
         for level in (1, 2):

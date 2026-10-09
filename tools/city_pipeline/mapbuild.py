@@ -344,6 +344,9 @@ def export_test_tiles(package: Path, region_pbf: Path, metric_crs: str, lon: flo
     base_areas = clip_to_region(base_areas, pkg.region)
     base_lines = clip_to_region(base_lines, pkg.region)
     roads = clip_to_region(pkg.roads, pkg.region)   # рёбра на границе в пакете выходят за регион целиком
+    # Названия обрезанных дорог — по ключу: подписи считаются по той же геометрии, что рисуется.
+    name_of = dict(zip(pkg.roads.keys, pkg.road_names))
+    road_names = [name_of[key] for key in roads.keys]
     all_lines = Layer(base_lines.keys + roads.keys + pkg.boundaries.keys,
                       np.concatenate([base_lines.classes, roads.classes, pkg.boundaries.classes]),
                       np.concatenate([base_lines.geometry, roads.geometry, pkg.boundaries.geometry]))
@@ -372,6 +375,11 @@ def export_test_tiles(package: Path, region_pbf: Path, metric_crs: str, lon: flo
         box, origin = plane.tile_box(level, ix, iy, pkg.region.bounds)
         areas = level_layer(base_areas, min_area=rules.area_min_m2, simplify=rules.area_simplify_m)
         lines = level_layer(all_lines, classes=rules.line_classes, simplify=rules.line_simplify_m)
+        # Упрощение может срезать вогнутый край региона хордой: обрезаем по региону ещё раз.
+        if rules.area_simplify_m > 0:
+            areas = clip_to_region(areas, pkg.region)
+        if rules.line_simplify_m > 0:
+            lines = clip_to_region(lines, pkg.region)
         buildings = None
         if rules.buildings:
             bx, by = plane.tile_of(level, pkg.building_xy[:, 0], pkg.building_xy[:, 1])
@@ -388,7 +396,7 @@ def export_test_tiles(package: Path, region_pbf: Path, metric_crs: str, lon: flo
         log(f"Участок z{level} {ix}_{iy}…")
         # Подписи участка — только внутри региона: дороги и реки на карте обрезаны по нему же.
         labels = region_labels if level == 0 else \
-            ml.tile_labels(level, box, pkg.roads, pkg.road_names, label_sources).within(pkg.region)
+            ml.tile_labels(level, box, roads, road_names, label_sources, pkg.region).within(pkg.region)
         sections, counts, bbox = tile_sections(plane, origin, box, areas, lines, buildings, pick=rules.pick, labels=labels)
         tiles.append(write_tile(out, pkg, level, ix, iy, origin, sections, counts, bbox))
     return write_index(out, pkg, metric_crs, plane, tiles, "Тестовый экспорт (#11): уровень 0 и по одному участку уровней 1 и 2.")

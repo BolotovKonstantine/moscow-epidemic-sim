@@ -184,6 +184,8 @@ func _test_rejections(fixture: String) -> void:
 	check(MapView._encloses(Rect2(0, 0, 10, 10), Rect2(1, 5, 8, 0)) and not MapView._encloses(Rect2(0, 0, 10, 10), Rect2(1, 5, 20, 0)),
 		"вырожденный охват (горизонтальная линия) сравнивается по краям")
 
+	check(not MapTile._same_rect(Rect2(500000, 500000, 2000, 2000), Rect2(500003, 500000, 2000, 2000)),
+		"сдвиг охвата на 3 м далеко от начала координат замечается")
 	var stale := MapTile.open(_write("stale_bbox.mtile", source), {"bbox": Rect2(0, 0, 1000, 1000)})
 	check("не совпадает с индексом" in stale.error, "устаревший bbox индекса отклоняется: " + stale.error)
 
@@ -396,7 +398,9 @@ func _test_views(fixture: String) -> void:
 	var margin_high := (line_node.mesh as ArrayMesh).custom_aabb.size.x - centerline.size.x
 	check(margin_low > 0.0 and margin_high > margin_low,
 		"границы мешей линий расширены на ширину лент и растут при отдалении: %.1f → %.1f м" % [margin_low, margin_high])
-	map._on_viewport_resized()   # без окна: не падает и пересчитывает камеру и подписи
+	map.max_meters_per_pixel = 1.0e6   # устаревший предел, как после уменьшения окна
+	map._on_viewport_resized()   # без окна: не падает и пересчитывает предел, камеру и подписи
+	check(map.max_meters_per_pixel < 1000.0, "после изменения окна предел отдаления пересчитан: %.1f" % map.max_meters_per_pixel)
 	map.look_at_point(Vector2(1000, 1000), 0.01)
 	check(is_equal_approx(map.meters_per_pixel, MapTheme.MIN_MPP), "приближение ограничено %.2f м/пикс." % MapTheme.MIN_MPP)
 	check(map.level_for(map.meters_per_pixel) == 2, "при сильном приближении — уровень 2")

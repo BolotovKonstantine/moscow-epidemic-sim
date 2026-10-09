@@ -172,7 +172,7 @@ func _read_header(expected: Dictionary) -> String:
 	if expected.has("attribution") and PackedStringArray(credits) != expected.attribution:
 		return "атрибуция участка не совпадает с индексом: в индексе не хватает источников или они другие"
 	if expected.has("bbox") and expected.bbox is Rect2 and expected.bbox.has_area() \
-			and not expected.bbox.is_equal_approx(bbox):
+			and not _same_rect(expected.bbox, bbox):
 		return "охват участка %s не совпадает с индексом %s" % [bbox, expected.bbox]
 	var problem := MapTile.check_classes(header.classes)
 	if not problem.is_empty():
@@ -288,6 +288,12 @@ func _check_layers() -> String:
 	if level == 0 and has_layer("building"):
 		return "в обзоре региона не должно быть зданий"
 	return _check_pick()
+
+
+## Прямоугольники совпадают с абсолютным допуском (is_equal_approx растит допуск с координатами).
+static func _same_rect(a: Rect2, b: Rect2) -> bool:
+	return absf(a.position.x - b.position.x) <= ORIGIN_TOLERANCE_M and absf(a.position.y - b.position.y) <= ORIGIN_TOLERANCE_M \
+		and absf(a.end.x - b.end.x) <= ORIGIN_TOLERANCE_M and absf(a.end.y - b.end.y) <= ORIGIN_TOLERANCE_M
 
 
 ## Подпись принадлежит участку, где лежит её точка (у обзора — внутри охвата), а длина прямого

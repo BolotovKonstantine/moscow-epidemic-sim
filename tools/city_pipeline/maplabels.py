@@ -431,16 +431,23 @@ def region_labels(sources: LabelSources, stations, region, moscow) -> Labels:
     return Labels.from_rows(rows)
 
 
-def tile_labels(level, box, roads, road_names, sources: LabelSources) -> Labels:
-    """Подписи участка уровня 1 или 2: улицы, а в участках 2 км ещё и реки."""
+def tile_labels(level, box, roads, road_names, sources: LabelSources, region=None) -> Labels:
+    """Подписи участка уровня 1 или 2: улицы, а в участках 2 км ещё и реки.
+
+    roads — уже обрезанные по региону дороги; реки обрезаются по region здесь, чтобы длина
+    прямого участка под текстом считалась по той же геометрии, что видна на карте.
+    """
     labels = street_labels(roads, road_names, level, box)
     if level < 2:
         return labels
     query = shapely.box(*box)
     rows = []
     for name, lines in sorted(sources.rivers.items()):
-        if not shapely.intersects(np.array(lines, dtype=object), query).any():
+        lines = np.array(lines, dtype=object)
+        if not shapely.intersects(lines, query).any():
             continue
+        if region is not None:
+            lines = [g for g in shapely.intersection(lines, region) if not g.is_empty]
         for part in merged_lines(lines):
             for x, y, angle, span in line_anchors(part, RIVER_TILE_SPACING_M):
                 rows.append((x, y, angle, span, "river", part.length, name))

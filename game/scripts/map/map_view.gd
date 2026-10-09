@@ -41,10 +41,13 @@ func _ready() -> void:
 	get_viewport().size_changed.connect(_on_viewport_resized)
 
 
-## Окно изменило размер: заново ограничить камеру и разложить подписи под новый размер экрана.
+## Окно изменило размер: пересчитать предел отдаления под новый размер, заново ограничить камеру
+## и разложить подписи.
 func _on_viewport_resized() -> void:
 	if _tiles.is_empty():
 		return
+	_update_zoom_limit()
+	_set_scale(meters_per_pixel)
 	_clamp_camera()
 	_refresh_labels()
 
@@ -125,9 +128,7 @@ func level_for(mpp: float) -> int:
 
 
 func fit_region() -> void:
-	var view_size := _view_size()
-	var fit := maxf(region_rect.size.x / view_size.x, region_rect.size.y / view_size.y) * FIT_MARGIN
-	max_meters_per_pixel = fit * 1.5
+	var fit := _update_zoom_limit()
 	_camera.position = region_rect.get_center()
 	_set_scale(fit)
 	_clamp_camera()
@@ -210,6 +211,14 @@ func _refresh_labels() -> void:
 static func _encloses(outer: Rect2, inner: Rect2) -> bool:
 	return inner.position.x >= outer.position.x and inner.position.y >= outer.position.y \
 		and inner.end.x <= outer.end.x and inner.end.y <= outer.end.y
+
+
+## Масштаб, при котором регион целиком в окне; предел отдаления — в полтора раза больше. Возвращает масштаб.
+func _update_zoom_limit() -> float:
+	var view_size := _view_size()
+	var fit := maxf(region_rect.size.x / view_size.x, region_rect.size.y / view_size.y) * FIT_MARGIN
+	max_meters_per_pixel = fit * 1.5
+	return fit
 
 
 func _view_size() -> Vector2:
