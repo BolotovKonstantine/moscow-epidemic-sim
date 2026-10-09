@@ -184,8 +184,8 @@ def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
         raise ManifestError(f"{asset_id}: в индексе карты нет участков")
     seen_paths, seen_tiles = set(), set()
     for tile in tiles:
-        if not isinstance(tile, dict) or not isinstance(tile.get("path"), str) or tile.get("level") not in LEVEL_TILE_M \
-                or type(tile.get("level")) is not int or type(tile.get("size_bytes")) is not int \
+        if not isinstance(tile, dict) or not isinstance(tile.get("path"), str) \
+                or type(tile.get("level")) is not int or tile["level"] not in LEVEL_TILE_M or type(tile.get("size_bytes")) is not int \
                 or not isinstance(tile.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", tile["sha256"]) \
                 or not isinstance(tile.get("tile"), list) or len(tile["tile"]) != 2 \
                 or any(type(v) is not int or abs(v) > MAP_MAX_TILE_INDEX for v in tile["tile"]):

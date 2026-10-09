@@ -6,10 +6,12 @@
 """
 
 import csv
+import fcntl
 import gzip
 import json
 import shutil
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -492,7 +494,7 @@ def export_region_tiles(package: Path, region_pbf: Path, metric_crs: str, out: P
     который воспроизводится побайтно). Нарушение покрытия — ошибка экспорта. manifest — паспорт
     пакета, если package/manifest.json ещё не записан (сборка пакета).
     """
-    _check_replaceable(out)
+    _check_replaceable(out)   # рано: не тратить минуты на набор, который нельзя установить
     source = MapSource(package, region_pbf, metric_crs, log, manifest)
     pkg = source.pkg
     log(f"Контуры {len(pkg.building_rows['id'])} зданий…")
@@ -513,7 +515,11 @@ def export_region_tiles(package: Path, region_pbf: Path, metric_crs: str, out: P
         index = write_index(staging, pkg, metric_crs, source.plane, tiles,
                             "Весь регион (#13): обзор и все участки уровней 1 и 2, задевающие регион.")
         staging.chmod(0o755)   # mkdtemp создаёт каталог только для владельца
-        _install(staging, out)
+        # Каталог мог появиться или смениться за время сборки: проверяем ещё раз под блокировкой,
+        # которую берут все экспорты в этот каталог, и сразу подменяем.
+        with _locked(out.with_name(f".{out.name}.lock")):
+            _check_replaceable(out)
+            _install(staging, out)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -534,6 +540,17 @@ def _check_replaceable(out: Path):
         index = None
     if not isinstance(index, dict) or index.get("format") != mt.INDEX_FORMAT:
         raise mt.MapTileError(f"{out} не пуст и не является набором участков карты (нет index.json карты): не заменяю")
+
+
+@contextmanager
+def _locked(path: Path):
+    """Исключительная блокировка файла (fcntl): экспорты в один каталог устанавливают его по очереди."""
+    with path.open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def _install(staging: Path, out: Path):

@@ -174,6 +174,7 @@ class BuildTests(unittest.TestCase):
             ("index-bad-bbox", lambda doc: overview(doc).update(bbox=[10, 0, 0, 10]), "bbox участка"),
             ("index-far-bbox", lambda doc: overview(doc).update(bbox=[0, 0, 2e7, 10]), "bbox участка"),
             ("index-far-tile", lambda doc: doc["tiles"][-1].update(tile=[(1 << 20) + 1, 0]), "некорректная запись участка"),
+            ("index-list-level", lambda doc: doc["tiles"][-1].update(level=[]), "некорректная запись участка"),
             ("index-no-credit", lambda doc: doc.update(attribution=["кто-то"]), "attribution"),
             ("index-no-classes", lambda doc: doc.pop("classes"), "таблицы классов"),
         ):
@@ -209,7 +210,25 @@ class BuildTests(unittest.TestCase):
             mapbuild.coverage_summary = original
         after = {p.relative_to(out): p.read_bytes() for p in out.rglob("*") if p.is_file()}
         self.assertEqual(after, before)   # прежний набор цел, временный каталог убран
-        self.assertEqual([p.name for p in self.root.iterdir() if p.name.startswith(".region-map")], [])
+        self.assertEqual([p.name for p in self.root.iterdir() if p.name.startswith(".region-map") and p.suffix != ".lock"], [])
+        # Чужой каталог, появившийся за время сборки, не заменяется: проверка повторяется перед подменой.
+        late = self.root / "late-map"
+        original_lock = mapbuild._locked
+
+        def locked(path):
+            if not late.exists():
+                late.mkdir()
+                (late / "notes.txt").write_text("чужое", encoding="utf-8")
+            return original_lock(path)
+
+        mapbuild._locked = locked
+        try:
+            with self.assertRaisesRegex(mt.MapTileError, "не является набором участков"):
+                mapbuild.export_region_tiles(self.out, region_pbf, crs, late, log=lambda *_: None)
+        finally:
+            mapbuild._locked = original_lock
+        self.assertEqual((late / "notes.txt").read_text(encoding="utf-8"), "чужое")
+        self.assertEqual([p.name for p in self.root.iterdir() if p.name.startswith(".late-map") and p.suffix != ".lock"], [])
         foreign = self.root / "not-a-map"
         foreign.mkdir()
         (foreign / "notes.txt").write_text("чужое", encoding="utf-8")
