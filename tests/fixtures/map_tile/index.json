@@ -1,0 +1,143 @@
+{
+  "attribution": [
+    "© участники OpenStreetMap, ODbL",
+    "Синтетический пример — только для тестов"
+  ],
+  "classes": {
+    "area": [
+      "farmland",
+      "residential",
+      "commercial",
+      "industrial",
+      "cemetery",
+      "grass",
+      "park",
+      "forest",
+      "water"
+    ],
+    "building": [
+      "unknown",
+      "residential",
+      "work",
+      "retail",
+      "education",
+      "medical",
+      "transport",
+      "control",
+      "other"
+    ],
+    "label": [
+      "capital",
+      "okrug",
+      "municipality",
+      "city",
+      "town",
+      "district",
+      "village",
+      "suburb",
+      "hamlet",
+      "river_major",
+      "river",
+      "water",
+      "street_major",
+      "street",
+      "metro",
+      "rail_station"
+    ],
+    "line": [
+      "stream",
+      "river",
+      "service",
+      "pedestrian",
+      "residential",
+      "tertiary",
+      "secondary",
+      "primary",
+      "trunk",
+      "motorway",
+      "tram",
+      "rail_minor",
+      "rail",
+      "boundary_moscow",
+      "boundary_region"
+    ]
+  },
+  "format": "mesim-map-index",
+  "format_version": 1,
+  "levels": [
+    {
+      "level": 0,
+      "tile_size_m": null
+    },
+    {
+      "level": 1,
+      "tile_size_m": 8000
+    },
+    {
+      "level": 2,
+      "tile_size_m": 2000
+    }
+  ],
+  "metric_crs": "EPSG:32637",
+  "note": "Синтетический набор для теста загрузчика Godot (#12).",
+  "package_id": "fixture-map",
+  "package_version": "0.0.1",
+  "plane": {
+    "origin_metric": [
+      400000.0,
+      6200000.0
+    ],
+    "units": "m",
+    "y_axis": "down"
+  },
+  "source_ids": [
+    "synthetic"
+  ],
+  "tiles": [
+    {
+      "bbox": [
+        0.0,
+        0.0,
+        4000.0,
+        3999.0
+      ],
+      "counts": {
+        "areas": 3,
+        "labels": 4,
+        "lines": 5,
+        "triangles_dropped": 0
+      },
+      "level": 0,
+      "path": "z0/0_0.mtile",
+      "sha256": "84df1b9ddb15e7b04b61b518caaf4d950c91badd73904842e48489a3eee415a5",
+      "size_bytes": 2968,
+      "tile": [
+        0,
+        0
+      ]
+    },
+    {
+      "bbox": [
+        0.0,
+        0.0,
+        2000.0,
+        2000.0
+      ],
+      "counts": {
+        "areas": 2,
+        "buildings": 3,
+        "labels": 3,
+        "lines": 4,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/0_0.mtile",
+      "sha256": "02bdca04a39b377c2a59b212fbfaa300cf54c97d991fbc3cf7ad8cf467a6b816",
+      "size_bytes": 4168,
+      "tile": [
+        0,
+        0
+      ]
+    }
+  ]
+}

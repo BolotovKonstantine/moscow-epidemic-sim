@@ -36,7 +36,21 @@ LINE_CLASSES = (
     "tram", "rail_minor", "rail",
     "boundary_moscow", "boundary_region",
 )
-CLASSES = {"area": AREA_CLASSES, "building": BUILDING_CLASSES, "line": LINE_CLASSES}
+# Подписи: код — позиция; стиль, приоритет и масштабы показа задаёт тема игры.
+LABEL_CLASSES = (
+    "capital", "okrug", "municipality", "city", "town", "district", "village", "suburb", "hamlet",
+    "river_major", "river", "water", "street_major", "street", "metro", "rail_station",
+)
+# Пределы подписей; те же проверяет игра (MapTile.MAX_LABELS, MAX_LABEL_CHARS).
+MAX_LABELS = 100_000
+MAX_LABEL_CHARS = 200
+# Пределы размеров; те же проверяет игра (MapTile): больший участок экспорт не пишет, а игра не читает.
+MAX_HEADER_BYTES = 1 << 20          # JSON-заголовок участка
+MAX_SECTION_BYTES = 256 << 20       # раздел после распаковки
+MAX_DECODED_BYTES = 512 << 20       # все разделы участка после распаковки
+MAX_TILE_BYTES = 256 << 20          # файл участка
+MAX_JSON_SECTION_BYTES = 16 << 20   # как MapTile.MAX_JSON_SECTION_BYTES: больший JSON игра не разбирает
+CLASSES = {"area": AREA_CLASSES, "building": BUILDING_CLASSES, "line": LINE_CLASSES, "label": LABEL_CLASSES}
 
 HIGHWAY_CLASS = {
     "motorway": "motorway", "motorway_link": "motorway", "trunk": "trunk", "trunk_link": "trunk",
@@ -299,10 +313,14 @@ def encode_tile(header: dict, sections) -> bytes:
     for name, dtype, value in sections:
         if dtype == "json":
             raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+            if len(raw) > MAX_JSON_SECTION_BYTES:
+                raise MapTileError(f"раздел {name}: JSON {len(raw)} байт, предел формата {MAX_JSON_SECTION_BYTES}")
             count = None
             shape = None
         elif dtype in DTYPES:
             array = np.ascontiguousarray(value, dtype=DTYPES[dtype])
+            if array.nbytes > MAX_SECTION_BYTES:
+                raise MapTileError(f"раздел {name}: {array.nbytes} байт, предел формата {MAX_SECTION_BYTES}")
             if dtype == "f32" and not np.isfinite(array).all():
                 raise MapTileError(f"раздел {name}: нечисловые координаты")
             raw = array.tobytes()
@@ -345,6 +363,13 @@ def encode_tile(header: dict, sections) -> bytes:
     for packed in payloads:
         out += packed
         out += b"\0" * (_pad(len(packed)) - len(packed))
+    if len(head) > MAX_HEADER_BYTES:
+        raise MapTileError(f"участок: заголовок {len(head)} байт, предел формата {MAX_HEADER_BYTES}")
+    decoded = sum(item["raw_size"] for item in described)
+    if decoded > MAX_DECODED_BYTES:
+        raise MapTileError(f"участок: {decoded} байт данных, предел формата {MAX_DECODED_BYTES}")
+    if len(out) > MAX_TILE_BYTES:
+        raise MapTileError(f"участок: файл {len(out)} байт, предел формата {MAX_TILE_BYTES}")
     return bytes(out)
 
 
