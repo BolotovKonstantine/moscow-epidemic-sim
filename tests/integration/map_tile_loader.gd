@@ -110,6 +110,11 @@ func _test_rejections(fixture: String) -> void:
 	var rings := _section_descriptor(source, "pick.ring")
 	check(rings.codec == "none" or rings.codec == "deflate", "у pick.ring известное сжатие")
 	var tile_ok := MapTile.open(_write("pick.mtile", source))
+	tile_ok.sections["label.angle"][0] = PI
+	check("label.angle" in tile_ok._check_label_anchors(), "угол подписи π (вверх ногами) отклоняется")
+	tile_ok.sections["label.angle"][0] = PI / 2.0
+	check(tile_ok._check_label_anchors().is_empty(), "угол π/2 допустим")
+	tile_ok.sections["label.angle"][0] = 0.0
 	tile_ok.sections["label.span"][0] = -5.0
 	check("label.span" in tile_ok._check_label_anchors(), "отрицательная длина прямого участка отклоняется")
 	tile_ok.sections["label.span"][0] = 100.0
@@ -373,6 +378,7 @@ func _test_views(fixture: String) -> void:
 	var margin_high := (line_node.mesh as ArrayMesh).custom_aabb.size.x - centerline.size.x
 	check(margin_low > 0.0 and margin_high > margin_low,
 		"границы мешей линий расширены на ширину лент и растут при отдалении: %.1f → %.1f м" % [margin_low, margin_high])
+	map._on_viewport_resized()   # без окна: не падает и пересчитывает камеру и подписи
 	map.look_at_point(Vector2(1000, 1000), 0.01)
 	check(is_equal_approx(map.meters_per_pixel, MapTheme.MIN_MPP), "приближение ограничено %.2f м/пикс." % MapTheme.MIN_MPP)
 	check(map.level_for(map.meters_per_pixel) == 2, "при сильном приближении — уровень 2")

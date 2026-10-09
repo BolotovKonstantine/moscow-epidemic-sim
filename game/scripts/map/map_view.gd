@@ -38,6 +38,15 @@ func _init() -> void:
 
 func _ready() -> void:
 	_camera.make_current()
+	get_viewport().size_changed.connect(_on_viewport_resized)
+
+
+## Окно изменило размер: заново ограничить камеру и разложить подписи под новый размер экрана.
+func _on_viewport_resized() -> void:
+	if _tiles.is_empty():
+		return
+	_clamp_camera()
+	_refresh_labels()
 
 
 ## Загрузить набор участков. Возвращает пустую строку или текст ошибки (игра не падает).

@@ -185,6 +185,9 @@ class ExportTests(unittest.TestCase):
         base.way(line, {"railway": "rail"})
         # Названия для подписей: город, район Москвы, река.
         base.node(lon + 0.003, lat + 0.003, {"place": "city", "name": "Тестград", "population": "1000"})
+        # Округ — замкнутой линией, без отношения: такие границы тоже подписываются.
+        base.square(lon + 0.01, lat + 0.01, 0.009, {"boundary": "administrative", "admin_level": "5",
+                                                    "name": "Тестовый административный округ"})
         district = base.square(lon - 0.01, lat - 0.01, 0.008)
         base.relation(50, [("way", district, "outer")], {"type": "boundary", "boundary": "administrative",
                                                           "admin_level": "8", "name": "район Тестовый"})
@@ -265,6 +268,7 @@ class ExportTests(unittest.TestCase):
             texts[level] = {(mt.LABEL_CLASSES[int(c)], t) for c, t in zip(sections["label.cls"], sections["label.text"])}
             self.assertEqual(header["counts"]["labels"], len(sections["label.text"]))
         self.assertTrue({("city", "Тестград"), ("district", "район Тестовый")} <= texts[0])
+        self.assertIn(("okrug", "Тестовый АО"), texts[0])
         self.assertIn(("river", "Тестовая"), texts[0])
         self.assertIn(("water", "Тестовое водохранилище"), texts[0])   # landuse=reservoir — тоже вода
         self.assertIn(("street_major", "Вторая"), texts[1])

@@ -196,7 +196,8 @@ def read_label_sources(pbf: Path, projector: Projector) -> LabelSources:
             places.append(("capital" if capital else kind, name, obj.location.lon, obj.location.lat,
                            _population(tags.get("population"))))
         elif obj.is_area():
-            if tags.get("boundary") == "administrative" and not obj.from_way():
+            # Граница бывает и отношением, и замкнутой линией: берём обе формы.
+            if tags.get("boundary") == "administrative":
                 kind = ADMIN_CLASS.get(tags.get("admin_level"))
                 if kind:
                     admin.append((kind, name, _wkb_area(wkb, obj)))
@@ -214,7 +215,7 @@ def read_label_sources(pbf: Path, projector: Projector) -> LabelSources:
     admin = [item for item in admin if item[2] is not None]
     if admin:
         geometry = projector.to_metric(shapely.from_wkb([item[2] for item in admin]))
-        found.admin = [(kind, name, shapely.make_valid(g)) for (kind, name, _), g in zip(admin, geometry)]
+        found.admin = _dedup_admin([(kind, name, shapely.make_valid(g)) for (kind, name, _), g in zip(admin, geometry)])
     water = [item for item in water if item[1] is not None]
     if water:
         geometry = projector.to_metric(shapely.from_wkb([item[1] for item in water]))
@@ -224,6 +225,16 @@ def read_label_sources(pbf: Path, projector: Projector) -> LabelSources:
         for (name, _), g in zip(rivers, geometry):
             found.rivers.setdefault(name, []).append(g)
     return found
+
+
+def _dedup_admin(items):
+    """Одна подпись на (уровень, название): если граница есть и отношением, и линией, берётся большая площадь."""
+    best = {}
+    for kind, name, polygon in items:
+        key = (kind, name)
+        if key not in best or polygon.area > best[key][2].area:
+            best[key] = (kind, name, polygon)
+    return [best[key] for key in sorted(best)]
 
 
 def _wkb_area(wkb, obj):
