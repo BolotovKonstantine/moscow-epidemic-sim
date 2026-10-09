@@ -171,6 +171,21 @@ def _straight_at(line, length, s):
     return best
 
 
+def _major_river_anchor(system):
+    """Точка и угол подписи реки на обзоре: середина самого длинного почти прямого участка системы.
+
+    Длина прямого участка не записывается (span = 0): на масштабе обзора (~170 м/пикс.) под текст
+    нужен прямой участок в километры, и с проверкой длины крупные реки, включая Москву, остались бы
+    без подписи. Подпись лишь повёрнута вдоль реки.
+    """
+    candidates = [a for part in system for a in line_anchors(part, RIVER_SPACING_M)]
+    if candidates:
+        x, y, angle, _ = max(candidates, key=lambda a: a[3])
+        return x, y, angle
+    mid = max(system, key=lambda p: p.length).interpolate(0.5, normalized=True)
+    return mid.x, mid.y, 0.0
+
+
 def _connected(parts, gap):
     """Группы линий, связанных цепочкой расстояний не больше gap (в порядке первой части)."""
     parent = list(range(len(parts)))
@@ -421,8 +436,8 @@ def region_labels(sources: LabelSources, stations, region, moscow) -> Labels:
         for system in _connected(parts, RIVER_GAP_M):
             total = sum(p.length for p in system)
             if total >= RIVER_MAJOR_MIN_M:
-                mid = max(system, key=lambda p: p.length).interpolate(0.5, normalized=True)
-                rows.append((mid.x, mid.y, 0.0, 0.0, "river_major", total, name))
+                x, y, angle = _major_river_anchor(system)
+                rows.append((x, y, angle, 0.0, "river_major", total, name))
         for part in parts:
             for x, y, angle, span in line_anchors(part, RIVER_SPACING_M):
                 rows.append((x, y, angle, span, "river", part.length, name))

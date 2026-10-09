@@ -182,6 +182,11 @@ func _test_rejections(fixture: String) -> void:
 		"огромное смещение раздела отклоняется без переполнения")
 	check(not MapTile.is_integers([1e300], 1), "целые больше 2^53 отклоняются")
 	check(not MapTile.is_tile_index([4294967296, 0]) and MapTile.is_tile_index([26, 26]), "номер участка вне Vector2i отклоняется")
+	var box := Rect2(0, 0, 100, 100)
+	check(MapView._bbox_problem(box, Rect2(0, 0, 100, 100)).is_empty(), "охват, равный геометрии, принимается")
+	check("геометрии нет" in MapView._bbox_problem(box, null), "охват без геометрии отклоняется")
+	check(MapView._bbox_problem(Rect2(), null).is_empty(), "пустой участок без охвата принимается")
+	check("не совпадает" in MapView._bbox_problem(box, Rect2(0, 0, 50, 50)), "охват больше геометрии отклоняется")
 	check(MapView._encloses(Rect2(0, 0, 10, 10), Rect2(1, 5, 8, 0)) and not MapView._encloses(Rect2(0, 0, 10, 10), Rect2(1, 5, 20, 0)),
 		"вырожденный охват (горизонтальная линия) сравнивается по краям")
 

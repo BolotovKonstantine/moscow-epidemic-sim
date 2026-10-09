@@ -126,6 +126,16 @@ class LabelGeometryTests(unittest.TestCase):
         major = sorted(t for t, c in zip(labels.text, labels.cls) if mt.LABEL_CLASSES[int(c)] == "river_major")
         self.assertEqual(major, ["Большая", "Большая", "Длинная"])
 
+    def test_major_river_label_follows_river(self):
+        diagonal = shapely.LineString([(0, 0), (20_000, 20_000)])   # 28 км на северо-восток
+        sources = ml.LabelSources(rivers={"Косая": [diagonal]})
+        region = shapely.box(-1, -1, 30_000, 30_000)
+        labels = ml.region_labels(sources, [], region, region)
+        major = [(a, s) for a, s, c in zip(labels.angle, labels.span, labels.cls) if mt.LABEL_CLASSES[int(c)] == "river_major"]
+        self.assertEqual(len(major), 1)
+        self.assertAlmostEqual(major[0][0], -math.pi / 4, places=5)   # вдоль реки, а не горизонтально
+        self.assertEqual(major[0][1], 0.0)                             # точечная: без проверки длины
+
     def test_admin_dedup_keeps_distinct_namesakes(self):
         a = shapely.box(0, 0, 1000, 1000)
         twin = shapely.box(0, 0, 1000, 990)              # та же граница линией

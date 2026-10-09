@@ -78,13 +78,10 @@ func load_map(map_dir: String) -> String:
 		var view := MapTileView.new()
 		add_child(view)
 		view.setup(tile, style)
-		# Заявленный охват должен покрывать геометрию: по нему ограничивается камера.
-		var geometry: Variant = view.geometry_bounds()
-		# Охват должен совпадать с геометрией: и не меньше (камера не дойдёт до края), и не больше
-		# (обзор отдалится на пустоту) — сравниваем четыре края с допуском.
-		if geometry != null and not (_encloses(tile.bbox.grow(BBOX_TOLERANCE_M), geometry)
-				and _encloses((geometry as Rect2).grow(BBOX_TOLERANCE_M), tile.bbox)):
-			errors.append("%s: охват %s не совпадает с геометрией %s" % [entry.path, tile.bbox, geometry])
+		# По охвату ограничивается камера: он должен совпадать с геометрией.
+		var problem := _bbox_problem(tile.bbox, view.geometry_bounds())
+		if not problem.is_empty():
+			errors.append("%s: %s" % [entry.path, problem])
 			view.free()
 			continue
 		if tile.level > 0:
@@ -207,6 +204,17 @@ class LevelBackground extends Node2D:
 
 func _refresh_labels() -> void:
 	_labels.update_view(_camera.position, meters_per_pixel, level_for(meters_per_pixel), _view_size())
+
+
+## Охват должен совпадать с геометрией: и не меньше (камера не дойдёт до края), и не больше
+## (обзор отдалится на пустоту); заявленный охват без геометрии — тоже ошибка. "" — всё верно.
+static func _bbox_problem(bbox: Rect2, geometry: Variant) -> String:
+	if geometry == null:
+		return "охват %s заявлен, а геометрии нет" % bbox if bbox.has_area() else ""
+	var mesh_bounds: Rect2 = geometry
+	if _encloses(bbox.grow(BBOX_TOLERANCE_M), mesh_bounds) and _encloses(mesh_bounds.grow(BBOX_TOLERANCE_M), bbox):
+		return ""
+	return "охват %s не совпадает с геометрией %s" % [bbox, mesh_bounds]
 
 
 ## Прямоугольник покрывает другой по краям; в отличие от Rect2.encloses, работает и для вырожденной
