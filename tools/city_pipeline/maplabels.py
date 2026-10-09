@@ -182,7 +182,7 @@ def read_label_sources(pbf: Path, projector: Projector) -> LabelSources:
     """Названия из вырезки OSM: места, административные границы, реки и водоёмы."""
     wkb = osmium.geom.WKBFactory()
     found = LabelSources()
-    places, admin, rivers, water = [], [], [], []
+    places, place_areas, admin, rivers, water = [], [], [], [], []
     processor = osmium.FileProcessor(str(pbf)).with_areas().with_filter(osmium.filter.KeyFilter(*LABEL_KEYS))
     for obj in processor:
         tags = obj.tags
@@ -205,6 +205,12 @@ def read_label_sources(pbf: Path, projector: Projector) -> LabelSources:
             elif tags.get("natural") == "water" or tags.get("waterway") == "riverbank" \
                     or tags.get("landuse") in WATER_LANDUSE:
                 water.append((name, _wkb_area(wkb, obj)))
+            elif tags.get("place") in PLACE_CLASS:
+                # Населённый пункт задан площадью, а не точкой: подпись — в её внутренней точке.
+                kind = PLACE_CLASS[tags.get("place")]
+                capital = tags.get("capital") == "yes" and kind == "city"
+                place_areas.append(("capital" if capital else kind, name, _population(tags.get("population")),
+                                    _wkb_area(wkb, obj)))
         elif obj.is_way() and tags.get("waterway") == "river" and tags.get("tunnel") in (None, "no"):
             try:
                 rivers.append((name, bytes.fromhex(wkb.create_linestring(obj))))
@@ -213,6 +219,7 @@ def read_label_sources(pbf: Path, projector: Projector) -> LabelSources:
     if places:
         x, y = projector.xy([p[2] for p in places], [p[3] for p in places])
         found.places = [(p[0], p[1], float(px), float(py), p[4]) for p, px, py in zip(places, x, y)]
+    found.places += _area_places([item for item in place_areas if item[3] is not None], found.places, projector)
     admin = [item for item in admin if item[2] is not None]
     if admin:
         geometry = projector.to_metric(shapely.from_wkb([item[2] for item in admin]))
@@ -227,6 +234,25 @@ def read_label_sources(pbf: Path, projector: Projector) -> LabelSources:
         for (name, _), g in zip(rivers, geometry):
             found.rivers.setdefault(name, []).append(g)
     return found
+
+
+def _area_places(items, nodes, projector):
+    """Места-площади как точки: внутренняя точка площади; пропускаются, если точка того же
+    названия уже лежит внутри площади (место отмечено и точкой, и контуром)."""
+    if not items:
+        return []
+    geometry = projector.to_metric(shapely.from_wkb([item[3] for item in items]))
+    result = []
+    for (kind, name, population, _), polygon in zip(items, geometry):
+        polygon = shapely.make_valid(polygon)
+        if polygon.is_empty or polygon.area <= 0:
+            continue
+        twins = [(x, y) for _, node_name, x, y, _ in nodes if node_name == name]
+        if twins and shapely.intersects_xy(polygon, [x for x, _ in twins], [y for _, y in twins]).any():
+            continue
+        point = label_point(polygon)
+        result.append((kind, name, point.x, point.y, population))
+    return sorted(result, key=lambda item: (item[0], item[1], item[2], item[3]))
 
 
 def _dedup_admin(items):

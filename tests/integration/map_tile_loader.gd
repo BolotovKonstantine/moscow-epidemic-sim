@@ -128,6 +128,10 @@ func _test_rejections(fixture: String) -> void:
 	check("вне своего участка" in tile_ok._check_label_anchors(), "подпись за краем участка 2 км отклоняется")
 	tile_ok.sections["label.xy"][0] = 1500.0
 	check(tile_ok._check_label_anchors().is_empty(), "подписи фикстуры в пределах участка")
+	var line_x: float = tile_ok.sections["line.xy"][0]
+	tile_ok.sections["line.xy"][0] = 2500.0
+	check("вне квадрата участка" in tile_ok._check_layers(), "линия за краем участка 2 км отклоняется")
+	tile_ok.sections["line.xy"][0] = line_x
 	tile_ok.sections["line.off"][0] = 100.0
 	check("line.off" in tile_ok._check_layers(), "смещение ленты за пределом отклоняется")
 	tile_ok.sections["line.off"][0] = 0.0

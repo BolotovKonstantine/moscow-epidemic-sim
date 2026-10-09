@@ -14,7 +14,7 @@ const MAX_COORD_M := 1.0e7   # |координата| плоскости кар�
 const MAX_SAFE_INTEGER := 9007199254740992.0   # 2^53: целые JSON без потери точности и переполнения int
 const MAX_TILE_INDEX := 1 << 20   # |номер участка|: сетка региона — десятки участков; точно влезает в Vector2i
 const ANGLE_TOLERANCE := 1.0e-6   # π/2 во float32 чуть отличается от float64
-const LABEL_TOLERANCE_M := 1.0   # точка подписи считается в float64, хранится во float32
+const LABEL_TOLERANCE_M := 1.0   # допуск координат участка: считаются в float64, хранятся во float32
 const MAX_LEVEL := 2   # уровни 0–2 формата 1: обзор, участки 8 и 2 км
 const PREAMBLE := 16   # магия, u32 версия, u32 длина заголовка
 const MAX_HEADER_BYTES := 1 << 20
@@ -269,6 +269,11 @@ func _check_layers() -> String:
 		var cls_name: String = layer + ".cls"
 		if not _codes_within(sections[cls_name], class_list.size()):
 			return "раздел %s: код класса вне списка из %d классов" % [cls_name, class_list.size()]
+	# Площади и линии подробного участка обрезаны по его квадрату; выступать за край могут только здания.
+	if level > 0:
+		for name: String in ["area.xy", "line.xy"]:
+			if sections.has(name) and not _within_range(sections[name], -LABEL_TOLERANCE_M, tile_size_m + LABEL_TOLERANCE_M):
+				return "%s: вершины вне квадрата участка %.0f м" % [name, tile_size_m]
 	if has_layer("line") and not _within(sections["line.off"], MapLineStyle.MAX_OFFSET):
 		return "line.off: смещение ленты больше %.0f полуширин — шейдер вынес бы её за границы отсечения" % MapLineStyle.MAX_OFFSET
 	if level == 0 and has_layer("building"):
@@ -408,6 +413,15 @@ static func _indices_within(indices: PackedInt32Array, vertices: int) -> bool:
 	var sorted := indices.duplicate()
 	sorted.sort()
 	return sorted[0] >= 0 and sorted[-1] < vertices
+
+
+## Все значения в [low, high] (значения уже проверены на конечность).
+static func _within_range(values: PackedFloat32Array, low: float, high: float) -> bool:
+	if values.is_empty():
+		return true
+	var sorted := values.duplicate()
+	sorted.sort()
+	return sorted[0] >= low and sorted[-1] <= high
 
 
 ## Все значения в [-limit, limit] (значения уже проверены на конечность).
