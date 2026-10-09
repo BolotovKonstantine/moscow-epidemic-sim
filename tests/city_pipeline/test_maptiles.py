@@ -278,6 +278,16 @@ class FormatTests(unittest.TestCase):
             with self.subTest(message=message):
                 with self.assertRaisesRegex(mt.MapTileError, message):
                     mt.decode_tile(self.rebuild(data, mutate))
+        line = mt.encode_tile({"x": 1}, [("line.cls", "f32", np.ones(2))])
+        with self.assertRaisesRegex(mt.MapTileError, "shape"):
+            mt.decode_tile(self.rebuild(line, lambda doc: doc["sections"][0].update(shape=[True, 2], count=2)))
+        duplicate = self.rebuild(data, lambda doc: None)
+        head_len = int.from_bytes(duplicate[12:16], "little")
+        text = duplicate[16:16 + head_len].decode("utf-8")
+        text = text.replace('{"format"', '{"x":2,"format"', 1) if '{"format"' in text else text.replace('"x":1', '"x":1,"x":2', 1)
+        doubled = duplicate[:12] + len(text.encode()).to_bytes(4, "little") + text.encode() + duplicate[16 + head_len:]
+        with self.assertRaisesRegex(mt.MapTileError, "повторяющийся ключ"):
+            mt.decode_tile(doubled)
         array_root = data[:12] + (4).to_bytes(4, "little") + b"[1] "   # заголовок — массив, не объект
         with self.assertRaisesRegex(mt.MapTileError, "не объект"):
             mt.decode_tile(array_root)

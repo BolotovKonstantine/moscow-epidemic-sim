@@ -246,7 +246,7 @@ def _check_map_tile(data: bytes, entry: dict, index: dict, asset_id: str):
     size = LEVEL_TILE_M[entry["level"]]
     origin = header.get("origin")
     grid = [0.0, 0.0] if size is None else [entry["tile"][0] * size, entry["tile"][1] * size]
-    if not _map_box((origin or []) * 2) or any(abs(o - g) > MAP_TOLERANCE_M for o, g in zip(origin, grid)):
+    if not isinstance(origin, list) or len(origin) != 2 or not _map_box(origin * 2) or any(abs(o - g) > MAP_TOLERANCE_M for o, g in zip(origin, grid)):
         raise ManifestError(f"{name}: угол {origin} не совпадает с сеткой {grid}")
     if not isinstance(header.get("counts"), dict):
         raise ManifestError(f"{name}: counts в заголовке — не объект")

@@ -281,6 +281,9 @@ def command_map_tile(args) -> int:
     if not region_pbf.is_file():
         raise ManifestError(f"Нет вырезки OSM {region_pbf}: сначала выполните build для этой конфигурации")
     out = args.out.resolve()
+    if out.is_relative_to(package.resolve()):
+        # Карта пакета указана в паспорте по хешу: её пишет только build, иначе пакет перестанет проходить validate.
+        raise ManifestError(f"--out {out} внутри пакета {package}: карту пакета пишет build, выберите другой каталог")
     if args.all:
         started = time.monotonic()
         index, summary = export_region_tiles(package, region_pbf, config["metric_crs"], out)

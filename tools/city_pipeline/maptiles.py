@@ -108,9 +108,18 @@ def _reject_constant(value):
     raise MapTileError(f"недопустимое значение JSON {value}")
 
 
+def _unique_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise MapTileError(f"повторяющийся ключ JSON {key}")
+        result[key] = value
+    return result
+
+
 def strict_json(raw: bytes):
-    """JSON участка без NaN и Infinity (их не принимает и парсер Godot)."""
-    return json.loads(raw.decode("utf-8"), parse_constant=_reject_constant)
+    """JSON участка без NaN, Infinity (их не принимает и парсер Godot) и повторяющихся ключей (как паспорт)."""
+    return json.loads(raw.decode("utf-8"), parse_constant=_reject_constant, object_pairs_hook=_unique_keys)
 
 
 class MapTileError(ValueError):
@@ -459,7 +468,7 @@ def decode_tile(data: bytes):
         columns = SECTION_COLUMNS.get(item["name"], 1)
         count, shape = item.get("count"), item.get("shape")
         if type(count) is not int or count < 0 or count % columns or item["raw_size"] != count * 4 \
-                or shape != ([count] if columns == 1 else [count // columns, columns]):
+                or not isinstance(shape, list) or any(type(v) is not int for v in shape) or shape != ([count] if columns == 1 else [count // columns, columns]):
             raise MapTileError(f"раздел {item['name']}: count {count} и shape {shape} не соответствуют формату и размеру")
         array = np.frombuffer(raw, dtype=DTYPES[item["dtype"]])
         if item["dtype"] == "f32" and not np.isfinite(array).all():
