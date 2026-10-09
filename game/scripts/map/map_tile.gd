@@ -10,7 +10,7 @@ const FORMAT := "mesim-map-tile"
 const FORMAT_VERSION := 1
 const LEVEL_TILE_M := {1: 8000.0, 2: 2000.0}   # размеры участков уровней формата 1
 const MAX_JSON_SECTION_BYTES := 16 << 20   # как maptiles.MAX_JSON_SECTION_BYTES экспорта; подписи обзора центра — ~70 КБ, карточки участка 2 км — ~130 КБ
-const MAX_DECODED_BYTES := 512 << 20   # всего данных участка после распаковки
+const MAX_DECODED_BYTES := 512 << 20   # всего данных участка после распаковки (как maptiles.MAX_DECODED_BYTES)
 const MAX_COORD_M := 1.0e7   # |координата| плоскости карты: регион — сотни км; 1e7 точно помещается во float32
 const MAX_SAFE_INTEGER := 9007199254740992.0   # 2^53: целые JSON без потери точности и переполнения int
 const MAX_TILE_INDEX := 1 << 20   # |номер участка|: сетка региона — десятки участков; точно влезает в Vector2i
@@ -22,8 +22,8 @@ const LABEL_TOLERANCE_M := 1.0   # допуск координат участк�
 const MAX_LEVEL := 2   # уровни 0–2 формата 1: обзор, участки 8 и 2 км
 const PREAMBLE := 16   # магия, u32 версия, u32 длина заголовка
 const MAX_HEADER_BYTES := 1 << 20
-const MAX_TILE_BYTES := 256 << 20      # предел файла участка; участки центра Москвы — до ~3,5 МБ
-const MAX_SECTION_BYTES := 256 << 20   # предел раздела после распаковки; участок 2 км центра — ~3 МБ
+const MAX_TILE_BYTES := 256 << 20      # предел файла участка (как maptiles.MAX_TILE_BYTES); участки центра Москвы — до ~3,5 МБ
+const MAX_SECTION_BYTES := 256 << 20   # предел раздела после распаковки (как maptiles.MAX_SECTION_BYTES); участок 2 км центра — ~3 МБ
 
 # Раздел → число столбцов (1 — плоский массив). Индексные разделы проверяются по числу вершин.
 const COLUMNS := {
