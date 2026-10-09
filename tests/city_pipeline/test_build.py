@@ -134,6 +134,7 @@ class BuildTests(unittest.TestCase):
     def test_validate_checks_every_map_tile(self):
         import hashlib
         import shutil
+        from tools.city_pipeline import maptiles as mt
         from tools.city_pipeline.manifest import ManifestError
 
         def copy(name):
@@ -175,6 +176,7 @@ class BuildTests(unittest.TestCase):
             ("index-far-bbox", lambda doc: overview(doc).update(bbox=[0, 0, 2e7, 10]), "bbox участка"),
             ("index-far-tile", lambda doc: doc["tiles"][-1].update(tile=[(1 << 20) + 1, 0]), "некорректная запись участка"),
             ("index-list-level", lambda doc: doc["tiles"][-1].update(level=[]), "некорректная запись участка"),
+            ("index-huge-tile", lambda doc: doc["tiles"][-1].update(size_bytes=mt.MAX_TILE_BYTES + 1), "некорректная запись участка"),
             ("index-no-credit", lambda doc: doc.update(attribution=["кто-то"]), "attribution"),
             ("index-no-classes", lambda doc: doc.pop("classes"), "таблицы классов"),
         ):
@@ -186,6 +188,15 @@ class BuildTests(unittest.TestCase):
                 reseal(package)
                 with self.assertRaisesRegex(ManifestError, message):
                     validate_manifest(package / "manifest.json")
+        empty = copy("tile-empty")
+        edited = json.loads((empty / "map" / "index.json").read_text(encoding="utf-8"))
+        entry = edited["tiles"][-1]
+        (empty / "map" / entry["path"]).write_bytes(b"")
+        entry.update(size_bytes=0, sha256=hashlib.sha256(b"").hexdigest())
+        (empty / "map" / "index.json").write_text(json.dumps(edited), encoding="utf-8")
+        reseal(empty)
+        with self.assertRaisesRegex(ManifestError, "некорректная запись участка"):
+            validate_manifest(empty / "manifest.json")
         other = copy("index-other-package")
         edited = json.loads((other / "map" / "index.json").read_text(encoding="utf-8"))
         edited["package_version"] = "9.9.9"

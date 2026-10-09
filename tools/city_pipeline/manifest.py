@@ -156,7 +156,7 @@ MAP_MAX_COORD_M = 1.0e7         # как MapTile.MAX_COORD_M: |координа�
 def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
     """Проверить индекс участков карты: формат, пакет и каждый участок (путь внутри каталога карты,
     размер и SHA256). Хеш индекса записан в паспорте, хеши участков — в индексе. Возвращает число участков."""
-    from .maptiles import CLASSES, FORMAT_VERSION, INDEX_FORMAT, LEVEL_TILE_M, MAP_CREDIT
+    from .maptiles import CLASSES, FORMAT_VERSION, INDEX_FORMAT, LEVEL_TILE_M, MAP_CREDIT, MAX_TILE_BYTES
 
     try:
         size = path.stat().st_size
@@ -185,7 +185,8 @@ def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
     seen_paths, seen_tiles = set(), set()
     for tile in tiles:
         if not isinstance(tile, dict) or not isinstance(tile.get("path"), str) \
-                or type(tile.get("level")) is not int or tile["level"] not in LEVEL_TILE_M or type(tile.get("size_bytes")) is not int \
+                or type(tile.get("level")) is not int or tile["level"] not in LEVEL_TILE_M \
+                or type(tile.get("size_bytes")) is not int or not 0 < tile["size_bytes"] <= MAX_TILE_BYTES \
                 or not isinstance(tile.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", tile["sha256"]) \
                 or not isinstance(tile.get("tile"), list) or len(tile["tile"]) != 2 \
                 or any(type(v) is not int or abs(v) > MAP_MAX_TILE_INDEX for v in tile["tile"]):

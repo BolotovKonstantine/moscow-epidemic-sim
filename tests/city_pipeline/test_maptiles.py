@@ -420,6 +420,17 @@ class ExportTests(unittest.TestCase):
             xy = sections["label.xy"]
             self.assertTrue(((xy >= 0) & (xy <= header["tile_size_m"])).all())
 
+    def test_test_export_replaces_directory_whole(self):
+        out = self.root / "partial-test"
+        out.mkdir()
+        (out / "stale.mtile").write_bytes(b"old")   # не набор участков: нет index.json карты
+        with self.assertRaisesRegex(mt.MapTileError, "не является набором участков"):
+            export_test_tiles(self.package, self.basemap, self.crs, *CENTER, out, log=lambda *_: None)
+        self.assertEqual(sorted(p.name for p in out.iterdir()), ["stale.mtile"])
+        export_test_tiles(self.package, self.basemap, self.crs, *CENTER, self.out, log=lambda *_: None)   # прежний набор заменяется
+        self.assertEqual(sorted(p.relative_to(self.out).as_posix() for p in self.out.rglob("*.mtile")),
+                         sorted(tile["path"] for tile in self.index["tiles"]))
+
     def test_export_is_reproducible(self):
         again = export_test_tiles(self.package, self.basemap, self.crs, *CENTER, self.root / "again", log=lambda *_: None)
         self.assertEqual([tile["sha256"] for tile in again["tiles"]], [tile["sha256"] for tile in self.index["tiles"]])

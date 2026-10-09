@@ -477,13 +477,13 @@ def export_test_tiles(package: Path, region_pbf: Path, metric_crs: str, lon: flo
         wanted |= {pkg.building_rows["id"][i] for i in source.building_rows(level, ix, iy)}
     log(f"Контуры {len(wanted)} зданий…")
     source.load_buildings(wanted)
-    tiles = []
-    out.mkdir(parents=True, exist_ok=True)
-    for level, ix, iy in targets:
-        log(f"Участок z{level} {ix}_{iy}…")
-        sections, counts, bbox, origin = source.tile(level, ix, iy)
-        tiles.append(write_tile(out, pkg, level, ix, iy, origin, sections, counts, bbox))
-    return write_index(out, pkg, metric_crs, plane, tiles, "Тестовый экспорт (#11): уровень 0 и по одному участку уровней 1 и 2.")
+    with staged(out) as staging:
+        tiles = []
+        for level, ix, iy in targets:
+            log(f"Участок z{level} {ix}_{iy}…")
+            sections, counts, bbox, origin = source.tile(level, ix, iy)
+            tiles.append(write_tile(staging, pkg, level, ix, iy, origin, sections, counts, bbox))
+        return write_index(staging, pkg, metric_crs, plane, tiles, "Тестовый экспорт (#11): уровень 0 и по одному участку уровней 1 и 2.")
 
 
 def export_region_tiles(package: Path, region_pbf: Path, metric_crs: str, out: Path, log=print, manifest=None):
@@ -494,17 +494,13 @@ def export_region_tiles(package: Path, region_pbf: Path, metric_crs: str, out: P
     который воспроизводится побайтно). Нарушение покрытия — ошибка экспорта. manifest — паспорт
     пакета, если package/manifest.json ещё не записан (сборка пакета).
     """
-    _check_replaceable(out)   # рано: не тратить минуты на набор, который нельзя установить
+    check_replaceable(out)   # рано: не тратить минуты на набор, который нельзя установить
     source = MapSource(package, region_pbf, metric_crs, log, manifest)
     pkg = source.pkg
     log(f"Контуры {len(pkg.building_rows['id'])} зданий…")
     source.load_buildings()
     targets = [(level, ix, iy) for level in sorted(mt.LEVEL_TILE_M) for ix, iy in source.region_tiles(level)]
-    # Набор пишется рядом и подменяет прежний только целиком: частичная перезапись оставила бы
-    # старый index.json с хешами, не совпадающими с новыми участками.
-    out.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=f".{out.name}.", suffix=".partial", dir=out.parent))
-    try:
+    with staged(out) as staging:
         tiles = []
         for number, (level, ix, iy) in enumerate(targets, 1):
             if number == 1 or number % 200 == 0 or number == len(targets):
@@ -514,19 +510,33 @@ def export_region_tiles(package: Path, region_pbf: Path, metric_crs: str, out: P
         summary = coverage_summary(source, tiles)
         index = write_index(staging, pkg, metric_crs, source.plane, tiles,
                             "Весь регион (#13): обзор и все участки уровней 1 и 2, задевающие регион.")
+    return index, summary
+
+
+@contextmanager
+def staged(out: Path):
+    """Каталог для набора участков, который заменит out только целиком.
+
+    Набор пишется во временный каталог рядом; после успешного выхода из блока каталог out
+    проверяется ещё раз под блокировкой `.<имя>.lock` (её берут все экспорты в этот каталог)
+    и сразу подменяется. Частичная перезапись оставила бы старый index.json с хешами, не
+    совпадающими с новыми участками. При ошибке временный каталог удаляется, out не трогается.
+    """
+    check_replaceable(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{out.name}.", suffix=".partial", dir=out.parent))
+    try:
+        yield staging
         staging.chmod(0o755)   # mkdtemp создаёт каталог только для владельца
-        # Каталог мог появиться или смениться за время сборки: проверяем ещё раз под блокировкой,
-        # которую берут все экспорты в этот каталог, и сразу подменяем.
         with _locked(out.with_name(f".{out.name}.lock")):
-            _check_replaceable(out)
+            check_replaceable(out)   # каталог мог появиться или смениться за время сборки
             _install(staging, out)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    return index, summary
 
 
-def _check_replaceable(out: Path):
+def check_replaceable(out: Path):
     """Заменять можно только отсутствующий или пустой каталог либо прежний набор участков (index.json карты)."""
     if not out.exists():
         return
