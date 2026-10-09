@@ -60,7 +60,13 @@ class Labels:
 
     @classmethod
     def from_rows(cls, rows):
-        """rows: [(x, y, angle, span, класс, вес, текст)] → Labels в стабильном порядке."""
+        """rows: [(x, y, angle, span, класс, вес, текст)] → Labels в стабильном порядке.
+
+        Тексты приводятся к правилам формата: пробелы по краям убираются, пустые подписи
+        отбрасываются, длиннее MAX_LABEL_CHARS — обрезаются с многоточием.
+        """
+        rows = [r[:6] + (label_text(r[6]),) for r in rows]
+        rows = [r for r in rows if r[6]]
         rows = sorted(rows, key=lambda r: (mt.LABEL_CLASSES.index(r[4]), -r[5], r[6], round(r[0], 2), round(r[1], 2)))
         if not rows:
             return cls()
@@ -90,6 +96,8 @@ class Labels:
 
     def sections(self, plane: mt.MapPlane, map_origin):
         """Разделы файла участка: координаты относительно угла участка."""
+        if len(self) > mt.MAX_LABELS:
+            raise mt.MapTileError(f"подписей в участке {len(self)}, предел формата {mt.MAX_LABELS}")
         ox, oy = plane.x0 + map_origin[0], plane.y0 - map_origin[1]
         xy = np.column_stack((self.xy[:, 0] - ox, oy - self.xy[:, 1])) if len(self) else np.empty((0, 2))
         return [("label.xy", "f32", xy), ("label.angle", "f32", self.angle), ("label.span", "f32", self.span),
@@ -184,6 +192,14 @@ def label_point(polygon):
     parts, _ = mt.polygon_parts(np.array([polygon], dtype=object))
     polygon = max(parts, key=lambda part: part.area)   # пересечения дают мультиполигоны и коллекции
     return ops.polylabel(polygon, tolerance=max(10.0, math.sqrt(polygon.area) / 100))
+
+
+def label_text(name):
+    """Текст подписи по правилам формата (см. Labels.from_rows); пустая строка — не подписывать."""
+    text = " ".join(str(name or "").split())
+    if len(text) > mt.MAX_LABEL_CHARS:
+        text = text[:mt.MAX_LABEL_CHARS - 1] + "…"
+    return text
 
 
 def okrug_name(name):

@@ -41,6 +41,9 @@ LABEL_CLASSES = (
     "capital", "okrug", "municipality", "city", "town", "district", "village", "suburb", "hamlet",
     "river_major", "river", "water", "street_major", "street", "metro", "rail_station",
 )
+# Пределы подписей; те же проверяет игра (MapTile.MAX_LABELS, MAX_LABEL_CHARS).
+MAX_LABELS = 100_000
+MAX_LABEL_CHARS = 200
 CLASSES = {"area": AREA_CLASSES, "building": BUILDING_CLASSES, "line": LINE_CLASSES, "label": LABEL_CLASSES}
 
 HIGHWAY_CLASS = {

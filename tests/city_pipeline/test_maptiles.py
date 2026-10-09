@@ -128,6 +128,25 @@ class LabelGeometryTests(unittest.TestCase):
         kept = ml._dedup_admin([("district", "Сокол", a), ("district", "Сокол", twin), ("district", "Сокол", far)])
         self.assertEqual(sorted(round(p.centroid.x) for _, _, p in kept), [500, 5500])
 
+    def test_label_text_follows_format_limits(self):
+        labels = ml.Labels.from_rows([
+            (0, 0, 0, 0, "street", 1, "  "), (1, 0, 0, 0, "street", 1, "  Арбат  "),
+            (2, 0, 0, 0, "street", 1, "ы" * 300)])
+        self.assertEqual(len(labels), 2)
+        self.assertIn("Арбат", labels.text)
+        self.assertEqual(max(len(t) for t in labels.text), mt.MAX_LABEL_CHARS)
+
+    def test_too_many_labels_fail_export(self):
+        rows = [(i, 0, 0, 0, "street", 1, "x") for i in range(3)]
+        labels = ml.Labels.from_rows(rows)
+        original = mt.MAX_LABELS
+        mt.MAX_LABELS = 2
+        try:
+            with self.assertRaises(mt.MapTileError):
+                labels.sections(mt.MapPlane(0, 0), (0, 0))
+        finally:
+            mt.MAX_LABELS = original
+
     def test_okrug_name_is_shortened(self):
         self.assertEqual(ml.okrug_name("Центральный административный округ"), "Центральный АО")
 
