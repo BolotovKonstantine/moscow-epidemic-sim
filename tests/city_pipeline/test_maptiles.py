@@ -239,7 +239,9 @@ class ExportTests(unittest.TestCase):
         base.way(line, {"railway": "rail"})
         # Названия для подписей: город, район Москвы, река.
         base.node(lon + 0.003, lat + 0.003, {"place": "city", "name": "Тестград", "population": "1000"})
-        base.square(lon - 0.03, lat + 0.03, 0.003, {"place": "village", "name": "Контурное"})       # место-площадь
+        outline = base.square(lon - 0.03, lat + 0.03, 0.003, {"place": "village", "name": "Контурное"})   # место-площадь
+        base.relation(52, [("way", outline, "outer")], {"type": "multipolygon", "place": "village",
+                                                         "name": "Контурное"})   # тот же контур отношением
         town = base.square(lon + 0.2, lat + 0.2, 0.004)   # вне Москвы: граница уровня 8 и одновременно город
         base.relation(51, [("way", town, "outer")], {"type": "boundary", "boundary": "administrative",
                                                       "admin_level": "8", "place": "town", "name": "Пограничный"})
@@ -331,6 +333,7 @@ class ExportTests(unittest.TestCase):
         self.assertTrue({("city", "Тестград"), ("district", "район Тестовый")} <= texts[0])
         self.assertIn(("okrug", "Тестовый АО"), texts[0])
         self.assertIn(("village", "Контурное"), texts[0])
+        self.assertEqual(sum(t == "Контурное" for t in self.tile(0)[1][1]["label.text"]), 1)   # линия и отношение — одна
         self.assertIn(("town", "Пограничный"), texts[0])   # place на административной площади
         _, (_, sections) = self.tile(0)
         self.assertEqual(sum(t == "Тестград" for t in sections["label.text"]), 1)   # точка и контур — одна подпись

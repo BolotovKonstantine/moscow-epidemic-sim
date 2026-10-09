@@ -37,7 +37,7 @@ RIVER_MAJOR_MIN_M = 20_000.0     # реки длиннее подписываю�
 WATER_MIN_M2 = 300_000.0         # водоёмы от 30 га
 STATION_DEDUP_M = 400.0          # станции с одним названием ближе этого — одна подпись
 RIVER_SPACING_M = 5_000.0
-ADMIN_SAME_SHARE = 0.5          # одноимённые границы, перекрытые больше чем наполовину, — одна граница
+SAME_SHARE = 0.5                # одноимённые площади, перекрытые больше чем наполовину, — одна и та же
 RIVER_GAP_M = 200.0              # части реки ближе этого — одна река (разрывы у тоннелей)
 RIVER_TILE_SPACING_M = 600.0     # в участках 2 км река подписывается чаще, чем на обзоре
 STREET_SPACING_M = {1: 2_500.0, 2: 350.0}
@@ -277,22 +277,35 @@ def read_label_sources(pbf: Path, projector: Projector) -> LabelSources:
 
 
 def _area_places(items, nodes, projector):
-    """Места-площади как точки: внутренняя точка площади; пропускаются, если точка того же
-    названия уже лежит внутри площади (место отмечено и точкой, и контуром)."""
+    """Места-площади как точки: внутренняя точка площади. Пропускаются, если точка того же названия
+    уже лежит внутри площади (место отмечено и точкой, и контуром) или если тот же контур уже взят
+    в другой форме (отношение и замкнутая линия: то же название, перекрытие больше SAME_SHARE)."""
     if not items:
         return []
     geometry = projector.to_metric(shapely.from_wkb([item[3] for item in items]))
-    result = []
+    areas = []
     for (kind, name, population, _), polygon in zip(items, geometry):
         polygon = shapely.make_valid(polygon)
-        if polygon.is_empty or polygon.area <= 0:
-            continue
+        if not polygon.is_empty and polygon.area > 0:
+            areas.append((kind, name, population, polygon))
+    kept = []
+    for kind, name, population, polygon in sorted(areas, key=lambda item: (item[1], item[0], -item[3].area)):
         twins = [(x, y) for _, node_name, x, y, _ in nodes if node_name == name]
         if twins and shapely.intersects_xy(polygon, [x for x, _ in twins], [y for _, y in twins]).any():
             continue
+        if any(n == name and _same_area(p, polygon) for _, n, _, p in kept):
+            continue
+        kept.append((kind, name, population, polygon))
+    result = []
+    for kind, name, population, polygon in kept:
         point = label_point(polygon)
         result.append((kind, name, point.x, point.y, population))
     return sorted(result, key=lambda item: (item[0], item[1], item[2], item[3]))
+
+
+def _same_area(a, b):
+    """Две площади — одна и та же, если перекрываются больше чем на SAME_SHARE меньшей."""
+    return shapely.intersection(a, b).area > SAME_SHARE * min(a.area, b.area)
 
 
 def _dedup_admin(items):
@@ -300,9 +313,7 @@ def _dedup_admin(items):
     и перекрытие больше половины меньшей площади; остаётся большая. Разные одноимённые единицы сохраняются."""
     kept = []
     for kind, name, polygon in sorted(items, key=lambda item: (item[0], item[1], -item[2].area)):
-        duplicate = any(
-            k == kind and n == name and shapely.intersection(p, polygon).area > ADMIN_SAME_SHARE * min(p.area, polygon.area)
-            for k, n, p in kept)
+        duplicate = any(k == kind and n == name and _same_area(p, polygon) for k, n, p in kept)
         if not duplicate:
             kept.append((kind, name, polygon))
     return kept
