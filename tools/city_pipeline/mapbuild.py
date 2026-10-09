@@ -28,17 +28,7 @@ from .geo import Projector
 MAP_CREDIT = mt.MAP_CREDIT
 
 
-def source_credits(manifest):
-    """Атрибуция: подпись OSM и все внешние источники пакета (владелец и лицензия из паспорта).
-
-    Участки несут не только геометрию OSM, но и производные данные других источников
-    (жители зданий — из сетки GHS-POP), поэтому их условия перечисляются вместе.
-    """
-    credits = [MAP_CREDIT]
-    for source in sorted(manifest["sources"], key=lambda item: item["source_id"]):
-        if source.get("source_type") == "external":
-            credits.append(f"{source['owner']} — {source['license']}")
-    return credits
+source_credits = mt.source_credits
 BASEMAP_KEYS = ("landuse", "natural", "leisure", "waterway", "railway")
 
 

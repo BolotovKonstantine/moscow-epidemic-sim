@@ -179,6 +179,7 @@ class BuildTests(unittest.TestCase):
             ("index-huge-tile", lambda doc: doc["tiles"][-1].update(size_bytes=mt.MAX_TILE_BYTES + 1), "некорректная запись участка"),
             ("index-no-credit", lambda doc: doc.update(attribution=["кто-то"]), "attribution"),
             ("index-no-classes", lambda doc: doc.pop("classes"), "таблицы классов"),
+            ("index-extra-credit", lambda doc: doc["attribution"].append("Кто-то — CC0"), "внешние источники"),
         ):
             with self.subTest(name=name):
                 package = copy(name)
@@ -193,12 +194,14 @@ class BuildTests(unittest.TestCase):
             ("tile-other-level", lambda header, entry: header.update(level=1), "level в заголовке"),
             ("tile-moved-bbox", lambda header, entry: header.update(bbox=[0, 0, 1, 1]), "bbox участка не совпадает"),
             ("tile-wrong-size", lambda header, entry: header.update(tile_size_m=8000), "tile_size_m в заголовке"),
+            ("tile-counts-list", lambda header, entry: header.update(counts=[]), "counts в заголовке"),
+            ("tile-overview-no-bbox", lambda header, entry: (header.update(bbox=None), entry.update(bbox=None)), "у обзора нужен bbox"),
             ("tile-garbage", None, "не читается"),
         ):
             with self.subTest(name=name):
                 package = copy(name)
                 edited = json.loads((package / "map" / "index.json").read_text(encoding="utf-8"))
-                entry = next(t for t in edited["tiles"] if t["level"] == 2)
+                entry = next(t for t in edited["tiles"] if t["level"] == (0 if "overview" in name else 2))
                 target = package / "map" / entry["path"]
                 if mutate is None:
                     data = b"MESMTILE" + b"\xff" * 32

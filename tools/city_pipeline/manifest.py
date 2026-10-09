@@ -156,7 +156,7 @@ MAP_MAX_COORD_M = 1.0e7         # как MapTile.MAX_COORD_M: |координа�
 def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
     """Проверить индекс участков карты: формат, пакет и каждый участок (путь внутри каталога карты,
     размер и SHA256). Хеш индекса записан в паспорте, хеши участков — в индексе. Возвращает число участков."""
-    from .maptiles import CLASSES, FORMAT_VERSION, INDEX_FORMAT, LEVEL_TILE_M, MAP_CREDIT, MAX_TILE_BYTES
+    from .maptiles import CLASSES, FORMAT_VERSION, INDEX_FORMAT, LEVEL_TILE_M, MAP_CREDIT, MAX_TILE_BYTES, source_credits
 
     try:
         size = path.stat().st_size
@@ -177,6 +177,8 @@ def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
     if not isinstance(attribution, list) or not attribution or not all(isinstance(item, str) for item in attribution) \
             or attribution[0] != MAP_CREDIT:
         raise ManifestError(f"{asset_id}: attribution индекса карты — список строк, первая — «{MAP_CREDIT}»")
+    if attribution != source_credits(manifest):
+        raise ManifestError(f"{asset_id}: attribution индекса карты не перечисляет все внешние источники паспорта: {source_credits(manifest)}")
     if index.get("classes") != {name: list(values) for name, values in CLASSES.items()}:
         raise ManifestError(f"{asset_id}: таблицы классов индекса карты не совпадают с форматом")
     tiles = index.get("tiles")
@@ -243,9 +245,13 @@ def _check_map_tile(data: bytes, entry: dict, index: dict, asset_id: str):
     grid = [0.0, 0.0] if size is None else [entry["tile"][0] * size, entry["tile"][1] * size]
     if not _map_box((origin or []) * 2) or any(abs(o - g) > MAP_TOLERANCE_M for o, g in zip(origin, grid)):
         raise ManifestError(f"{name}: угол {origin} не совпадает с сеткой {grid}")
+    if not isinstance(header.get("counts"), dict):
+        raise ManifestError(f"{name}: counts в заголовке — не объект")
     bbox = header.get("bbox")
     if not _map_box(bbox):
         raise ManifestError(f"{name}: некорректный bbox в заголовке")
+    if entry["level"] == 0 and (bbox is None or bbox[0] >= bbox[2] or bbox[1] >= bbox[3]):
+        raise ManifestError(f"{name}: у обзора нужен bbox с ненулевой площадью — по нему игра ставит начальный вид")
     shifted = None if bbox is None else [bbox[0] + origin[0], bbox[1] + origin[1], bbox[2] + origin[0], bbox[3] + origin[1]]
     if (shifted is None) != (entry.get("bbox") is None) or (
             shifted is not None and any(abs(a - b) > MAP_TOLERANCE_M for a, b in zip(shifted, entry["bbox"]))):

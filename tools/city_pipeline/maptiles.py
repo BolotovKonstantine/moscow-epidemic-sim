@@ -91,6 +91,28 @@ LEVEL_RULES = {
 MITER_LIMIT = 3.0   # смещение стыка ленты не длиннее 3 полуширин: острый угол не даёт длинного шипа
 
 
+def source_credits(manifest):
+    """Атрибуция: подпись OSM и все внешние источники пакета (владелец и лицензия из паспорта).
+
+    Участки несут не только геометрию OSM, но и производные данные других источников
+    (жители зданий — из сетки GHS-POP), поэтому их условия перечисляются вместе.
+    """
+    credits = [MAP_CREDIT]
+    for source in sorted(manifest["sources"], key=lambda item: item["source_id"]):
+        if source.get("source_type") == "external":
+            credits.append(f"{source['owner']} — {source['license']}")
+    return credits
+
+
+def _reject_constant(value):
+    raise MapTileError(f"недопустимое значение JSON {value}")
+
+
+def strict_json(raw: bytes):
+    """JSON участка без NaN и Infinity (их не принимает и парсер Godot)."""
+    return json.loads(raw.decode("utf-8"), parse_constant=_reject_constant)
+
+
 class MapTileError(ValueError):
     """Ошибка формата или содержимого участка карты."""
 
@@ -387,27 +409,37 @@ def decode_tile(data: bytes):
         raise MapTileError(f"неподдерживаемая версия формата участка {version}")
     if head_len > MAX_HEADER_BYTES:
         raise MapTileError(f"заголовок {head_len} байт, предел формата {MAX_HEADER_BYTES}")
-    header = json.loads(data[16:16 + head_len].decode("utf-8"))
+    header = strict_json(data[16:16 + head_len])
+    if header.get("format") != TILE_FORMAT or header.get("format_version") != FORMAT_VERSION \
+            or type(header.get("format_version")) is not int:
+        raise MapTileError(f"заголовок: формат {header.get('format')} версии {header.get('format_version')}, нужен {TILE_FORMAT} {FORMAT_VERSION}")
+    data_start = 16 + head_len
     sections = {}
     decoded = 0
     for item in header["sections"]:
-        # Как MapTile в игре: заявленные размеры проверяются до распаковки, поток — с потолком.
-        if type(item.get("raw_size")) is not int or not 0 <= item["raw_size"] <= MAX_SECTION_BYTES:
-            raise MapTileError(f"раздел {item.get('name')}: размер после распаковки вне предела {MAX_SECTION_BYTES}")
+        # Как MapTile в игре: смещение, заявленные размеры и их сумма проверяются до распаковки, поток — с потолком.
+        limit = MAX_JSON_SECTION_BYTES if item.get("dtype") == "json" else MAX_SECTION_BYTES
+        if type(item.get("raw_size")) is not int or not 0 <= item["raw_size"] <= limit:
+            raise MapTileError(f"раздел {item.get('name')}: размер после распаковки вне предела {limit}")
+        offset, size = item.get("offset"), item.get("size")
+        if type(offset) is not int or type(size) is not int or offset % 4 or offset < data_start or size < 0 \
+                or offset + size > len(data):
+            raise MapTileError(f"раздел {item.get('name')}: смещение {offset} и размер {size} вне данных участка")
         decoded += item["raw_size"]
         if decoded > MAX_DECODED_BYTES:
             raise MapTileError(f"участок: больше {MAX_DECODED_BYTES} байт данных после распаковки")
-        raw = data[item["offset"]:item["offset"] + item["size"]]
-        if len(raw) != item["size"]:
-            raise MapTileError(f"раздел {item['name']} обрезан")
+        raw = data[offset:offset + size]
         if item["codec"] == "deflate":
-            raw = zlib.decompressobj().decompress(raw, item["raw_size"] + 1)
+            stream = zlib.decompressobj()
+            raw = stream.decompress(raw, item["raw_size"] + 1)
+            if not stream.eof or stream.unconsumed_tail:
+                raise MapTileError(f"раздел {item['name']}: поток deflate не завершён или длиннее заявленного")
         elif item["codec"] != "none":
             raise MapTileError(f"раздел {item['name']}: неизвестное сжатие {item['codec']}")
         if len(raw) != item["raw_size"]:
             raise MapTileError(f"раздел {item['name']}: размер {len(raw)} вместо {item['raw_size']}")
         if item["dtype"] == "json":
-            sections[item["name"]] = json.loads(raw.decode("utf-8"))
+            sections[item["name"]] = strict_json(raw)
         else:
             sections[item["name"]] = np.frombuffer(raw, dtype=DTYPES[item["dtype"]]).reshape(item["shape"])
     return header, sections

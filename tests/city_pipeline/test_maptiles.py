@@ -1,4 +1,5 @@
 import csv
+import json
 import math
 import gzip
 import tempfile
@@ -227,12 +228,58 @@ class FormatTests(unittest.TestCase):
         # Заявленный raw_size меньше реального потока: распаковка обрывается на пределе, а не растёт.
         text = data[16:16 + head_len].decode("utf-8").replace('"raw_size":400000', '"raw_size":    16')
         patched = bytes(data[:16]) + text.encode("utf-8").ljust(head_len) + bytes(data[16 + head_len:])
-        with self.assertRaisesRegex(mt.MapTileError, "размер"):
+        with self.assertRaisesRegex(mt.MapTileError, "длиннее заявленного"):
             mt.decode_tile(patched)
         text = data[16:16 + head_len].decode("utf-8").replace('"raw_size":400000', '"raw_size":2.7e10')
         patched = bytes(data[:16]) + text.encode("utf-8").ljust(head_len) + bytes(data[16 + head_len:])
         with self.assertRaisesRegex(mt.MapTileError, "вне предела"):
             mt.decode_tile(patched)
+
+    @staticmethod
+    def rebuild(data, mutate):
+        """Переписать JSON-заголовок участка (mutate(header) после сдвига смещений) без изменения разделов."""
+        head_len = int.from_bytes(data[12:16], "little")
+        header = json.loads(data[16:16 + head_len])
+        payload = data[16 + head_len:]
+
+        def encode(doc):
+            raw = json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            return raw + b" " * ((-len(raw)) % 4)
+
+        head = encode(header)
+        for _ in range(4):   # смещения зависят от длины заголовка
+            delta = 16 + len(head) - (16 + head_len)
+            doc = json.loads(json.dumps(header))
+            for item in doc["sections"]:
+                item["offset"] += delta
+            mutate(doc)
+            new = encode(doc)
+            if len(new) == len(head):
+                break
+            head = new
+        return data[:12] + len(new).to_bytes(4, "little") + new + payload
+
+    def test_decode_matches_loader_rules(self):
+        data = mt.encode_tile({"x": 1}, [("area.xy", "f32", np.ones((50, 2))), ("label.text", "json", ["а"])])
+        mt.decode_tile(self.rebuild(data, lambda doc: None))   # пересборка без изменений читается
+        cases = (
+            (lambda doc: doc.pop("format"), "формат"),
+            (lambda doc: doc.update(format_version=2), "формат"),
+            (lambda doc: doc["sections"][0].update(offset=0), "вне данных"),
+            (lambda doc: doc["sections"][0].update(offset=doc["sections"][0]["offset"] + 2), "вне данных"),
+            (lambda doc: doc["sections"][1].update(raw_size=mt.MAX_JSON_SECTION_BYTES + 1), "вне предела"),
+            (lambda doc: doc.update(counts=float("nan")), "недопустимое значение"),
+        )
+        for mutate, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(mt.MapTileError, message):
+                    mt.decode_tile(self.rebuild(data, mutate))
+        # Обрезанный конец потока zlib: заявленный размер распаковывается, но поток не завершён.
+        def truncate(doc):
+            doc["sections"][0]["size"] -= 2
+        broken = self.rebuild(data, truncate)
+        with self.assertRaisesRegex(mt.MapTileError, "не завершён"):
+            mt.decode_tile(broken)
 
     def test_size_limits_match_loader(self):
         xy = np.zeros((4, 2))   # 32 байта во float32
