@@ -121,6 +121,13 @@ class LabelGeometryTests(unittest.TestCase):
         major = sorted(t for t, c in zip(labels.text, labels.cls) if mt.LABEL_CLASSES[int(c)] == "river_major")
         self.assertEqual(major, ["Большая", "Большая", "Длинная"])
 
+    def test_admin_dedup_keeps_distinct_namesakes(self):
+        a = shapely.box(0, 0, 1000, 1000)
+        twin = shapely.box(0, 0, 1000, 990)              # та же граница линией
+        far = shapely.box(5000, 0, 6000, 1000)           # другой одноимённый район
+        kept = ml._dedup_admin([("district", "Сокол", a), ("district", "Сокол", twin), ("district", "Сокол", far)])
+        self.assertEqual(sorted(round(p.centroid.x) for _, _, p in kept), [500, 5500])
+
     def test_okrug_name_is_shortened(self):
         self.assertEqual(ml.okrug_name("Центральный административный округ"), "Центральный АО")
 

@@ -37,6 +37,7 @@ RIVER_MAJOR_MIN_M = 20_000.0     # реки длиннее подписываю�
 WATER_MIN_M2 = 300_000.0         # водоёмы от 30 га
 STATION_DEDUP_M = 400.0          # станции с одним названием ближе этого — одна подпись
 RIVER_SPACING_M = 5_000.0
+ADMIN_SAME_SHARE = 0.5          # одноимённые границы, перекрытые больше чем наполовину, — одна граница
 RIVER_GAP_M = 200.0              # части реки ближе этого — одна река (разрывы у тоннелей)
 RIVER_TILE_SPACING_M = 600.0     # в участках 2 км река подписывается чаще, чем на обзоре
 STREET_SPACING_M = {1: 2_500.0, 2: 350.0}
@@ -278,13 +279,16 @@ def _area_places(items, nodes, projector):
 
 
 def _dedup_admin(items):
-    """Одна подпись на (уровень, название): если граница есть и отношением, и линией, берётся большая площадь."""
-    best = {}
-    for kind, name, polygon in items:
-        key = (kind, name)
-        if key not in best or polygon.area > best[key][2].area:
-            best[key] = (kind, name, polygon)
-    return [best[key] for key in sorted(best)]
+    """Одна подпись на границу, заданную и отношением, и линией: дубль — тот же (уровень, название)
+    и перекрытие больше половины меньшей площади; остаётся большая. Разные одноимённые единицы сохраняются."""
+    kept = []
+    for kind, name, polygon in sorted(items, key=lambda item: (item[0], item[1], -item[2].area)):
+        duplicate = any(
+            k == kind and n == name and shapely.intersection(p, polygon).area > ADMIN_SAME_SHARE * min(p.area, polygon.area)
+            for k, n, p in kept)
+        if not duplicate:
+            kept.append((kind, name, polygon))
+    return kept
 
 
 def _wkb_area(wkb, obj):
