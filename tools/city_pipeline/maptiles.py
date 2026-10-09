@@ -45,6 +45,7 @@ LABEL_CLASSES = (
 MAX_LABELS = 100_000
 MAX_LABEL_CHARS = 200
 # Пределы размеров; те же проверяет игра (MapTile): больший участок экспорт не пишет, а игра не читает.
+MAX_HEADER_BYTES = 1 << 20          # JSON-заголовок участка
 MAX_SECTION_BYTES = 256 << 20       # раздел после распаковки
 MAX_DECODED_BYTES = 512 << 20       # все разделы участка после распаковки
 MAX_TILE_BYTES = 256 << 20          # файл участка
@@ -362,6 +363,8 @@ def encode_tile(header: dict, sections) -> bytes:
     for packed in payloads:
         out += packed
         out += b"\0" * (_pad(len(packed)) - len(packed))
+    if len(head) > MAX_HEADER_BYTES:
+        raise MapTileError(f"участок: заголовок {len(head)} байт, предел формата {MAX_HEADER_BYTES}")
     decoded = sum(item["raw_size"] for item in described)
     if decoded > MAX_DECODED_BYTES:
         raise MapTileError(f"участок: {decoded} байт данных, предел формата {MAX_DECODED_BYTES}")

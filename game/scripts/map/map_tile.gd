@@ -21,7 +21,7 @@ const ANGLE_TOLERANCE := 1.0e-6   # π/2 во float32 чуть отличает�
 const LABEL_TOLERANCE_M := 1.0   # допуск координат участка: считаются в float64, хранятся во float32
 const MAX_LEVEL := 2   # уровни 0–2 формата 1: обзор, участки 8 и 2 км
 const PREAMBLE := 16   # магия, u32 версия, u32 длина заголовка
-const MAX_HEADER_BYTES := 1 << 20
+const MAX_HEADER_BYTES := 1 << 20   # как maptiles.MAX_HEADER_BYTES экспорта
 const MAX_TILE_BYTES := 256 << 20      # предел файла участка (как maptiles.MAX_TILE_BYTES); участки центра Москвы — до ~3,5 МБ
 const MAX_SECTION_BYTES := 256 << 20   # предел раздела после распаковки (как maptiles.MAX_SECTION_BYTES); участок 2 км центра — ~3 МБ
 

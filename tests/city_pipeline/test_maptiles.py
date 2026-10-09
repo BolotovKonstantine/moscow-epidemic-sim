@@ -225,7 +225,8 @@ class FormatTests(unittest.TestCase):
         xy = np.zeros((4, 2))   # 32 байта во float32
         for limit, value, sections in (("MAX_SECTION_BYTES", 16, [("area.xy", "f32", xy)]),
                                        ("MAX_DECODED_BYTES", 40, [("area.xy", "f32", xy), ("line.xy", "f32", xy)]),
-                                       ("MAX_TILE_BYTES", 40, [("area.xy", "f32", xy)])):
+                                       ("MAX_TILE_BYTES", 40, [("area.xy", "f32", xy)]),
+                                       ("MAX_HEADER_BYTES", 40, [("area.xy", "f32", xy)])):
             with self.subTest(limit=limit):
                 original = getattr(mt, limit)
                 setattr(mt, limit, value)
@@ -235,7 +236,7 @@ class FormatTests(unittest.TestCase):
                 finally:
                     setattr(mt, limit, original)
         loader = (Path(__file__).resolve().parents[2] / "game/scripts/map/map_tile.gd").read_text()
-        for name in ("MAX_SECTION_BYTES", "MAX_DECODED_BYTES", "MAX_TILE_BYTES", "MAX_JSON_SECTION_BYTES"):
+        for name in ("MAX_HEADER_BYTES", "MAX_SECTION_BYTES", "MAX_DECODED_BYTES", "MAX_TILE_BYTES", "MAX_JSON_SECTION_BYTES"):
             value = getattr(mt, name)
             self.assertIn(f"const {name} := {value >> 20} << 20", loader, f"{name} в игре и экспорте разные")
 
