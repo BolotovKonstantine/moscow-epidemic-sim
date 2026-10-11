@@ -1,4 +1,5 @@
 import csv
+import json
 import math
 import gzip
 import tempfile
@@ -196,8 +197,8 @@ class PlaneTests(unittest.TestCase):
 
 class FormatTests(unittest.TestCase):
     def sections(self):
-        return [("a.xy", "f32", np.arange(12, dtype=float).reshape(6, 2)), ("a.tri", "i32", np.array([[0, 1, 2], [3, 4, 5]])),
-                ("pick.attrs", "json", {"id": ["w1", "w2"], "name": ["Дом", None]}), ("empty", "i32", np.empty((0, 3)))]
+        return [("area.xy", "f32", np.arange(12, dtype=float).reshape(6, 2)), ("area.tri", "i32", np.array([[0, 1, 2], [3, 4, 5]])),
+                ("pick.attrs", "json", {"id": ["w1", "w2"], "name": ["Дом", None]}), ("line.tri", "i32", np.empty((0, 3)))]
 
     def test_roundtrip_and_alignment(self):
         data = mt.encode_tile({"level": 2}, self.sections())
@@ -206,9 +207,9 @@ class FormatTests(unittest.TestCase):
         self.assertEqual(data[:8], b"MESMTILE")
         for item in header["sections"]:
             self.assertEqual(item["offset"] % 4, 0)
-        np.testing.assert_array_equal(sections["a.tri"], [[0, 1, 2], [3, 4, 5]])
+        np.testing.assert_array_equal(sections["area.tri"], [[0, 1, 2], [3, 4, 5]])
         self.assertEqual(sections["pick.attrs"]["name"], ["Дом", None])
-        self.assertEqual(sections["empty"].shape, (0, 3))
+        self.assertEqual(sections["line.tri"].shape, (0, 3))
 
     def test_encoding_is_deterministic(self):
         self.assertEqual(mt.encode_tile({"level": 2}, self.sections()), mt.encode_tile({"level": 2}, self.sections()))
@@ -220,6 +221,110 @@ class FormatTests(unittest.TestCase):
         data[8] = 99
         with self.assertRaises(mt.MapTileError):
             mt.decode_tile(bytes(data))
+
+    def test_decode_bounds_decompression_by_declared_size(self):
+        data = bytearray(mt.encode_tile({"x": 1}, [("area.xy", "f32", np.zeros((50_000, 2)))]))
+        head_len = int.from_bytes(data[12:16], "little")
+        # Заявленный raw_size меньше реального потока: распаковка обрывается на пределе, а не растёт.
+        text = data[16:16 + head_len].decode("utf-8").replace('"raw_size":400000', '"raw_size":    16')
+        patched = bytes(data[:16]) + text.encode("utf-8").ljust(head_len) + bytes(data[16 + head_len:])
+        with self.assertRaisesRegex(mt.MapTileError, "длиннее заявленного"):
+            mt.decode_tile(patched)
+        text = data[16:16 + head_len].decode("utf-8").replace('"raw_size":400000', '"raw_size":2.7e10')
+        patched = bytes(data[:16]) + text.encode("utf-8").ljust(head_len) + bytes(data[16 + head_len:])
+        with self.assertRaisesRegex(mt.MapTileError, "вне предела"):
+            mt.decode_tile(patched)
+
+    @staticmethod
+    def rebuild(data, mutate):
+        """Переписать JSON-заголовок участка (mutate(header) после сдвига смещений) без изменения разделов."""
+        head_len = int.from_bytes(data[12:16], "little")
+        header = json.loads(data[16:16 + head_len])
+        payload = data[16 + head_len:]
+
+        def encode(doc):
+            raw = json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            return raw + b" " * ((-len(raw)) % 4)
+
+        head = encode(header)
+        for _ in range(4):   # смещения зависят от длины заголовка
+            delta = 16 + len(head) - (16 + head_len)
+            doc = json.loads(json.dumps(header))
+            for item in doc["sections"]:
+                item["offset"] += delta
+            mutate(doc)
+            new = encode(doc)
+            if len(new) == len(head):
+                break
+            head = new
+        return data[:12] + len(new).to_bytes(4, "little") + new + payload
+
+    def test_decode_matches_loader_rules(self):
+        data = mt.encode_tile({"x": 1}, [("area.xy", "f32", np.ones((50, 2))), ("label.text", "json", ["а"])])
+        mt.decode_tile(self.rebuild(data, lambda doc: None))   # пересборка без изменений читается
+        cases = (
+            (lambda doc: doc.pop("format"), "формат"),
+            (lambda doc: doc.update(format_version=2), "формат"),
+            (lambda doc: doc["sections"][0].update(offset=0), "вне данных"),
+            (lambda doc: doc["sections"][0].update(offset=doc["sections"][0]["offset"] + 2), "вне данных"),
+            (lambda doc: doc["sections"][1].update(raw_size=mt.MAX_JSON_SECTION_BYTES + 1), "вне предела"),
+            (lambda doc: doc.update(counts=float("nan")), "недопустимое значение"),
+            (lambda doc: doc.update(counts=1e300 * 1e300), "недопустимое значение"),
+            (lambda doc: doc["sections"][1].update(name="extra.json"), "неизвестное имя"),
+            (lambda doc: doc["sections"][0].update(dtype="json"), "неизвестное имя или тип"),
+            (lambda doc: doc["sections"][0].pop("count"), "count"),
+            (lambda doc: doc["sections"][0].update(shape=[25, 4]), "shape"),
+        )
+        for mutate, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(mt.MapTileError, message):
+                    mt.decode_tile(self.rebuild(data, mutate))
+        line = mt.encode_tile({"x": 1}, [("line.cls", "f32", np.ones(2))])
+        with self.assertRaisesRegex(mt.MapTileError, "shape"):
+            mt.decode_tile(self.rebuild(line, lambda doc: doc["sections"][0].update(shape=[True, 2], count=2)))
+        duplicate = self.rebuild(data, lambda doc: None)
+        head_len = int.from_bytes(duplicate[12:16], "little")
+        text = duplicate[16:16 + head_len].decode("utf-8")
+        text = text.replace('{"format"', '{"x":2,"format"', 1) if '{"format"' in text else text.replace('"x":1', '"x":1,"x":2', 1)
+        doubled = duplicate[:12] + len(text.encode()).to_bytes(4, "little") + text.encode() + duplicate[16 + head_len:]
+        with self.assertRaisesRegex(mt.MapTileError, "повторяющийся ключ"):
+            mt.decode_tile(doubled)
+        overflow = self.rebuild(data, lambda doc: doc.update(counts="XXXXXX"))
+        overflow = overflow.replace(b'"XXXXXX"', b"1e400   ", 1)   # та же длина: смещения разделов не меняются
+        with self.assertRaisesRegex(mt.MapTileError, "недопустимое значение JSON 1e400"):
+            mt.decode_tile(overflow)
+        with self.assertRaisesRegex(mt.MapTileError, "вложенность"):
+            mt.strict_json(b"[" * 2_000_000 + b"]" * 2_000_000)
+        def trailing(doc):
+            doc["sections"][0]["size"] += 4   # байты после конца потока zlib — в пределах раздела
+        padded = mt.encode_tile({"x": 1}, [("area.xy", "f32", np.ones((50, 2))), ("label.text", "json", ["а"])])
+        with self.assertRaisesRegex(mt.MapTileError, "не завершён или длиннее"):
+            mt.decode_tile(self.rebuild(padded, trailing) + b"\0" * 8)
+        empty = mt.encode_tile({"x": 1}, [])
+        past_end = empty[:12] + (len(empty) - 16 + 8).to_bytes(4, "little") + empty[16:]
+        with self.assertRaisesRegex(mt.MapTileError, "за конец файла"):
+            mt.decode_tile(past_end)
+        array_root = data[:12] + (4).to_bytes(4, "little") + b"[1] "   # заголовок — массив, не объект
+        with self.assertRaisesRegex(mt.MapTileError, "не объект"):
+            mt.decode_tile(array_root)
+        raw = np.full((2, 2), np.nan, np.float32).tobytes()
+        head = json.dumps({"format": mt.TILE_FORMAT, "format_version": 1, "sections": [
+            {"name": "area.xy", "dtype": "f32", "codec": "none", "offset": 0, "size": len(raw), "raw_size": len(raw), "count": 4, "shape": [2, 2]}]})
+        for _ in range(3):
+            padded = head.encode() + b" " * ((-len(head.encode())) % 4)
+            doc = json.loads(head)
+            doc["sections"][0]["offset"] = 16 + len(padded)
+            head = json.dumps(doc)
+        padded = head.encode() + b" " * ((-len(head.encode())) % 4)
+        nan_tile = mt.MAGIC + (1).to_bytes(4, "little") + len(padded).to_bytes(4, "little") + padded + raw
+        with self.assertRaisesRegex(mt.MapTileError, "нечисловые"):
+            mt.decode_tile(nan_tile)
+        # Обрезанный конец потока zlib: заявленный размер распаковывается, но поток не завершён.
+        def truncate(doc):
+            doc["sections"][0]["size"] -= 2
+        broken = self.rebuild(data, truncate)
+        with self.assertRaisesRegex(mt.MapTileError, "не завершён"):
+            mt.decode_tile(broken)
 
     def test_size_limits_match_loader(self):
         xy = np.zeros((4, 2))   # 32 байта во float32
@@ -419,6 +524,17 @@ class ExportTests(unittest.TestCase):
             _, (header, sections) = self.tile(level)
             xy = sections["label.xy"]
             self.assertTrue(((xy >= 0) & (xy <= header["tile_size_m"])).all())
+
+    def test_test_export_replaces_directory_whole(self):
+        out = self.root / "partial-test"
+        out.mkdir()
+        (out / "stale.mtile").write_bytes(b"old")   # не набор участков: нет index.json карты
+        with self.assertRaisesRegex(mt.MapTileError, "не является набором участков"):
+            export_test_tiles(self.package, self.basemap, self.crs, *CENTER, out, log=lambda *_: None)
+        self.assertEqual(sorted(p.name for p in out.iterdir()), ["stale.mtile"])
+        export_test_tiles(self.package, self.basemap, self.crs, *CENTER, self.out, log=lambda *_: None)   # прежний набор заменяется
+        self.assertEqual(sorted(p.relative_to(self.out).as_posix() for p in self.out.rglob("*.mtile")),
+                         sorted(tile["path"] for tile in self.index["tiles"]))
 
     def test_export_is_reproducible(self):
         again = export_test_tiles(self.package, self.basemap, self.crs, *CENTER, self.root / "again", log=lambda *_: None)

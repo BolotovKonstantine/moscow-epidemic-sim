@@ -16,6 +16,7 @@ from .buildings import FUNCTIONS, classify, poi_records, site_records
 from .facilities import collect as collect_facilities
 from .geo import Projector, build_region, round_wgs84
 from .manifest import ManifestError, read_json, sha256_file, validate_manifest
+from .mapbuild import export_region_tiles
 from .osm import read_boundary_sources, read_osm
 from .population import allocate, cell_points, read_cells
 from .report import build_report, write_markdown
@@ -587,6 +588,18 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
         "uncertainty": "Связи по дорогам точны относительно данных OSM; связи по транспорту наследуют эвристику объединения остановок.",
     })
 
+    log("Участки карты…")
+    # Карта читает уже записанные файлы пакета; паспорта ещё нет, поэтому ID, версия и источники — отсюда.
+    _, map_summary = export_region_tiles(out_dir, region_osm, config["metric_crs"], out_dir / "map", log=log, manifest={
+        "package_id": config["package_id"], "package_version": config["package_version"], "sources": sources})
+    add("map-index", "map", "map/index.json", "mesim-map-index", "estimated", ["osm", "population", "config"], {
+        "method": "Производный слой отображения (docs/city-package.md#участки-карты): геометрия пакета и подложки OSM, "
+                  "обрезанная по региону и участкам, упрощённая по уровням подробности и разбитая на треугольники; подписи — "
+                  "названия OSM с вычисленными якорями; карточка зданий — копия оценённых атрибутов пакета. Хеши участков — в индексе.",
+        "uncertainty": "Упрощение смещает контуры на обзоре и в участках 8 км до порога уровня (25, 2–4 м); функции, этажность "
+                       "и жители в карточке — оценки с той же неопределённостью, что building_attributes и population.",
+    })
+
     log("Отчёт качества…")
     # ---------------------------------------------------------------- отчёт качества
     weak_label, weak_size = largest_component(graph.weak_labels)
@@ -611,7 +624,7 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
         "zones": zones, "zone_pop": zone_pop, "zone_buildings": zone_buildings, "links": links,
         "building_reach": (b_dist, reach(b_edge)),
         "facility_reach": (f_dist, reach(f_edge)),
-        "building_zone": building_zone, "gateways": gateway_rows,
+        "building_zone": building_zone, "gateways": gateway_rows, "map": map_summary,
     }
     report = build_report(context)
     write_json(out_dir / "quality_report.json", report)
