@@ -60,7 +60,8 @@ func _init(index: MapIndex, palette: PackedColorArray, limit: int, attach: Calla
 
 
 ## Участки уровня level, задевающие прямоугольник плоскости карты, — от центра к краям. Участков нет
-## в индексе — они вне региона.
+## в индексе — они вне региона. Соседний участок нужен и тогда, когда его квадрат вне прямоугольника,
+## но охват по индексу его задевает: здание выступает за край своего участка (#15).
 func tiles_in(rect: Rect2, level: int) -> Array[Vector3i]:
 	var result: Array[Vector3i] = []
 	if level <= 0:
@@ -69,10 +70,14 @@ func tiles_in(rect: Rect2, level: int) -> Array[Vector3i]:
 	var center := rect.get_center()
 	var low := Vector2i(floori(rect.position.x / size), floori(rect.position.y / size))
 	var high := Vector2i(floori(rect.end.x / size), floori(rect.end.y / size))
-	for y in range(low.y, high.y + 1):
-		for x in range(low.x, high.x + 1):
+	for y in range(low.y - 1, high.y + 2):
+		for x in range(low.x - 1, high.x + 2):
 			var key := Vector3i(level, x, y)
-			if _entries.has(key):
+			if not _entries.has(key):
+				continue
+			var inside := x >= low.x and x <= high.x and y >= low.y and y <= high.y
+			var bounds: Variant = _entries[key].bbox
+			if inside or (bounds != null and (bounds as Rect2).intersects(rect, true)):
 				result.append(key)
 	result.sort_custom(func(a: Vector3i, b: Vector3i) -> bool:
 		var da := (Vector2(a.y, a.z) + Vector2(0.5, 0.5)) * size - center
@@ -122,6 +127,11 @@ func pending() -> int:
 ## Охват участка в плоскости карты из индекса (Rect2) или null — участка нет или охват не заявлен.
 func entry_bounds(key: Vector3i) -> Variant:
 	return _entries[key].bbox if _entries.has(key) else null
+
+
+## Участок не загрузится: ошибка чтения или проверки (повторно не грузится).
+func is_failed(key: Vector3i) -> bool:
+	return _failed.has(key)
 
 
 ## Нужные участки, которые ещё не подключены (грузятся, ждут очереди или не поместились).

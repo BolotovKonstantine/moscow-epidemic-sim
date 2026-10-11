@@ -22,6 +22,7 @@ var failures := 0
 func _initialize() -> void:
 	var root_dir := ProjectSettings.globalize_path("res://")
 	_test_fixture(root_dir.path_join(FIXTURE).simplify_path())
+	_test_drag(root_dir.path_join(FIXTURE).simplify_path())
 	_test_card()
 	_test_overlap_and_overhang()
 	_test_stream(root_dir.path_join(STREAM).simplify_path())
@@ -71,6 +72,41 @@ func _test_fixture(dir: String) -> void:
 	check(map.select_at(Vector2(500, 500)) and map.selection.is_empty(), "клик вне зданий снимает выбор")
 	check(changes.size() == 2 and changes[1].is_empty(), "сигнал выбора: выбрано, затем снято")
 	map.free()
+
+
+## Перетаскивание и клик: отпускание над карточкой до карты не доходит.
+func _test_drag(dir: String) -> void:
+	var map := _map(dir)
+	map.look_at_point(Vector2(1300, 1300), 1.0)
+	map.load_visible_now()
+	var center := Vector2(640, 360)
+	map._unhandled_input(_button(center, true))
+	var motion := InputEventMouseMotion.new()
+	motion.position = center + Vector2(20, 0)
+	motion.relative = Vector2(20, 0)
+	motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+	map._unhandled_input(motion)
+	check(map._dragging, "перетаскивание идёт, пока кнопка нажата")
+	motion.button_mask = 0
+	var before := map.view_rect()
+	map._unhandled_input(motion)   # кнопку отпустили над карточкой
+	check(not map._dragging and map.view_rect() == before, "движение без нажатых кнопок завершает перетаскивание")
+	var point := map.screen_to_map(center)
+	map.look_at_point(Vector2(1320, 1130) - (point - map.view_rect().get_center()), 1.0)
+	map._unhandled_input(_button(center, false))   # нажатие было на карточке
+	check(map.selection.is_empty(), "отпускание без нажатия на карте — не клик")
+	map._unhandled_input(_button(center, true))
+	map._unhandled_input(_button(center, false))
+	check(map.selection.get("id") == "b2", "нажатие и отпускание на месте — клик по b2")
+	map.free()
+
+
+func _button(position: Vector2, pressed: bool) -> InputEventMouseButton:
+	var event := InputEventMouseButton.new()
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.position = position
+	event.pressed = pressed
+	return event
 
 
 func _test_card() -> void:
@@ -158,13 +194,18 @@ func _test_stream(dir: String) -> void:
 	check(Vector3i(2, 4, 4) in map.streamer.missing(), "участок под кликом ещё грузится")
 	check(not map.select_at(Vector2(9000, 9000)) and map.selection.get("id") == "b0_0",
 		"клик по незагруженному участку выбор не снимает")
-	# Здание грузящегося соседнего участка может выступать за край: пока охват такого участка по
-	# индексу содержит точку, промах по загруженному участку выбор не снимает.
-	var neighbour: Dictionary = map.streamer._entries[Vector3i(2, 4, 4)]
+	# Здание соседнего участка может выступать за край: пока участок, чей охват по индексу содержит
+	# точку, не подключён, промах по загруженному участку выбор не снимает; загрузчик такой участок
+	# запрашивает, даже если его квадрат вне окна.
+	var key := Vector3i(2, 1, 1)
+	var neighbour: Dictionary = map.streamer._entries[key]
 	var saved: Rect2 = neighbour.bbox
-	neighbour.bbox = Rect2(1400, 1400, 200, 200)
+	neighbour.bbox = Rect2(1400, 1400, 800, 800)
+	check(Vector3i(2, 1, 1) in map.streamer.tiles_in(Rect2(1450, 1450, 100, 100), 2),
+		"участок, чей охват задевает окно, нужен загрузчику")
+	map.streamer.evict(key)
 	check(map.tile_view(Vector3i(2, 0, 0)) != null and not map.select_at(Vector2(1500, 1500)) \
-		and map.selection.get("id") == "b0_0", "охват грузящегося соседа содержит точку — выбор не снят")
+		and map.selection.get("id") == "b0_0", "охват неподключённого соседа содержит точку — выбор не снят")
 	neighbour.bbox = saved
 	var started := Time.get_ticks_msec()
 	while map.streamer.pending() > 0 and Time.get_ticks_msec() - started < WAIT_LIMIT_MSEC:

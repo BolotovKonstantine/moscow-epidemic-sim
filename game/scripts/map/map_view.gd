@@ -36,6 +36,7 @@ var _labels := MapLabelLayer.new()
 var _dragging := false
 var _press_position := Vector2.ZERO
 var _press_moved := false
+var _left_pressed := false   # нажатие левой кнопки началось на карте (не на карточке)
 var _highlight := SelectionHighlight.new()
 
 
@@ -208,18 +209,24 @@ func building_at(map_point: Vector2) -> Dictionary:
 
 
 ## Клик по точке плоскости карты. Выбирать можно только на уровне подробности 2 (иначе клик
-## выбор не меняет). Пока грузится хоть один участок 2 км, чей охват по индексу содержит точку
-## (здание соседнего участка может выступать за край), клик ничего не меняет: иначе промах снял бы
-## выбор, а победитель наложения зависел бы от порядка загрузки. Промах по загруженным участкам
-## снимает выбор. Возвращает true, если выбор изменён.
+## выбор не меняет). Пока не подключён хоть один участок 2 км, чей охват по индексу содержит точку
+## (здание соседнего участка может выступать за край; такие участки нужны загрузчику, см.
+## MapTileStreamer.tiles_in), клик ничего не меняет: иначе промах снял бы выбор, а победитель
+## наложения зависел бы от порядка загрузки. Участок с ошибкой загрузки не ждём. Промах по
+## подключённым участкам снимает выбор. Возвращает true, если выбор изменён.
 func select_at(map_point: Vector2) -> bool:
 	if level_for(meters_per_pixel) < 2:
 		return false
 	if streamer != null:
-		for key in streamer.missing():
-			var bounds: Variant = streamer.entry_bounds(key)
-			if key.x == 2 and bounds != null and (bounds as Rect2).grow(BBOX_TOLERANCE_M).has_point(map_point):
-				return false
+		var size: float = MapTile.LEVEL_TILE_M[2]
+		var cell := Vector2i(floori(map_point.x / size), floori(map_point.y / size))
+		for dy in range(-1, 2):
+			for dx in range(-1, 2):
+				var key := Vector3i(2, cell.x + dx, cell.y + dy)
+				var bounds: Variant = streamer.entry_bounds(key)
+				if bounds != null and not streamer.is_loaded(key) and not streamer.is_failed(key) \
+						and (bounds as Rect2).grow(BBOX_TOLERANCE_M).has_point(map_point):
+					return false
 	var hit := building_at(map_point)
 	if hit.get("id") == selection.get("id"):
 		return false
@@ -366,11 +373,19 @@ func _unhandled_input(event: InputEvent) -> void:
 				if event.pressed:
 					_press_position = event.position
 					_press_moved = false
-				elif not _press_moved:
+					_left_pressed = true
+				elif _left_pressed and not _press_moved:
 					select_at(screen_to_map(event.position))
+				if not event.pressed:
+					_left_pressed = false
 			MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT:
 				_dragging = event.pressed
 	elif event is InputEventMouseMotion and _dragging:
+		# Отпускание над карточкой до карты не доходит: без нажатых кнопок перетаскивание закончено.
+		if event.button_mask == 0:
+			_dragging = false
+			_left_pressed = false
+			return
 		_press_moved = _press_moved or event.position.distance_to(_press_position) > CLICK_SLOP_PX
 		pan_pixels(-event.relative)
 	elif event is InputEventPanGesture:
