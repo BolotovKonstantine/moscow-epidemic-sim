@@ -427,15 +427,20 @@ func _test_views(fixture: String) -> void:
 	root.add_child(map)
 	var problem := map.load_map(fixture)
 	check(problem.is_empty(), "MapView загружает фикстуру: " + problem)
-	var detail: MapTileView = map.tile_views()[-1]
+	check(map.tile_views().size() == 1, "при старте загружен только обзор")
+	map.look_at_point(Vector2(1000, 1000), 1.0)
+	map.load_visible_now()
+	var detail := map.tile_view(Vector3i(2, 0, 0))
+	check(detail != null and map.tile_views().size() == 2, "вблизи подгружен участок 2 км")
 	var areas_z: int = detail.z_index + detail.get_node("Areas").z_index
 	var buildings_z: int = detail.z_index + detail.get_node("Buildings").z_index
-	var background: Node2D = map.get_node("Background_z2")
-	check(background.z_index < areas_z and areas_z < buildings_z,
-		"слои уровня упорядочены через все его участки: фон %d < площади %d < здания %d" % [background.z_index, areas_z, buildings_z])
+	var background: Node2D = detail.get_node("Background")
+	var background_z: int = detail.z_index + background.z_index
+	check(background_z < areas_z and areas_z < buildings_z,
+		"слои уровня упорядочены через все его участки: фон %d < площади %d < здания %d" % [background_z, areas_z, buildings_z])
 	for view in map.tile_views():
-		check(view.get_child_count() == MapTileView.NODE_COUNT, "%s: %d узлов вместо %d" % [
-			view.name, view.get_child_count(), MapTileView.NODE_COUNT])
+		check(view.mesh_nodes().size() == MapTileView.MESH_COUNT, "%s: %d узлов мешей вместо %d" % [
+			view.name, view.mesh_nodes().size(), MapTileView.MESH_COUNT])
 	# Фон уровня рисуется под его участками по z_index (проверка ниже), порядок в дереве не важен.
 	map.look_at_point(Vector2(2000, 2000), 4.0)
 	var cursor := Vector2(900, 200)
@@ -511,8 +516,13 @@ func _test_real_export(map_dir: String) -> void:
 	root.add_child(map)
 	var problem := map.load_map(map_dir)
 	check(problem.is_empty(), "настоящий экспорт: " + problem)
-	var nodes := map.tile_views().map(func(v): return v.get_child_count())
-	check(nodes.all(func(n): return n == MapTileView.NODE_COUNT), "узлов на участок не зависит от числа зданий: %s" % [nodes])
+	for entry in map.index.tiles:
+		if entry.level > 0:
+			var tile := map.index.load_tile(entry)
+			map.look_at_point(tile.origin + Vector2.ONE * tile.tile_size_m / 2.0, 2.0 if entry.level == 2 else 10.0)
+	map.load_visible_now()
+	var nodes := map.tile_views().map(func(v): return v.mesh_nodes().size())
+	check(nodes.all(func(n): return n == MapTileView.MESH_COUNT), "узлов на участок не зависит от числа зданий: %s" % [nodes])
 	for entry in map.index.tiles:
 		print("  %s: %.1f МБ" % [entry.path, entry.size_bytes / 1048576.0])
 	check(map.label_layer().label_count() > 0, "в настоящем экспорте есть подписи")

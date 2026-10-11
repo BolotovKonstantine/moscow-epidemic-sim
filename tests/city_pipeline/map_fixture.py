@@ -5,7 +5,10 @@
 Москвы: квадрат 4×4 км с водой, парком, дорогами разных классов, границей и тремя зданиями.
 Готовые файлы лежат в tests/fixtures/map_tile/; тест test_maptiles проверяет, что они актуальны.
 
-Пересобрать: .venv/bin/python -m tests.city_pipeline.map_fixture tests/fixtures/map_tile
+Второй набор, tests/fixtures/map_stream/, — для теста подгрузки участков по камере (#14): квадрат
+12×12 км, сетка дорог и по зданию и подписи в каждом участке 2 км.
+
+Пересобрать оба: .venv/bin/python -m tests.city_pipeline.map_fixture
 """
 
 import sys
@@ -20,8 +23,10 @@ from tools.city_pipeline import maptiles as mt
 from tools.city_pipeline.mapbuild import Layer, tile_sections, write_index, write_tile
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "map_tile"
+STREAM_DIR = FIXTURE_DIR.parent / "map_stream"
 PLANE = mt.MapPlane(400_000.0, 6_200_000.0)
 REGION_M = 4000.0
+STREAM_M = 12000.0
 
 
 @dataclass(frozen=True)
@@ -106,5 +111,71 @@ def write_fixture(out: Path):
     return write_index(out, package, "EPSG:32637", PLANE, tiles, "Синтетический набор для теста загрузчика Godot (#12).")
 
 
+def stream_layers():
+    """Сетка 12×12 км: дороги через середины участков 2 км, вода, граница и здание в каждом участке 2 км."""
+    cells = int(STREAM_M // 2000)
+    roads = []
+    for i in range(cells):
+        middle = i * 2000 + 1000
+        kind = "primary" if i % 3 == 0 else "residential"
+        roads.append((kind, shapely.LineString([(0, middle), (STREAM_M, middle)])))
+        roads.append((kind, shapely.LineString([(middle, 0), (middle, STREAM_M)])))
+    edge = STREAM_M - 1
+    roads.append(("boundary_region", shapely.LineString([(1, 1), (edge, 1), (edge, edge), (1, edge), (1, 1)])))
+    areas = _layer([("water", shapely.box(0, 5600, STREAM_M, 5800)), ("park", shapely.box(2200, 2200, 3800, 3800))],
+                   mt.AREA_CLASSES)
+    houses = [(ix, iy) for iy in range(cells) for ix in range(cells)]
+    return areas, _layer(roads, mt.LINE_CLASSES), houses
+
+
+def stream_buildings(houses):
+    """Здания участка: квадрат 60×40 м у пересечения дорог; ID — по номеру участка 2 км."""
+    geometry = np.array([_metric(shapely.box(ix * 2000 + 1100, iy * 2000 + 1100, ix * 2000 + 1160, iy * 2000 + 1140))
+                         for ix, iy in houses], dtype=object)
+    classes = np.full(len(houses), mt.BUILDING_CLASSES.index("residential"), np.int64)
+    count = len(houses)
+    attrs = {
+        "id": [f"b{ix}_{iy}" for ix, iy in houses], "name": [None] * count,
+        "function": ["residential"] * count, "function_source": ["tag"] * count,
+        "levels": [5] * count, "levels_source": ["tag"] * count, "footprint_m2": [2400.0] * count,
+        "residents": [100] * count, "zone_id": ["z1"] * count, "territory": ["moscow"] * count,
+    }
+    return geometry, classes, attrs
+
+
+def write_stream_fixture(out: Path):
+    """Записать набор для теста подгрузки: обзор, 4 участка 8 км и 36 участков 2 км."""
+    out.mkdir(parents=True, exist_ok=True)
+    package = FixturePackage(package_id="fixture-stream")
+    areas, lines, houses = stream_layers()
+    region_bounds = (PLANE.x0, PLANE.y0 - STREAM_M, PLANE.x0 + STREAM_M, PLANE.y0)
+    center = _metric(shapely.Point(STREAM_M / 2, STREAM_M / 2))
+    overview_labels = ml.Labels.from_rows([(center.x, center.y, 0.0, 0.0, "capital", 1e6, "Сеткоград")])
+    tiles = []
+    box, origin = PLANE.tile_box(0, 0, 0, region_bounds)
+    sections, counts, bbox = tile_sections(PLANE, origin, box, areas, lines, None, labels=overview_labels)
+    tiles.append(write_tile(out, package, 0, 0, 0, origin, sections, counts, bbox))
+    for level in (1, 2):
+        size = mt.LEVEL_TILE_M[level]
+        cells = int(-(-STREAM_M // size))
+        for iy in range(cells):
+            for ix in range(cells):
+                box, origin = PLANE.tile_box(level, ix, iy)
+                inside = [(hx, hy) for hx, hy in houses if int(hx * 2000 // size) == ix and int(hy * 2000 // size) == iy]
+                labels = None
+                if level == 2:
+                    point = _metric(shapely.Point(ix * 2000 + 500, iy * 2000 + 1000))
+                    labels = ml.Labels.from_rows([(point.x, point.y, 0.0, 800.0, "street", 1.0, f"Улица {ix}-{iy}")])
+                sections, counts, bbox = tile_sections(PLANE, origin, box, areas, lines, stream_buildings(inside),
+                                                       pick=level == 2, labels=labels)
+                tiles.append(write_tile(out, package, level, ix, iy, origin, sections, counts, bbox))
+    return write_index(out, package, "EPSG:32637", PLANE, tiles,
+                       "Синтетический набор 12×12 км для теста подгрузки участков по камере (#14).")
+
+
 if __name__ == "__main__":
-    write_fixture(Path(sys.argv[1]) if len(sys.argv) > 1 else FIXTURE_DIR)
+    if len(sys.argv) > 1:
+        write_fixture(Path(sys.argv[1]))
+    else:
+        write_fixture(FIXTURE_DIR)
+        write_stream_fixture(STREAM_DIR)

@@ -1,0 +1,1036 @@
+{
+  "attribution": [
+    "© участники OpenStreetMap, ODbL",
+    "Синтетический пример — только для тестов"
+  ],
+  "classes": {
+    "area": [
+      "farmland",
+      "residential",
+      "commercial",
+      "industrial",
+      "cemetery",
+      "grass",
+      "park",
+      "forest",
+      "water"
+    ],
+    "building": [
+      "unknown",
+      "residential",
+      "work",
+      "retail",
+      "education",
+      "medical",
+      "transport",
+      "control",
+      "other"
+    ],
+    "label": [
+      "capital",
+      "okrug",
+      "municipality",
+      "city",
+      "town",
+      "district",
+      "village",
+      "suburb",
+      "hamlet",
+      "river_major",
+      "river",
+      "water",
+      "street_major",
+      "street",
+      "metro",
+      "rail_station"
+    ],
+    "line": [
+      "stream",
+      "river",
+      "service",
+      "pedestrian",
+      "residential",
+      "tertiary",
+      "secondary",
+      "primary",
+      "trunk",
+      "motorway",
+      "tram",
+      "rail_minor",
+      "rail",
+      "boundary_moscow",
+      "boundary_region"
+    ]
+  },
+  "format": "mesim-map-index",
+  "format_version": 1,
+  "levels": [
+    {
+      "level": 0,
+      "tile_size_m": null
+    },
+    {
+      "level": 1,
+      "tile_size_m": 8000
+    },
+    {
+      "level": 2,
+      "tile_size_m": 2000
+    }
+  ],
+  "metric_crs": "EPSG:32637",
+  "note": "Синтетический набор 12×12 км для теста подгрузки участков по камере (#14).",
+  "package_id": "fixture-stream",
+  "package_version": "0.0.1",
+  "plane": {
+    "origin_metric": [
+      400000.0,
+      6200000.0
+    ],
+    "units": "m",
+    "y_axis": "down"
+  },
+  "source_ids": [
+    "synthetic"
+  ],
+  "tiles": [
+    {
+      "bbox": [
+        0.0,
+        0.0,
+        12000.0,
+        12000.0
+      ],
+      "counts": {
+        "areas": 2,
+        "labels": 1,
+        "lines": 13,
+        "triangles_dropped": 0
+      },
+      "level": 0,
+      "path": "z0/0_0.mtile",
+      "sha256": "1ebb39a9917bdf9b91ac767164a4da6a9388c09dfd94e63042843b93b9891054",
+      "size_bytes": 2880,
+      "tile": [
+        0,
+        0
+      ]
+    },
+    {
+      "bbox": [
+        0.0,
+        0.0,
+        8000.0,
+        8000.0
+      ],
+      "counts": {
+        "areas": 2,
+        "buildings": 16,
+        "lines": 9,
+        "triangles_dropped": 0
+      },
+      "level": 1,
+      "path": "z1/0_0.mtile",
+      "sha256": "7890a65981469ad5ee238bc59a3a558c2cb10bbd7329545dd19f516bc2473db1",
+      "size_bytes": 3052,
+      "tile": [
+        0,
+        0
+      ]
+    },
+    {
+      "bbox": [
+        8000.0,
+        0.0,
+        12000.0,
+        8000.0
+      ],
+      "counts": {
+        "areas": 1,
+        "buildings": 8,
+        "lines": 7,
+        "triangles_dropped": 0
+      },
+      "level": 1,
+      "path": "z1/1_0.mtile",
+      "sha256": "69289d41137c8444ddc62c751ad486d77d398971ed121c9e8779357c3178941a",
+      "size_bytes": 2824,
+      "tile": [
+        1,
+        0
+      ]
+    },
+    {
+      "bbox": [
+        0.0,
+        8000.0,
+        8000.0,
+        12000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 8,
+        "lines": 7,
+        "triangles_dropped": 0
+      },
+      "level": 1,
+      "path": "z1/0_1.mtile",
+      "sha256": "42513bd3bf963530cd6c45598fcd8332240dd664ce06a4e7ed91aeff01923677",
+      "size_bytes": 2752,
+      "tile": [
+        0,
+        1
+      ]
+    },
+    {
+      "bbox": [
+        8000.0,
+        8000.0,
+        12000.0,
+        12000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 4,
+        "lines": 5,
+        "triangles_dropped": 0
+      },
+      "level": 1,
+      "path": "z1/1_1.mtile",
+      "sha256": "b099b3d82d3040b80c5156b0edafbd26aa20a90fb997fe20b0032ce4c026208c",
+      "size_bytes": 2612,
+      "tile": [
+        1,
+        1
+      ]
+    },
+    {
+      "bbox": [
+        0.0,
+        0.0,
+        2000.0,
+        2000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/0_0.mtile",
+      "sha256": "46a0327afeeafc6d9953739b7012e17cafc5aa7f567dc9388d2be2af640b9d7b",
+      "size_bytes": 3660,
+      "tile": [
+        0,
+        0
+      ]
+    },
+    {
+      "bbox": [
+        2000.0,
+        0.0,
+        4000.0,
+        2000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/1_0.mtile",
+      "sha256": "10f1d7604f74107ee2d0653251f709a8a983335ca31a12437edf1412409befd8",
+      "size_bytes": 3648,
+      "tile": [
+        1,
+        0
+      ]
+    },
+    {
+      "bbox": [
+        4000.0,
+        0.0,
+        6000.0,
+        2000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/2_0.mtile",
+      "sha256": "83d21967959a12dff65a39fee23572bd6ff31f061ccbc704b702bc35136b70e6",
+      "size_bytes": 3648,
+      "tile": [
+        2,
+        0
+      ]
+    },
+    {
+      "bbox": [
+        6000.0,
+        0.0,
+        8000.0,
+        2000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/3_0.mtile",
+      "sha256": "78aaca434d9dc6cc3ecac7dcdd284646b57f111de3858909910639c0f26a9225",
+      "size_bytes": 3648,
+      "tile": [
+        3,
+        0
+      ]
+    },
+    {
+      "bbox": [
+        8000.0,
+        0.0,
+        10000.0,
+        2000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/4_0.mtile",
+      "sha256": "469f95027dae9b5e97eded1c72a63268b3660f7e41b7b75516e34e82626809fb",
+      "size_bytes": 3648,
+      "tile": [
+        4,
+        0
+      ]
+    },
+    {
+      "bbox": [
+        10000.0,
+        0.0,
+        12000.0,
+        2000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/5_0.mtile",
+      "sha256": "4efb824f2d73f33fbf1cf10e3b208c0218eac844e68ddc18daf55adc038d4ef7",
+      "size_bytes": 3668,
+      "tile": [
+        5,
+        0
+      ]
+    },
+    {
+      "bbox": [
+        0.0,
+        2000.0,
+        2000.0,
+        4000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/0_1.mtile",
+      "sha256": "6e9c3a3df41498a57a703d2197cfd6c377520e15811f72078b566232ba2e1d63",
+      "size_bytes": 3652,
+      "tile": [
+        0,
+        1
+      ]
+    },
+    {
+      "bbox": [
+        2000.0,
+        2000.0,
+        4000.0,
+        4000.0
+      ],
+      "counts": {
+        "areas": 1,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 2,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/1_1.mtile",
+      "sha256": "45a5dddc84281225dad531cee8c125065b7a938303f14a8b3ecf01dfd16603f0",
+      "size_bytes": 3700,
+      "tile": [
+        1,
+        1
+      ]
+    },
+    {
+      "bbox": [
+        4000.0,
+        2000.0,
+        6000.0,
+        4000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 2,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/2_1.mtile",
+      "sha256": "c0369e47f111b6890fc82362e290be8bb0fe7b3aa41fd915b7fa6ec63a910db9",
+      "size_bytes": 3624,
+      "tile": [
+        2,
+        1
+      ]
+    },
+    {
+      "bbox": [
+        6000.0,
+        2000.0,
+        8000.0,
+        4000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 2,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/3_1.mtile",
+      "sha256": "df5014e2dd0225fe7fcde426fcce09441174c5e8567d5c5dcb25c22b53fd618b",
+      "size_bytes": 3628,
+      "tile": [
+        3,
+        1
+      ]
+    },
+    {
+      "bbox": [
+        8000.0,
+        2000.0,
+        10000.0,
+        4000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 2,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/4_1.mtile",
+      "sha256": "b3cda8e42064c34705eed1e60e7a44fdd734d3376326cba65952d69cdfc65aeb",
+      "size_bytes": 3624,
+      "tile": [
+        4,
+        1
+      ]
+    },
+    {
+      "bbox": [
+        10000.0,
+        2000.0,
+        12000.0,
+        4000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/5_1.mtile",
+      "sha256": "6425a2573b636ce4ddbfeffe66a552ec054e88d3ac18a8240b412b0a1d8e1aa2",
+      "size_bytes": 3652,
+      "tile": [
+        5,
+        1
+      ]
+    },
+    {
+      "bbox": [
+        0.0,
+        4000.0,
+        2000.0,
+        6000.0
+      ],
+      "counts": {
+        "areas": 1,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/0_2.mtile",
+      "sha256": "f50a94b6be245d245282c473cf61d114b4ed961d8a25583448cc05d799d30b43",
+      "size_bytes": 3732,
+      "tile": [
+        0,
+        2
+      ]
+    },
+    {
+      "bbox": [
+        2000.0,
+        4000.0,
+        4000.0,
+        6000.0
+      ],
+      "counts": {
+        "areas": 1,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 2,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/1_2.mtile",
+      "sha256": "7156d49c646e803f4bfd22fd2ea1ae3e872412c517ac3862c572475c3c0142ab",
+      "size_bytes": 3700,
+      "tile": [
+        1,
+        2
+      ]
+    },
+    {
+      "bbox": [
+        4000.0,
+        4000.0,
+        6000.0,
+        6000.0
+      ],
+      "counts": {
+        "areas": 1,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 2,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/2_2.mtile",
+      "sha256": "b3b10ced5df743e496790adb218adb1e41798ddd957afa728f9a4e21b7120339",
+      "size_bytes": 3704,
+      "tile": [
+        2,
+        2
+      ]
+    },
+    {
+      "bbox": [
+        6000.0,
+        4000.0,
+        8000.0,
+        6000.0
+      ],
+      "counts": {
+        "areas": 1,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 2,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/3_2.mtile",
+      "sha256": "0f73eaea312c1add72a7068d4139f27c6e2cd6dda179ca5cdcf6682b4d56c127",
+      "size_bytes": 3708,
+      "tile": [
+        3,
+        2
+      ]
+    },
+    {
+      "bbox": [
+        8000.0,
+        4000.0,
+        10000.0,
+        6000.0
+      ],
+      "counts": {
+        "areas": 1,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 2,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/4_2.mtile",
+      "sha256": "2cd5d0e5d46d706629fde68258aa396bf052ae28de862701a14c308d0bd2497b",
+      "size_bytes": 3704,
+      "tile": [
+        4,
+        2
+      ]
+    },
+    {
+      "bbox": [
+        10000.0,
+        4000.0,
+        12000.0,
+        6000.0
+      ],
+      "counts": {
+        "areas": 1,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/5_2.mtile",
+      "sha256": "3e05fd4a11797fb9f9b45fe25eea0de7a64f051bbcd287437eb665d49cf51ee8",
+      "size_bytes": 3732,
+      "tile": [
+        5,
+        2
+      ]
+    },
+    {
+      "bbox": [
+        0.0,
+        6000.0,
+        2000.0,
+        8000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/0_3.mtile",
+      "sha256": "16ca441353eec9af0b27e0fdfc8934249265762ff324c0f0935ec5ec8a266b6a",
+      "size_bytes": 3644,
+      "tile": [
+        0,
+        3
+      ]
+    },
+    {
+      "bbox": [
+        2000.0,
+        6000.0,
+        4000.0,
+        8000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 2,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/1_3.mtile",
+      "sha256": "4a06e8bfb644d6627d2d607322fb6ff25fd0915377325fd951a53abe307e3177",
+      "size_bytes": 3624,
+      "tile": [
+        1,
+        3
+      ]
+    },
+    {
+      "bbox": [
+        4000.0,
+        6000.0,
+        6000.0,
+        8000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 2,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/2_3.mtile",
+      "sha256": "00e270576b17d2549f20864ec3ed81dab3a41c696ca8c58d17a8404843c8df53",
+      "size_bytes": 3624,
+      "tile": [
+        2,
+        3
+      ]
+    },
+    {
+      "bbox": [
+        6000.0,
+        6000.0,
+        8000.0,
+        8000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 2,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/3_3.mtile",
+      "sha256": "36761d657cb34790289a6acbc9e326b92a1c0262542673019296894d9946f12a",
+      "size_bytes": 3624,
+      "tile": [
+        3,
+        3
+      ]
+    },
+    {
+      "bbox": [
+        8000.0,
+        6000.0,
+        10000.0,
+        8000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 2,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/4_3.mtile",
+      "sha256": "f43bfd153012a975936045794b88ea26e1e2a1c7211e3e149d5b784a7559acdf",
+      "size_bytes": 3624,
+      "tile": [
+        4,
+        3
+      ]
+    },
+    {
+      "bbox": [
+        10000.0,
+        6000.0,
+        12000.0,
+        8000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/5_3.mtile",
+      "sha256": "cd79f26f3f9a717dde7afab5853f84199d2174918d6a81e67594742f227d064f",
+      "size_bytes": 3656,
+      "tile": [
+        5,
+        3
+      ]
+    },
+    {
+      "bbox": [
+        0.0,
+        8000.0,
+        2000.0,
+        10000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/0_4.mtile",
+      "sha256": "79df2c3ee0417314196b6a1960bae89e4177fb2f10982acb5a82df5e04ff1fd3",
+      "size_bytes": 3652,
+      "tile": [
+        0,
+        4
+      ]
+    },
+    {
+      "bbox": [
+        2000.0,
+        8000.0,
+        4000.0,
+        10000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 2,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/1_4.mtile",
+      "sha256": "70b299a5de5bf40d4926724365e3c367b769adc6cc389284e0f440f606927b5f",
+      "size_bytes": 3620,
+      "tile": [
+        1,
+        4
+      ]
+    },
+    {
+      "bbox": [
+        4000.0,
+        8000.0,
+        6000.0,
+        10000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 2,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/2_4.mtile",
+      "sha256": "6e3fa9e96a26bf6fee7b05cde54d751014cf5c93a4d434b5033b8737947e8ace",
+      "size_bytes": 3620,
+      "tile": [
+        2,
+        4
+      ]
+    },
+    {
+      "bbox": [
+        6000.0,
+        8000.0,
+        8000.0,
+        10000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 2,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/3_4.mtile",
+      "sha256": "539ca1996add92f31a1780bff29b97d0efc07b98fec0414962b21df4bfa7057c",
+      "size_bytes": 3628,
+      "tile": [
+        3,
+        4
+      ]
+    },
+    {
+      "bbox": [
+        8000.0,
+        8000.0,
+        10000.0,
+        10000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 2,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/4_4.mtile",
+      "sha256": "8757af986dc2e6a521ee5036679b9045e68b8f9d3b4506255f77aecf13bedf8a",
+      "size_bytes": 3624,
+      "tile": [
+        4,
+        4
+      ]
+    },
+    {
+      "bbox": [
+        10000.0,
+        8000.0,
+        12000.0,
+        10000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/5_4.mtile",
+      "sha256": "4a4f84ae57be00409d0d0a247342bab4d9a27c0b598c155d5522b95707f550d6",
+      "size_bytes": 3652,
+      "tile": [
+        5,
+        4
+      ]
+    },
+    {
+      "bbox": [
+        0.0,
+        10000.0,
+        2000.0,
+        12000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/0_5.mtile",
+      "sha256": "3221188adc4365cfc943744f14917dbf87de9f36a957f559fa18daaa3a4c4d03",
+      "size_bytes": 3668,
+      "tile": [
+        0,
+        5
+      ]
+    },
+    {
+      "bbox": [
+        2000.0,
+        10000.0,
+        4000.0,
+        12000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/1_5.mtile",
+      "sha256": "b490b08951c0f10f2dd47f811c2b9a2d7af14311b062499e727d4f5226e927e6",
+      "size_bytes": 3648,
+      "tile": [
+        1,
+        5
+      ]
+    },
+    {
+      "bbox": [
+        4000.0,
+        10000.0,
+        6000.0,
+        12000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/2_5.mtile",
+      "sha256": "db61f842a80ae886c02b2c96397f6d83bfa43303a5c3f60ea7fcbf9a28a7a584",
+      "size_bytes": 3648,
+      "tile": [
+        2,
+        5
+      ]
+    },
+    {
+      "bbox": [
+        6000.0,
+        10000.0,
+        8000.0,
+        12000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/3_5.mtile",
+      "sha256": "3788430675c5cd2865cdd00cd87e78c0ba72759db4fbc0bb413b5cbfe82f55ac",
+      "size_bytes": 3660,
+      "tile": [
+        3,
+        5
+      ]
+    },
+    {
+      "bbox": [
+        8000.0,
+        10000.0,
+        10000.0,
+        12000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/4_5.mtile",
+      "sha256": "2107c55ef496fa0dc17b156f11324a9eed1029b11637c915b81dbb589857973a",
+      "size_bytes": 3648,
+      "tile": [
+        4,
+        5
+      ]
+    },
+    {
+      "bbox": [
+        10000.0,
+        10000.0,
+        12000.0,
+        12000.0
+      ],
+      "counts": {
+        "areas": 0,
+        "buildings": 1,
+        "labels": 1,
+        "lines": 3,
+        "triangles_dropped": 0
+      },
+      "level": 2,
+      "path": "z2/5_5.mtile",
+      "sha256": "d1a2398c063dddcdf47c1dd362af7e43160a27ad937b399ff5e616976d6302ed",
+      "size_bytes": 3668,
+      "tile": [
+        5,
+        5
+      ]
+    }
+  ]
+}
