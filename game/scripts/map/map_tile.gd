@@ -35,7 +35,8 @@ const COLUMNS := {
 	"pick.ring": 3, "pick.bbox": 4,
 	"label.xy": 2, "label.angle": 1, "label.span": 1, "label.cls": 1, "label.weight": 1,
 }
-# Колонки карточки здания в pick.attrs (docs/city-package.md#участки-карты).
+# Колонки карточки здания в pick.attrs (docs/city-package.md#участки-карты). facilities (с пакета 0.3.0,
+# #15) необязательна: в участках прежних пакетов её нет, карточка показывает учреждения как unknown.
 const PICK_COLUMNS := ["id", "name", "function", "function_source", "levels", "levels_source", "footprint_m2",
 	"residents", "zone_id", "territory"]
 const INT_SECTIONS := ["area.tri", "line.tri", "building.tri", "building.outline", "pick.ring"]
@@ -352,6 +353,12 @@ func _check_pick() -> String:
 		return "pick.attrs: нужны колонки %s" % [PICK_COLUMNS]
 	if not attrs.values().all(func(c): return c is Array and c.size() == buildings):
 		return "pick.attrs: каждая колонка — список из %d значений" % buildings
+	# ID — ключ выбора и связь с таблицами пакета; учреждения — список записей на здание.
+	if not attrs.id.all(func(v): return v is String and not v.is_empty()):
+		return "pick.attrs: id — непустые строки"
+	if attrs.has("facilities") and not attrs.facilities.all(
+			func(v): return v is Array and v.all(func(f): return f is Dictionary)):
+		return "pick.attrs: facilities — список записей учреждений на здание"
 	var rings: PackedInt32Array = sections["pick.ring"]
 	var vertices := vertex_count("building")
 	for i in range(0, rings.size(), 3):

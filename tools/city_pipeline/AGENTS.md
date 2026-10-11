@@ -29,7 +29,7 @@
 .venv/bin/python -m tools.city_pipeline validate tests/fixtures/city_package/manifest.json --metadata-only
 .venv/bin/python -m tools.city_pipeline fetch data/manifests/moscow-2021.json
 .venv/bin/python -m tools.city_pipeline build data/manifests/moscow-2021.json
-.venv/bin/python -m tools.city_pipeline validate data/packages/moscow-2021-0.2.0/manifest.json
+.venv/bin/python -m tools.city_pipeline validate data/packages/moscow-2021-0.3.0/manifest.json
 .venv/bin/python -m tools.city_pipeline map-tile data/manifests/moscow-2021.json   # тестовые участки карты
 .venv/bin/python -m tools.city_pipeline map-tile data/manifests/moscow-2021.json --at 37.5,55.6 --out data/processed/map-test
 .venv/bin/python -m tools.city_pipeline map-tile data/manifests/moscow-2021.json --all --out data/processed/map-region   # весь регион, как в пакете

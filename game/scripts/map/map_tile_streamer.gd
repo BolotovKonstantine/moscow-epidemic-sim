@@ -39,6 +39,7 @@ var _wanted: Array[Vector3i] = []   # нужные участки по убыв�
 var _wanted_set: Dictionary = {}
 var _tick := 0
 var _ratio := INITIAL_RATIO
+var _reach: Dictionary = {}      # уровень → на сколько участков охват по индексу выходит за квадрат (здания за краем)
 
 
 class Job extends RefCounted:
@@ -57,10 +58,21 @@ func _init(index: MapIndex, palette: PackedColorArray, limit: int, attach: Calla
 	for entry: Dictionary in index.tiles:
 		if entry.level > 0:
 			_entries[Vector3i(entry.level, entry.tile.x, entry.tile.y)] = entry
+			# Здание принадлежит участку своей представительной точки и может выступать за край
+			# сколь угодно далеко: радиус поиска соседей — по наибольшему выступу охвата в индексе.
+			if entry.bbox != null:
+				var size: float = MapTile.LEVEL_TILE_M[entry.level]
+				var square := Rect2(Vector2(entry.tile) * size, Vector2.ONE * size)
+				var bounds: Rect2 = entry.bbox
+				var overhang := maxf(maxf(square.position.x - bounds.position.x, square.position.y - bounds.position.y),
+					maxf(bounds.end.x - square.end.x, bounds.end.y - square.end.y))
+				_reach[entry.level] = maxi(_reach.get(entry.level, 0), ceili(maxf(overhang, 0.0) / size))
 
 
 ## Участки уровня level, задевающие прямоугольник плоскости карты, — от центра к краям. Участков нет
-## в индексе — они вне региона.
+## в индексе — они вне региона. Соседний участок нужен и тогда, когда его квадрат вне прямоугольника,
+## но охват по индексу его задевает: здание выступает за край своего участка (#15). Соседи ищутся
+## в пределах reach(level) участков — наибольшего выступа охвата в индексе.
 func tiles_in(rect: Rect2, level: int) -> Array[Vector3i]:
 	var result: Array[Vector3i] = []
 	if level <= 0:
@@ -69,10 +81,15 @@ func tiles_in(rect: Rect2, level: int) -> Array[Vector3i]:
 	var center := rect.get_center()
 	var low := Vector2i(floori(rect.position.x / size), floori(rect.position.y / size))
 	var high := Vector2i(floori(rect.end.x / size), floori(rect.end.y / size))
-	for y in range(low.y, high.y + 1):
-		for x in range(low.x, high.x + 1):
+	var margin := reach(level)
+	for y in range(low.y - margin, high.y + margin + 1):
+		for x in range(low.x - margin, high.x + margin + 1):
 			var key := Vector3i(level, x, y)
-			if _entries.has(key):
+			if not _entries.has(key):
+				continue
+			var inside := x >= low.x and x <= high.x and y >= low.y and y <= high.y
+			var bounds: Variant = _entries[key].bbox
+			if inside or (bounds != null and (bounds as Rect2).intersects(rect, true)):
 				result.append(key)
 	result.sort_custom(func(a: Vector3i, b: Vector3i) -> bool:
 		var da := (Vector2(a.y, a.z) + Vector2(0.5, 0.5)) * size - center
@@ -117,6 +134,21 @@ func in_flight() -> int:
 ## Нужные участки, которые ещё могут подключиться: грузятся или ждут очереди.
 func pending() -> int:
 	return _wanted.filter(func(key): return not _loaded.has(key) and not _failed.has(key) and not _rejected.has(key)).size()
+
+
+## Охват участка в плоскости карты из индекса (Rect2) или null — участка нет или охват не заявлен.
+func entry_bounds(key: Vector3i) -> Variant:
+	return _entries[key].bbox if _entries.has(key) else null
+
+
+## На сколько участков охват участков уровня по индексу выходит за их квадраты (0 — не выходит).
+func reach(level: int) -> int:
+	return _reach.get(level, 0)
+
+
+## Участок не загрузится: ошибка чтения или проверки (повторно не грузится).
+func is_failed(key: Vector3i) -> bool:
+	return _failed.has(key)
 
 
 ## Нужные участки, которые ещё не подключены (грузятся, ждут очереди или не поместились).

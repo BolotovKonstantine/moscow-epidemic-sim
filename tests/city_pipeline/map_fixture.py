@@ -73,6 +73,7 @@ def fixture_layers():
         "levels": [9, 3, 1], "levels_source": ["tag", "tag", "default"],
         "footprint_m2": [8400.0, 2400.0, 1000.0], "residents": [310, 0, 0],
         "zone_id": ["z1", "z1", "z1"], "territory": ["moscow", "moscow", "moscow"],
+        "facilities": [[], [{"id": "n7", "kind": "school", "name": "Школа № 1"}, {"id": "n8", "kind": "kindergarten", "name": None}], []],
     }
     return areas, lines, (geometry, classes, attrs)
 
@@ -139,6 +140,7 @@ def stream_buildings(houses):
         "function": ["residential"] * count, "function_source": ["tag"] * count,
         "levels": [5] * count, "levels_source": ["tag"] * count, "footprint_m2": [2400.0] * count,
         "residents": [100] * count, "zone_id": ["z1"] * count, "territory": ["moscow"] * count,
+        "facilities": [[] for _ in houses],
     }
     return geometry, classes, attrs
 
