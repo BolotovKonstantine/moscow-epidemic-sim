@@ -3,7 +3,7 @@ extends PanelContainer
 
 # Карточка выбранного здания справа (#15): стабильный ID пакета, функция, этажность и их
 # источники, площадь контура, жители, зона, территория и связанные учреждения. Оценённые значения
-# (функция не из тега здания, этажность по умолчанию, жители) — курсивом, приглушённым цветом
+# (функция не из тега здания, этажность по умолчанию, жители, связь с учреждениями) — курсивом, приглушённым цветом
 # и с пометкой «оценка»; отсутствующие — `unknown`, а не 0. Значения берутся из pick.attrs участка.
 
 const WIDTH := 320.0
@@ -103,12 +103,14 @@ static func card_text(selection: Dictionary) -> String:
 
 
 ## Список учреждений; колонки нет (участки пакетов до 0.3.0) — unknown, пустой список — «нет».
+## Связь учреждения со зданием — оценка: пайплайн относит здание к учреждению по контуру или
+## точке учреждения (facilities.csv.gz, estimated), поэтому список помечен как оценка.
 static func _facilities(a: Dictionary) -> String:
 	if not a.get("facilities") is Array:
 		return UNKNOWN
 	var items: Array = a.facilities
 	if items.is_empty():
-		return "нет"
+		return _estimated("нет · по контурам и точкам OSM")
 	var names := PackedStringArray()
 	for item: Variant in items:
 		if not item is Dictionary:
@@ -117,7 +119,7 @@ static func _facilities(a: Dictionary) -> String:
 		var kind_text: String = FACILITY_KINDS.get(kind, kind if not kind.is_empty() else UNKNOWN)
 		var title := _plain(item.get("name"))
 		names.append("\n  • " + _escape(kind_text if title.is_empty() else "%s (%s)" % [title, kind_text]))
-	return "".join(names)
+	return _estimated("по контурам и точкам OSM") + "".join(names)
 
 
 static func _row(label: String, value: String) -> String:

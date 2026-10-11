@@ -208,17 +208,19 @@ func building_at(map_point: Vector2) -> Dictionary:
 
 
 ## Клик по точке плоскости карты. Выбирать можно только на уровне подробности 2 (иначе клик
-## выбор не меняет). Промах снимает выбор, если участок 2 км под точкой загружен; пока он
-## грузится, клик ничего не меняет: здание там может быть. Возвращает true, если выбор изменён.
+## выбор не меняет). Пока грузится хоть один участок 2 км, чей охват по индексу содержит точку
+## (здание соседнего участка может выступать за край), клик ничего не меняет: иначе промах снял бы
+## выбор, а победитель наложения зависел бы от порядка загрузки. Промах по загруженным участкам
+## снимает выбор. Возвращает true, если выбор изменён.
 func select_at(map_point: Vector2) -> bool:
 	if level_for(meters_per_pixel) < 2:
 		return false
+	if streamer != null:
+		for key in streamer.missing():
+			var bounds: Variant = streamer.entry_bounds(key)
+			if key.x == 2 and bounds != null and (bounds as Rect2).grow(BBOX_TOLERANCE_M).has_point(map_point):
+				return false
 	var hit := building_at(map_point)
-	if hit.is_empty() and streamer != null:
-		var size: float = MapTile.LEVEL_TILE_M[2]
-		var key := Vector3i(2, floori(map_point.x / size), floori(map_point.y / size))
-		if key in streamer.missing():
-			return false
 	if hit.get("id") == selection.get("id"):
 		return false
 	set_selection(hit)

@@ -119,6 +119,11 @@ func pending() -> int:
 	return _wanted.filter(func(key): return not _loaded.has(key) and not _failed.has(key) and not _rejected.has(key)).size()
 
 
+## Охват участка в плоскости карты из индекса (Rect2) или null — участка нет или охват не заявлен.
+func entry_bounds(key: Vector3i) -> Variant:
+	return _entries[key].bbox if _entries.has(key) else null
+
+
 ## Нужные участки, которые ещё не подключены (грузятся, ждут очереди или не поместились).
 func missing() -> Array[Vector3i]:
 	return _wanted.filter(func(key): return not _loaded.has(key) and not _failed.has(key))

@@ -82,6 +82,7 @@ func _test_card() -> void:
 	check(_line(text, "Функция").find("оценка") < 0, "функция по тегу здания — не оценка")
 	check(_line(text, "Этажность").find("оценка") < 0 and "9 ·" in _line(text, "Этажность"), "этажность по тегу — не оценка")
 	check("оценка" in _line(text, "Жители"), "жители всегда оценка")
+	check("оценка" in _line(text, "Учреждения"), "связь с учреждениями — оценка")
 	check("812.5 м²" in text and "Москва" in text and "Школа № 1 (школа)" in text, "площадь, территория, учреждение")
 
 	var estimated := {"id": "w2", "attributes": {"id": "w2", "name": null, "function": "work", "function_source": "site",
@@ -91,7 +92,7 @@ func _test_card() -> void:
 	check("Здание без названия" in text, "здание без названия")
 	check("оценка" in _line(text, "Функция") and "оценка" in _line(text, "Этажность"), "функция по участку и этажность по умолчанию — оценка")
 	check("unknown" in _line(text, "Площадь") and "unknown" in _line(text, "Зона"), "нет площади и зоны — unknown")
-	check("нет" in _line(text, "Учреждения"), "учреждений нет — «нет»")
+	check("нет" in _line(text, "Учреждения") and "оценка" in _line(text, "Учреждения"), "учреждений нет — «нет», это оценка")
 	check("0 ·" in _line(text, "Жители"), "оценка 0 жителей показана как 0")
 
 	var missing := {"id": "w3", "attributes": {"id": "w3", "function": "unknown", "function_source": "unknown",
@@ -157,6 +158,14 @@ func _test_stream(dir: String) -> void:
 	check(Vector3i(2, 4, 4) in map.streamer.missing(), "участок под кликом ещё грузится")
 	check(not map.select_at(Vector2(9000, 9000)) and map.selection.get("id") == "b0_0",
 		"клик по незагруженному участку выбор не снимает")
+	# Здание грузящегося соседнего участка может выступать за край: пока охват такого участка по
+	# индексу содержит точку, промах по загруженному участку выбор не снимает.
+	var neighbour: Dictionary = map.streamer._entries[Vector3i(2, 4, 4)]
+	var saved: Rect2 = neighbour.bbox
+	neighbour.bbox = Rect2(1400, 1400, 200, 200)
+	check(map.tile_view(Vector3i(2, 0, 0)) != null and not map.select_at(Vector2(1500, 1500)) \
+		and map.selection.get("id") == "b0_0", "охват грузящегося соседа содержит точку — выбор не снят")
+	neighbour.bbox = saved
 	var started := Time.get_ticks_msec()
 	while map.streamer.pending() > 0 and Time.get_ticks_msec() - started < WAIT_LIMIT_MSEC:
 		map._process(0.0)
