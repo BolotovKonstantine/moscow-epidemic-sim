@@ -7,6 +7,9 @@ extends PanelContainer
 # и с пометкой «оценка»; отсутствующие — `unknown`, а не 0. Значения берутся из pick.attrs участка.
 
 const WIDTH := 320.0
+const MARGIN := 8.0
+const BOTTOM_RESERVE := 90.0   # место под атрибуцией внизу справа
+const PADDING := 10.0
 const ESTIMATED := Color("#7a6f63")
 const UNKNOWN := "unknown"
 
@@ -29,6 +32,7 @@ const FACILITY_KINDS := {
 }
 
 var _text := RichTextLabel.new()
+var _scroll := ScrollContainer.new()   # длинная карточка (много учреждений, низкое окно) прокручивается
 
 
 func _init() -> void:
@@ -36,24 +40,27 @@ func _init() -> void:
 	visible = false
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	offset_left = -WIDTH - 8.0
-	offset_right = -8.0
-	offset_top = 8.0
+	offset_left = -WIDTH - MARGIN
+	offset_right = -MARGIN
+	offset_top = MARGIN
 	grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	var panel := StyleBoxFlat.new()
 	panel.bg_color = Color(1, 1, 1, 0.94)
-	panel.set_content_margin_all(10.0)
+	panel.set_content_margin_all(PADDING)
 	panel.set_corner_radius_all(4)
 	add_theme_stylebox_override("panel", panel)
 	_text.bbcode_enabled = true
 	_text.fit_content = true
 	_text.scroll_active = false
-	_text.custom_minimum_size.x = WIDTH - 20.0
+	_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL   # ширина — от области прокрутки
 	_text.add_theme_color_override("default_color", Color("#2b2b2b"))
 	_text.add_theme_font_size_override("normal_font_size", 13)
 	_text.add_theme_font_size_override("bold_font_size", 15)
 	_text.add_theme_font_size_override("italics_font_size", 13)
-	add_child(_text)
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll.custom_minimum_size.x = WIDTH - 2.0 * PADDING
+	_scroll.add_child(_text)
+	add_child(_scroll)
 
 
 ## Показать здание (MapView.selection) или скрыть карточку ({}).
@@ -61,7 +68,26 @@ func show_building(selection: Dictionary) -> void:
 	visible = not selection.is_empty()
 	if visible:
 		_text.text = card_text(selection)
-	reset_size()
+		_scroll.scroll_vertical = 0
+	_fit_height()
+
+
+## RichTextLabel обрабатывает текст не сразу, а окно может изменить размер: пока карточка видна,
+## высота сверяется каждый кадр (одно сравнение).
+func _process(_delta: float) -> void:
+	if visible:
+		_fit_height()
+
+
+## Высота карточки — по тексту, но не ниже нижнего края окна за вычетом атрибуции; остальное
+## прокручивается.
+func _fit_height() -> void:
+	var window := get_viewport_rect().size.y if is_inside_tree() else 720.0
+	var limit := maxf(window - MARGIN - BOTTOM_RESERVE - 2.0 * PADDING, 60.0)
+	var height := minf(_text.get_content_height(), limit)
+	if _scroll.custom_minimum_size.y != height:
+		_scroll.custom_minimum_size.y = height
+		reset_size()
 
 
 ## Текст карточки в BBCode (отдельно от узла — для тестов).

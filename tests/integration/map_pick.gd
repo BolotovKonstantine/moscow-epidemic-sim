@@ -25,8 +25,10 @@ func _initialize() -> void:
 	_test_drag(root_dir.path_join(FIXTURE).simplify_path())
 	_test_card()
 	_test_overlap_and_overhang()
+	_test_reach()
 	_test_stream(root_dir.path_join(STREAM).simplify_path())
 	_test_real_package(root_dir.path_join(PACKAGES).simplify_path())
+	await _test_card_height()
 	print("FAIL: %d" % failures if failures else "OK: все проверки выбора зданий пройдены")
 	quit(1 if failures else 0)
 
@@ -145,6 +147,29 @@ func _test_card() -> void:
 	card.free()
 
 
+## Длинная карточка не выше окна и прокручивается, короткая — по высоте текста. Текст RichTextLabel
+## обрабатывается не сразу, поэтому проверка — через несколько кадров.
+func _test_card_height() -> void:
+	var card := BuildingCard.new()
+	root.add_child(card)
+	var many := {"id": "w9", "attributes": {"id": "w9", "facilities": []}}
+	for i in 200:
+		many.attributes.facilities.append({"id": "n%d" % i, "kind": "clinic", "name": "Поликлиника %d" % i})
+	card.show_building(many)
+	for i in 3:
+		await process_frame
+	var window := root.get_visible_rect().size.y
+	check(card.size.y > 100.0 and card.position.y + card.size.y <= window, "длинная карточка в пределах окна: %s" % card.get_rect())
+	check(is_equal_approx(card.size.x, BuildingCard.WIDTH) and is_equal_approx(card.get_rect().end.x,
+		root.get_visible_rect().size.x - BuildingCard.MARGIN), "ширина карточки и отступ справа: %s" % card.get_rect())
+	check(card._scroll.custom_minimum_size.y < card._text.get_content_height(), "длинная карточка прокручивается")
+	card.show_building({"id": "w1", "attributes": {"id": "w1"}})
+	for i in 3:
+		await process_frame
+	check(is_equal_approx(card._scroll.custom_minimum_size.y, card._text.get_content_height()), "короткая карточка — по высоте текста")
+	card.free()
+
+
 ## Участок, собранный в памяти: квадраты [x0, y0, x1, y1] в координатах участка и их ID.
 func _pick_tile(origin: Vector2, boxes: Array, ids: Array) -> MapPick:
 	var tile := MapTile.new()
@@ -171,6 +196,19 @@ func _test_overlap_and_overhang() -> void:
 	check(pick.bounds.has_point(Vector2(1970, 20)), "охват выбора включает здание за краем участка")
 	check(pick.building_at(Vector2(1970, 20)) == 0, "здание за краем участка выбирается")
 	check(pick.outlines(0)[0][0] == Vector2(1950, 10), "контур — в плоскости карты")
+
+
+## Радиус поиска соседей — по наибольшему выступу охвата в индексе, а не на один участок.
+func _test_reach() -> void:
+	var index := MapIndex.new()
+	index.tiles = [
+		{"level": 2, "tile": Vector2i(5, 5), "bbox": Rect2(10000, 10000, 2000, 2000)},
+		{"level": 2, "tile": Vector2i(0, 0), "bbox": Rect2(-100, 0, 4600, 2000)},   # выступ 2,5 км вправо
+		{"level": 1, "tile": Vector2i(0, 0), "bbox": null},
+	]
+	var streamer := MapTileStreamer.new(index, PackedColorArray(), 1 << 20, Callable(), Callable())
+	check(streamer.reach(2) == 2 and streamer.reach(1) == 0, "радиус соседей: %d и %d" % [streamer.reach(2), streamer.reach(1)])
+	check(Vector3i(2, 0, 0) in streamer.tiles_in(Rect2(4300, 500, 100, 100), 2), "участок с далеко выступающим зданием нужен")
 
 
 func _test_stream(dir: String) -> void:
@@ -201,12 +239,14 @@ func _test_stream(dir: String) -> void:
 	var neighbour: Dictionary = map.streamer._entries[key]
 	var saved: Rect2 = neighbour.bbox
 	neighbour.bbox = Rect2(1400, 1400, 800, 800)
+	map.streamer._reach[2] = 1   # как если бы охват в индексе выступал за квадрат участка
 	check(Vector3i(2, 1, 1) in map.streamer.tiles_in(Rect2(1450, 1450, 100, 100), 2),
 		"участок, чей охват задевает окно, нужен загрузчику")
 	map.streamer.evict(key)
 	check(map.tile_view(Vector3i(2, 0, 0)) != null and not map.select_at(Vector2(1500, 1500)) \
 		and map.selection.get("id") == "b0_0", "охват неподключённого соседа содержит точку — выбор не снят")
 	neighbour.bbox = saved
+	map.streamer._reach[2] = 0
 	var started := Time.get_ticks_msec()
 	while map.streamer.pending() > 0 and Time.get_ticks_msec() - started < WAIT_LIMIT_MSEC:
 		map._process(0.0)

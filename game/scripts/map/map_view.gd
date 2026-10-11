@@ -220,8 +220,9 @@ func select_at(map_point: Vector2) -> bool:
 	if streamer != null:
 		var size: float = MapTile.LEVEL_TILE_M[2]
 		var cell := Vector2i(floori(map_point.x / size), floori(map_point.y / size))
-		for dy in range(-1, 2):
-			for dx in range(-1, 2):
+		var reach := streamer.reach(2)
+		for dy in range(-reach, reach + 1):
+			for dx in range(-reach, reach + 1):
 				var key := Vector3i(2, cell.x + dx, cell.y + dy)
 				var bounds: Variant = streamer.entry_bounds(key)
 				if bounds != null and not streamer.is_loaded(key) and not streamer.is_failed(key) \
