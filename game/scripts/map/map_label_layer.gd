@@ -24,6 +24,12 @@ var _width := PackedFloat32Array()    # ширина текста в пиксе�
 var _order := PackedInt32Array()
 var _styles: Array[Dictionary] = []   # по коду класса: стиль темы и шрифт
 
+# Подписи хранятся блоками по участкам (#14): участок можно выгрузить вместе с его подписями.
+# Общие массивы выше — склейка блоков в порядке ключей; пересобираются при изменении набора.
+var _blocks: Dictionary = {}          # Vector3i(уровень, x, y) → {pos, angle, span, cls, weight, level, text, width}
+var _built: Array[Dictionary] = []    # блоки в порядке общих массивов на момент последней сборки
+var _dirty := false
+
 var _center := Vector2.ZERO
 var _mpp := 1.0
 var _view_level := 0
@@ -46,47 +52,112 @@ func set_classes(label_classes: Array) -> void:
 		_styles.append(style)
 
 
+static func tile_key(tile: MapTile) -> Vector3i:
+	return Vector3i(tile.level, tile.tile.x, tile.tile.y)
+
+
+## Добавить подписи участка отдельным блоком (повторное добавление заменяет блок).
 func add_tile(tile: MapTile) -> void:
 	if not tile.has_layer("label"):
 		return
 	var xy: PackedFloat32Array = tile.sections["label.xy"]
 	var count := xy.size() / 2
-	var start := _pos.size()
-	_pos.resize(start + count)
+	var pos := PackedVector2Array()
+	pos.resize(count)
 	for i in count:
-		_pos[start + i] = tile.origin + Vector2(xy[2 * i], xy[2 * i + 1])
-	_angle.append_array(tile.sections["label.angle"])
-	_span.append_array(tile.sections["label.span"])
-	_weight.append_array(tile.sections["label.weight"])
-	for code: float in tile.sections["label.cls"]:
-		_cls.append(int(code))
-		_level.append(tile.level)
-	_text.append_array(PackedStringArray(tile.sections["label.text"]))
+		pos[i] = tile.origin + Vector2(xy[2 * i], xy[2 * i + 1])
+	var cls := PackedInt32Array()
+	cls.resize(count)
+	var codes: PackedFloat32Array = tile.sections["label.cls"]
+	for i in count:
+		cls[i] = int(codes[i])
+	var level := PackedInt32Array()
+	level.resize(count)
+	level.fill(tile.level)
+	var width := PackedFloat32Array()
+	width.resize(count)
+	width.fill(-1.0)
+	_store_widths()
+	_blocks[tile_key(tile)] = {
+		"pos": pos, "angle": tile.sections["label.angle"], "span": tile.sections["label.span"], "cls": cls,
+		"weight": tile.sections["label.weight"], "level": level,
+		"text": PackedStringArray(tile.sections["label.text"]), "width": width,
+	}
+	_dirty = true
+	queue_redraw()
+
+
+## Убрать подписи выгруженного участка.
+func remove_tile(key: Vector3i) -> void:
+	if not _blocks.has(key):
+		return
+	_store_widths()
+	_blocks.erase(key)
+	_dirty = true
+	queue_redraw()
+
+
+func has_tile(key: Vector3i) -> bool:
+	return _blocks.has(key)
 
 
 func clear() -> void:
-	for array in [_pos, _angle, _span, _cls, _weight, _level, _text, _width, _order]:
-		array.clear()
-	queue_redraw()
+	_blocks.clear()
+	_dirty = true
+	finalize()
 
 
+## Пересобрать общие массивы и порядок по приоритету. Вызывается сама перед раскладкой, если набор
+## участков менялся; порядок не зависит от того, в каком порядке участки загружались.
 func finalize() -> void:
-	_width.resize(_text.size())
-	_width.fill(-1.0)
-	var order := range(_text.size())
-	order.sort_custom(func(a: int, b: int) -> bool:
-		var pa: int = _styles[_cls[a]].priority
-		var pb: int = _styles[_cls[b]].priority
-		if pa != pb:
-			return pa > pb
-		if _weight[a] != _weight[b]:
-			return _weight[a] > _weight[b]
-		return a < b)
-	_order = PackedInt32Array(order)
+	_store_widths()
+	var keys_sorted: Array[Vector3i] = []
+	keys_sorted.assign(_blocks.keys())
+	keys_sorted.sort()
+	for array in [_pos, _angle, _span, _cls, _weight, _level, _text, _width]:
+		array.clear()
+	_built.clear()
+	for key in keys_sorted:
+		var block: Dictionary = _blocks[key]
+		_built.append(block)
+		_pos.append_array(block.pos)
+		_angle.append_array(block.angle)
+		_span.append_array(block.span)
+		_cls.append_array(block.cls)
+		_weight.append_array(block.weight)
+		_level.append_array(block.level)
+		_text.append_array(block.text)
+		_width.append_array(block.width)
+	# Ключ сортировки (−приоритет, −вес, номер) во Vector3 сортирует встроенная сортировка: в разы
+	# быстрее sort_custom. Вес и так float32 (раздел label.weight), номер < 2^24 точен во float32.
+	var order := []
+	order.resize(_text.size())
+	for i in _text.size():
+		order[i] = Vector3(-_styles[_cls[i]].priority, -_weight[i], i)
+	order.sort()
+	_order.resize(order.size())
+	for i in order.size():
+		_order[i] = int(order[i].z)
+	_dirty = false
 	queue_redraw()
+
+
+## Сохранить измеренные ширины текста в блоки перед пересборкой общих массивов.
+func _store_widths() -> void:
+	if _width.size() != _text.size():
+		return
+	# Пишем в те же словари, что склеены при сборке: удалённый или заменённый блок получает ширины
+	# впустую, но смещения остальных не сбиваются.
+	var start := 0
+	for block in _built:
+		var count: int = block.text.size()
+		block.width = _width.slice(start, start + count)
+		start += count
 
 
 func label_count() -> int:
+	if _dirty:
+		finalize()
 	return _text.size()
 
 
@@ -100,6 +171,8 @@ func update_view(center: Vector2, mpp: float, level: int, view_size: Vector2) ->
 
 ## Раскладка подписей для текущего вида: [[индекс, точка экрана, ширина, маркер], ...] по приоритету.
 func layout() -> Array:
+	if _dirty:
+		finalize()
 	var placed := []
 	var view := Rect2(Vector2.ZERO, _view_size)
 	# Грубый отбор по точке с большим запасом, затем точный — по прямоугольнику подписи:

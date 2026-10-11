@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import shapely
 
-from tests.city_pipeline.map_fixture import FIXTURE_DIR, write_fixture
+from tests.city_pipeline.map_fixture import FIXTURE_DIR, STREAM_DIR, write_fixture, write_stream_fixture
 from tests.city_pipeline.synthetic_city import CENTER, OsmBuilder, build_city, mini_city_config, synthetic_sources
 from tools.city_pipeline import maplabels as ml
 from tools.city_pipeline import maptiles as mt
@@ -545,15 +545,23 @@ class GodotFixtureTests(unittest.TestCase):
     """Набор tests/fixtures/map_tile читает headless-тест Godot; он должен совпадать с текущим кодом записи."""
 
     def test_committed_fixture_is_current(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            index = write_fixture(Path(tmp))
-            files = ["index.json"] + [tile["path"] for tile in index["tiles"]]
-            for name in files:
-                with self.subTest(name=name):
-                    self.assertEqual((Path(tmp) / name).read_bytes(), (FIXTURE_DIR / name).read_bytes(),
-                                     "пересоберите: .venv/bin/python -m tests.city_pipeline.map_fixture")
-            committed = sorted(p.relative_to(FIXTURE_DIR).as_posix() for p in FIXTURE_DIR.rglob("*") if p.is_file())
-            self.assertEqual(committed, sorted(files))
+        for directory, write in ((FIXTURE_DIR, write_fixture), (STREAM_DIR, write_stream_fixture)):
+            with tempfile.TemporaryDirectory() as tmp:
+                index = write(Path(tmp))
+                files = ["index.json"] + [tile["path"] for tile in index["tiles"]]
+                for name in files:
+                    with self.subTest(name=f"{directory.name}/{name}"):
+                        self.assertEqual((Path(tmp) / name).read_bytes(), (directory / name).read_bytes(),
+                                         "пересоберите: .venv/bin/python -m tests.city_pipeline.map_fixture")
+                committed = sorted(p.relative_to(directory).as_posix() for p in directory.rglob("*") if p.is_file())
+                self.assertEqual(committed, sorted(files))
+
+    def test_stream_fixture_grid(self):
+        index = json.loads((STREAM_DIR / "index.json").read_text(encoding="utf-8"))
+        levels = [tile["level"] for tile in index["tiles"]]
+        self.assertEqual((levels.count(0), levels.count(1), levels.count(2)), (1, 4, 36))
+        detail = mt.decode_tile((STREAM_DIR / "z2" / "5_5.mtile").read_bytes())[1]
+        self.assertEqual(detail["pick.attrs"]["id"], ["b5_5"])
 
     def test_fixture_covers_every_layer(self):
         detail = mt.decode_tile((FIXTURE_DIR / "z2" / "0_0.mtile").read_bytes())[1]
