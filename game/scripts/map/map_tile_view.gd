@@ -18,26 +18,32 @@ var tile := Vector2i.ZERO
 var tile_size_m := 0.0
 var data_bytes := 0   # оценка памяти участка: массивы мешей и подписей (см. prepare)
 var building_outline: MeshInstance2D
+var pick: MapPick   # данные выбора зданий (только участки 2 км), иначе null
 var _line_mesh: ArrayMesh
 var _line_aabb := AABB()
 
 
-## Массивы мешей участка: {meshes: {имя: [primitive, arrays] или null}, bytes}. Без узлов и ресурсов
-## Godot, поэтому безопасно в рабочем потоке. palette — цвет площади по коду класса.
-## bytes — сумма размеров массивов вершин, индексов, цветов и UV и массивов подписей: оценка памяти
-## участка в кеше (GPU-копии мешей и служебные структуры Godot в неё не входят).
+## Массивы мешей участка: {meshes: {имя: [primitive, arrays] или null}, pick: MapPick или null, bytes}.
+## Без узлов и ресурсов Godot, поэтому безопасно в рабочем потоке. palette — цвет площади по коду класса.
+## bytes — сумма размеров массивов вершин, индексов, цветов и UV, массивов подписей и данных выбора:
+## оценка памяти участка в кеше (GPU-копии мешей и служебные структуры Godot в неё не входят).
 static func prepare(map_tile: MapTile, palette: PackedColorArray) -> Dictionary:
+	# Вершины зданий — один массив на заливку, контуры и выбор (копия только при записи).
+	var building_xy := _vectors(map_tile.sections["building.xy"]) if map_tile.has_layer("building") else PackedVector2Array()
 	var meshes := {
 		"Areas": _area_arrays(map_tile, palette),
-		"Buildings": _building_arrays(map_tile, false),
-		"BuildingOutlines": _building_arrays(map_tile, true),
+		"Buildings": _building_arrays(map_tile, building_xy, false),
+		"BuildingOutlines": _building_arrays(map_tile, building_xy, true),
 		"Lines": _line_arrays(map_tile),
 	}
 	var bytes := 0
 	for item: Variant in meshes.values():
 		if item != null:
 			bytes += _arrays_bytes(item[1])
-	return {"meshes": meshes, "bytes": bytes + label_bytes(map_tile)}
+	var building_pick := MapPick.from_tile(map_tile, building_xy)
+	if building_pick != null:
+		bytes += building_pick.bytes
+	return {"meshes": meshes, "pick": building_pick, "bytes": bytes + label_bytes(map_tile)}
 
 
 ## Оценка памяти подписей участка в MapLabelLayer: числовые массивы и UTF-8 тексты.
@@ -59,6 +65,7 @@ func setup(map_tile: MapTile, prepared: Dictionary, style: Dictionary) -> void:
 	position = map_tile.origin
 	z_index = map_tile.level * LEVEL_Z_STEP
 	data_bytes = prepared.bytes
+	pick = prepared.get("pick")
 	if level > 0:
 		# Фон участка закрывает упрощённую геометрию нижних уровней (z 0 внутри уровня — под всеми
 		# слоями всех участков уровня, поэтому не закрывает здания соседа, выступающие за край).
@@ -173,10 +180,9 @@ static func _area_arrays(map_tile: MapTile, palette: PackedColorArray) -> Varian
 	return _arrays(Mesh.PRIMITIVE_TRIANGLES, _vectors(map_tile.sections["area.xy"]), map_tile.sections["area.tri"], colors)
 
 
-static func _building_arrays(map_tile: MapTile, outline: bool) -> Variant:
+static func _building_arrays(map_tile: MapTile, vertices: PackedVector2Array, outline: bool) -> Variant:
 	if not map_tile.has_layer("building"):
 		return null
-	var vertices := _vectors(map_tile.sections["building.xy"])
 	if outline:
 		return _arrays(Mesh.PRIMITIVE_LINES, vertices, map_tile.sections["building.outline"])
 	return _arrays(Mesh.PRIMITIVE_TRIANGLES, vertices, map_tile.sections["building.tri"])

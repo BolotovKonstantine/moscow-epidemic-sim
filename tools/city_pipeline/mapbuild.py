@@ -198,6 +198,12 @@ def read_package(package: Path, projector: Projector, manifest=None) -> PackageL
 
     attributes = _read_csv(package / "building_attributes.csv.gz")
     residents = {row["building_id"]: int(row["residents"]) for row in _read_csv(package / "population.csv.gz")}
+    # Учреждения здания (#15): все учреждения, в building_ids которых оно есть, в порядке файла пакета.
+    facilities = {}
+    for row in _read_csv(package / "facilities.csv.gz"):
+        entry = {"id": row["facility_id"], "kind": row["kind"], "name": row["name"] or None}
+        for building_id in filter(None, row["building_ids"].split(";")):
+            facilities.setdefault(building_id, []).append(entry)
     rows = {
         "id": [row["building_id"] for row in attributes],
         "function": [row["dominant_function"] or "unknown" for row in attributes],
@@ -209,6 +215,7 @@ def read_package(package: Path, projector: Projector, manifest=None) -> PackageL
         "residents": [residents.get(row["building_id"], 0) for row in attributes],
         "zone_id": [row["zone_id"] or None for row in attributes],
         "territory": [row["territory"] or None for row in attributes],
+        "facilities": [facilities.get(row["building_id"], []) for row in attributes],
     }
     x, y = projector.xy([float(row["lon"]) for row in attributes], [float(row["lat"]) for row in attributes])
     classes = np.array([mt.BUILDING_CLASSES.index(kind) if kind in mt.BUILDING_CLASSES else 0 for kind in rows["function"]], np.int64)

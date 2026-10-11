@@ -3,7 +3,8 @@ extends Node
 # Главная сцена этапа 2: карта региона с подгрузкой участков по камере (#14), версия ядра и атрибуция.
 # Каталог участков — `--map-dir=<путь>` после `--` в командной строке, иначе каталог `map/` самого
 # нового пакета в data/packages/ рядом с проектом, иначе data/processed/map-test/ (`city_pipeline map-tile`).
-# Лимит памяти кеша участков — `--map-cache-mb=<МБ>`. F3 — отладочный оверлей.
+# Лимит памяти кеша участков — `--map-cache-mb=<МБ>`. F3 — отладочный оверлей. Клик по зданию
+# вблизи открывает его карточку справа (#15), Esc снимает выбор.
 
 const PACKAGES_DIR := "../data/packages"
 const DEFAULT_MAP_DIR := "../data/processed/map-test"
@@ -16,6 +17,7 @@ const DEBUG_PERIOD_USEC := 1000000   # окно, за которое оверл�
 @onready var _credit: Label = $Hud/Attribution/Label
 @onready var _debug: Label = $Hud/Debug
 
+var _card := BuildingCard.new()
 var _core_text := ""
 var _frame_max_usec := 0      # худший кадр текущего окна
 var _frame_shown_usec := 0    # худший кадр прошлого окна (показывается)
@@ -28,6 +30,8 @@ func _ready() -> void:
 	_core_text = _core_status()
 	_credit.text = MapIndex.OSM_CREDIT
 	_map.view_changed.connect(_on_view_changed)
+	$Hud.add_child(_card)
+	_map.selection_changed.connect(_card.show_building)
 	var args := OS.get_cmdline_user_args()
 	var map_dir := map_dir_from_args(args)
 	var problem := _map.load_map(map_dir, cache_limit_from_args(args) << 20)
@@ -90,8 +94,12 @@ func _process(_delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F3:
-		_debug.visible = not _debug.visible
+	if event is InputEventKey and event.pressed and not event.echo:
+		match event.keycode:
+			KEY_F3:
+				_debug.visible = not _debug.visible
+			KEY_ESCAPE:
+				_map.set_selection({})
 
 
 func _update_debug() -> void:
@@ -130,6 +138,7 @@ func _update_status() -> void:
 	var text := "Moscow Epidemic Sim · %s" % _core_text
 	if not _map.tile_views().is_empty():
 		var mpp := _map.meters_per_pixel
-		text += "\n1 пикс. = %s м · подробность %d · колесо/щипок — масштаб, перетаскивание — сдвиг, 0 — весь регион" % [
-			("%.2f" % mpp) if mpp < 10.0 else ("%.0f" % mpp), _map.level_for(mpp)]
+		text += "\n1 пикс. = %s м · подробность %d · колесо/щипок — масштаб, перетаскивание — сдвиг, 0 — весь регион%s" % [
+			("%.2f" % mpp) if mpp < 10.0 else ("%.0f" % mpp), _map.level_for(mpp),
+			", клик — здание" if _map.level_for(mpp) == 2 else ", приблизьте, чтобы выбрать здание"]
 	_status.text = text

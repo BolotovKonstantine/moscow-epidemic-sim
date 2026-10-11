@@ -45,6 +45,12 @@ const BUILDING_FILL := Color("#d6cfc6")
 const BUILDING_OUTLINE := Color("#b3aa9e")
 const BUILDING_OUTLINE_MAX_MPP := 1.5   # контуры зданий — только при сильном приближении, иначе шум
 
+# Выбранное здание (#15): обводка поверх карты, ширина в пикселях.
+const SELECTION := Color("#d2452f")
+const SELECTION_HALO := Color(1, 1, 1, 0.9)
+const SELECTION_WIDTH_PX := 2.5
+const SELECTION_HALO_PX := 1.5
+
 # Подписи: приоритет (больше — раньше занимает место), диапазон масштаба [от, до] в м/пикс.,
 # размер шрифта, цвет, начертание (regular, bold, italic) и маркер точки (none, metro, rail).
 # Подписи участков (уровни 1–2: улицы, реки вблизи) видны только на уровне своего участка, диапазон

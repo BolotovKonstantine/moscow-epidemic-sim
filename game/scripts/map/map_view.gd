@@ -4,15 +4,20 @@ extends Node2D
 # Карта города из набора участков (#12, #14): обзор региона загружен всегда, подробные участки
 # уровня текущего масштаба подгружает MapTileStreamer по видимой области с запасом и ограниченным
 # кешем. Камера с панорамированием и зумом. 1 единица сцены = 1 м плоскости карты, ось Y вниз.
+# Выбор здания (#15): клик без перетаскивания на уровне подробности 2 выбирает здание из
+# загруженных участков 2 км (правило попадания — MapPick); выбор хранит копию контура и значений
+# карточки и переживает выгрузку участка.
 
 signal view_changed(meters_per_pixel: float, level: int)
 signal tiles_changed
+signal selection_changed(selection: Dictionary)   # {} — выбор снят
 
 const ZOOM_STEP := 1.25
 const PAN_GESTURE_PX := 10.0   # пикселей на единицу delta жеста прокрутки трекпада
 const FIT_MARGIN := 1.05
 const BBOX_TOLERANCE_M := 1.0   # охват в заголовке считается в float64, вершины — во float32
 const OVERVIEW := Vector3i.ZERO
+const CLICK_SLOP_PX := 6.0   # нажатие, сдвинутое дальше, — перетаскивание, а не выбор
 
 var index: MapIndex
 var streamer: MapTileStreamer
@@ -20,6 +25,7 @@ var meters_per_pixel := 1.0
 var max_meters_per_pixel := 500.0
 var region_rect := Rect2()
 var load_stats: Dictionary = {}   # загрузка обзора: usec, static_bytes, tiles, errors
+var selection: Dictionary = {}    # выбранное здание: {id, attributes, outlines, area_m2}; {} — нет
 
 var _line_style: MapLineStyle
 var _style: Dictionary = {}
@@ -28,6 +34,9 @@ var _camera := Camera2D.new()
 var _label_canvas := CanvasLayer.new()
 var _labels := MapLabelLayer.new()
 var _dragging := false
+var _press_position := Vector2.ZERO
+var _press_moved := false
+var _highlight := SelectionHighlight.new()
 
 
 func _init() -> void:
@@ -37,6 +46,9 @@ func _init() -> void:
 	_labels.name = "Labels"
 	_label_canvas.add_child(_labels)
 	add_child(_label_canvas)
+	_highlight.name = "Selection"
+	_highlight.z_index = MapTile.MAX_LEVEL * MapTileView.LEVEL_Z_STEP + MapTileView.LEVEL_Z_STEP   # над всеми участками
+	add_child(_highlight)
 
 
 func _ready() -> void:
@@ -176,12 +188,58 @@ func pan_pixels(delta: Vector2) -> void:
 	_view_moved()
 
 
+## Здание под точкой плоскости карты среди загруженных участков 2 км: {id, attributes, outlines,
+## area_m2} или {} — здания нет. Здание выступает за край участка, поэтому проверяются все участки,
+## чей охват зданий содержит точку; при наложении — правило MapPick (площадь, затем ID).
+func building_at(map_point: Vector2) -> Dictionary:
+	var best: Dictionary = {}
+	for key: Vector3i in _views:
+		var pick: MapPick = _views[key].pick
+		if key.x != 2 or pick == null:
+			continue
+		var row := pick.building_at(map_point)
+		if row < 0:
+			continue
+		var area := pick.area_of(row)
+		var id := pick.building_id(row)
+		if best.is_empty() or area < best.area_m2 or (area == best.area_m2 and id < best.id):
+			best = {"id": id, "attributes": pick.attributes(row), "outlines": pick.outlines(row), "area_m2": area}
+	return best
+
+
+## Клик по точке плоскости карты. Выбирать можно только на уровне подробности 2 (иначе клик
+## выбор не меняет). Промах снимает выбор, если участок 2 км под точкой загружен; пока он
+## грузится, клик ничего не меняет: здание там может быть. Возвращает true, если выбор изменён.
+func select_at(map_point: Vector2) -> bool:
+	if level_for(meters_per_pixel) < 2:
+		return false
+	var hit := building_at(map_point)
+	if hit.is_empty() and streamer != null:
+		var size: float = MapTile.LEVEL_TILE_M[2]
+		var key := Vector3i(2, floori(map_point.x / size), floori(map_point.y / size))
+		if key in streamer.missing():
+			return false
+	if hit.get("id") == selection.get("id"):
+		return false
+	set_selection(hit)
+	return true
+
+
+## Выбрать здание (результат building_at) или снять выбор ({}).
+func set_selection(value: Dictionary) -> void:
+	selection = value
+	_highlight.outlines = value.get("outlines", [] as Array[PackedVector2Array])
+	_highlight.queue_redraw()
+	selection_changed.emit(selection)
+
+
 func _set_scale(mpp: float) -> void:
 	meters_per_pixel = clampf(mpp, MapTheme.MIN_MPP, max_meters_per_pixel)
 	_camera.zoom = Vector2.ONE / meters_per_pixel
 	_line_style.set_meters_per_pixel(meters_per_pixel)
 	for view: MapTileView in _views.values():
 		_style_view(view)
+	_highlight.set_meters_per_pixel(meters_per_pixel)
 	view_changed.emit(meters_per_pixel, level_for(meters_per_pixel))
 
 
@@ -301,9 +359,17 @@ func _unhandled_input(event: InputEvent) -> void:
 				zoom_at(event.position, 1.0 / _wheel_factor(event))
 			MOUSE_BUTTON_WHEEL_DOWN:
 				zoom_at(event.position, _wheel_factor(event))
-			MOUSE_BUTTON_LEFT, MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT:
+			MOUSE_BUTTON_LEFT:
+				_dragging = event.pressed
+				if event.pressed:
+					_press_position = event.position
+					_press_moved = false
+				elif not _press_moved:
+					select_at(screen_to_map(event.position))
+			MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT:
 				_dragging = event.pressed
 	elif event is InputEventMouseMotion and _dragging:
+		_press_moved = _press_moved or event.position.distance_to(_press_position) > CLICK_SLOP_PX
 		pan_pixels(-event.relative)
 	elif event is InputEventPanGesture:
 		# Трекпад: прокрутка двумя пальцами двигает карту, с Ctrl/Cmd — меняет масштаб.
@@ -326,3 +392,22 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _wheel_factor(event: InputEventMouseButton) -> float:
 	return pow(ZOOM_STEP, event.factor if event.factor > 0.0 else 1.0)
+
+
+## Контур выбранного здания: обводка с белой подложкой постоянной ширины в пикселях. Заливки нет:
+## в участке только внешние кольца, и заливка закрыла бы внутренний двор.
+class SelectionHighlight extends Node2D:
+	var outlines: Array[PackedVector2Array] = []
+	var _mpp := 1.0
+
+	func set_meters_per_pixel(mpp: float) -> void:
+		_mpp = mpp
+		if not outlines.is_empty():
+			queue_redraw()
+
+	func _draw() -> void:
+		for ring in outlines:
+			var closed := ring.duplicate()
+			closed.append(ring[0])
+			draw_polyline(closed, MapTheme.SELECTION_HALO, (MapTheme.SELECTION_WIDTH_PX + 2.0 * MapTheme.SELECTION_HALO_PX) * _mpp)
+			draw_polyline(closed, MapTheme.SELECTION, MapTheme.SELECTION_WIDTH_PX * _mpp)

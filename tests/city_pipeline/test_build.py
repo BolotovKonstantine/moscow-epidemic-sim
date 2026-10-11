@@ -115,14 +115,22 @@ class BuildTests(unittest.TestCase):
         levels = {tile["level"] for tile in index["tiles"]}
         self.assertEqual(levels, {0, 1, 2})
         self.assertEqual(sum(tile["level"] == 0 for tile in index["tiles"]), 1)
-        ids = []
+        ids, facilities = [], {}
         for tile in index["tiles"]:
             if tile["level"] == 2:
                 header, sections = mt.decode_tile((self.out / "map" / tile["path"]).read_bytes())
                 ids += sections["pick.attrs"]["id"]
+                facilities.update(zip(sections["pick.attrs"]["id"], sections["pick.attrs"]["facilities"]))
                 self.assertEqual(header["package_version"], self.manifest["package_version"])
         package_ids = [row["building_id"] for row in read_csv(self.out / "building_attributes.csv.gz")]
         self.assertEqual(sorted(ids), sorted(package_ids))   # каждое здание ровно в одном участке 2 км
+        # Карточка здания: учреждения из facilities.csv.gz по building_ids, у остальных зданий — пустой список.
+        expected = {}
+        for row in read_csv(self.out / "facilities.csv.gz"):
+            for building_id in filter(None, row["building_ids"].split(";")):
+                expected.setdefault(building_id, []).append({"id": row["facility_id"], "kind": row["kind"], "name": row["name"] or None})
+        self.assertTrue(expected)
+        self.assertEqual({key: value for key, value in facilities.items() if value}, expected)
         summary = self.report["map"]
         self.assertEqual(summary["buildings_in_detail_tiles"], len(package_ids))
         self.assertEqual(sum(summary["tiles"].values()), len(index["tiles"]))
