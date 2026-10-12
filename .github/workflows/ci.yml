@@ -62,3 +62,4 @@ jobs:
       - run: Godot --headless --path game --script ../tests/integration/smoke_native.gd
       - run: Godot --headless --path game --script ../tests/integration/map_tile_loader.gd
       - run: Godot --headless --path game --script ../tests/integration/map_streaming.gd
+      - run: Godot --headless --path game --script ../tests/integration/map_layers.gd

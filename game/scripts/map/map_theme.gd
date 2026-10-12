@@ -81,6 +81,50 @@ const LABEL_PADDING_PX := 3.0    # зазор между подписями
 const METRO_MARKER := Color("#c8102e")
 const RAIL_MARKER := Color("#4a4a4a")
 
+# Слои по данным пакета (#16). Цвета — настройки отображения; пороги классов — тоже (не статистика).
+const LAYER_ALPHA := 0.85
+# Функции зданий по классам building; оценённая функция — смешение с цветом заливки (светлее).
+const BUILDING_FUNCTION := {
+	"unknown": Color("#bdb6ad"), "residential": Color("#e8a65d"), "work": Color("#8d7bb8"),
+	"retail": Color("#d9677a"), "education": Color("#4f8fd1"), "medical": Color("#d23c3c"),
+	"transport": Color("#6c7a86"), "control": Color("#3b4f7a"), "other": Color("#9aa86b"),
+}
+const ESTIMATED_MIX := 0.55   # доля цвета заливки в оценённой функции
+# Ночное население: жители здания (оценка) и плотность зоны 1 км, жителей на км². Нижние границы классов.
+const POPULATION_COLORS := [Color("#f2efe9"), Color("#fde0b6"), Color("#fbb878"), Color("#f08a4b"),
+	Color("#d9572b"), Color("#b02f1c"), Color("#6f1a12")]
+const BUILDING_RESIDENTS_BREAKS := [0.0, 1.0, 11.0, 51.0, 201.0, 501.0, 1001.0]
+const ZONE_DENSITY_BREAKS := [0.0, 1.0, 500.0, 2000.0, 5000.0, 10000.0, 20000.0]
+const NO_DATA := Color("#c9c4bc")
+const ZONE_OUTLINE := Color(0.35, 0.3, 0.45, 0.55)
+# Линии маршрутов — как LINE: цвет, обводка, ширина в метрах, минимум и обводка в пикселях.
+const TRANSIT := {
+	"bus": [Color("#2f9e5a"), Color(1, 1, 1, 0.9), 0.0, 2.0, 0.6],
+	"trolleybus": [Color("#2f7fc1"), Color(1, 1, 1, 0.9), 0.0, 2.0, 0.6],
+	"tram": [Color("#e07b1f"), Color(1, 1, 1, 0.9), 0.0, 2.2, 0.6],
+	"train": [Color("#5a5550"), Color(1, 1, 1, 0.9), 0.0, 2.6, 0.7],
+	"subway": [Color("#c8102e"), Color(1, 1, 1, 0.9), 0.0, 3.0, 0.8],
+}
+# Точки: цвет вида и радиус в пикселях; остановки (не станции) — только вблизи, до STOP_MAX_MPP.
+const STOP_MODE_COLORS := {   # по первому подходящему виду в этом порядке
+	"subway": Color("#c8102e"), "train": Color("#5a5550"), "monorail": Color("#e07b1f"), "light_rail": Color("#e07b1f"),
+	"tram": Color("#e07b1f"), "trolleybus": Color("#2f7fc1"), "bus": Color("#2f9e5a"), "share_taxi": Color("#2f9e5a"),
+}
+const STOP_RADIUS_PX := 3.0
+const STATION_RADIUS_PX := 4.5
+const STOP_MAX_MPP := 6.0
+const STATION_MAX_MPP := 60.0
+const FACILITY_GROUPS := {   # группа → виды facility
+	"medical": ["hospital", "clinic", "doctors"],
+	"education": ["university", "college", "school", "kindergarten"],
+	"police": ["police"],
+}
+const FACILITY_COLORS := {"medical": Color("#d23c3c"), "education": Color("#4f8fd1"), "police": Color("#1f2f5c")}
+const FACILITY_RADIUS_PX := 3.5
+const POINT_OUTLINE := Color(1, 1, 1, 0.95)
+const POINT_FAR_MPP := 40.0     # дальше — точки мельче и без обводки, иначе учреждения сливаются в пятно
+const POINT_FAR_SCALE := 0.5
+
 # Уровень подробности по масштабу (метров на пиксель): уровень 2 до 3 м/пикс., 1 — до 14.
 const LEVEL_MAX_MPP := {2: 3.0, 1: 14.0}
 const MIN_MPP := 0.25   # предельное приближение: дома и дворы различимы (пожелание автора, #12)
@@ -96,3 +140,16 @@ static func label_style(cls_name: String) -> Dictionary:
 
 static func line_style(cls_name: String) -> Array:
 	return LINE.get(cls_name, LINE_UNKNOWN)
+
+
+static func transit_style(cls_name: String) -> Array:
+	return TRANSIT.get(cls_name, LINE_UNKNOWN)
+
+
+## Номер класса значения по нижним границам breaks (0 — ниже второй границы).
+static func bucket(value: float, breaks: Array) -> int:
+	var result := 0
+	for i in breaks.size():
+		if value >= breaks[i]:
+			result = i
+	return result
