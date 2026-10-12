@@ -24,6 +24,7 @@ var errors := PackedStringArray()
 var max_attach_usec := 0         # самое долгое подключение участка в основном потоке
 var max_poll_usec := 0           # самая долгая работа poll() за кадр (подключение и вытеснение)
 var poll_usec := PackedInt32Array()   # время каждого poll(), в котором что-то подключалось (для замеров)
+var load_usec := PackedInt32Array()   # время чтения и подготовки каждого участка в рабочем потоке (для замеров)
 
 var _index: MapIndex
 var _palette: PackedColorArray
@@ -47,6 +48,7 @@ class Job extends RefCounted:
 	var task := -1
 	var tile: MapTile
 	var prepared: Dictionary
+	var usec := 0   # чтение, проверка и массивы мешей в рабочем потоке
 
 
 func _init(index: MapIndex, palette: PackedColorArray, limit: int, attach: Callable, detach: Callable) -> void:
@@ -230,15 +232,19 @@ func _start_jobs() -> void:
 
 ## Работа в рабочем потоке: только чтение, проверка и массивы, без узлов сцены.
 func _run(job: Job) -> void:
+	var started := Time.get_ticks_usec()
 	job.tile = _index.load_tile(job.entry)
 	if job.tile.error.is_empty():
 		job.prepared = MapTileView.prepare(job.tile, _palette)
+	job.usec = Time.get_ticks_usec() - started
 
 
 func _accept(key: Vector3i, job: Job) -> bool:
 	if not job.tile.error.is_empty():
 		_fail(key, job.tile.error)
 		return false
+	if load_usec.size() < MAX_POLL_SAMPLES:
+		load_usec.append(job.usec)
 	if not _wanted_set.has(key):
 		return false   # пока грузился, ушёл из окна
 	var bytes: int = job.prepared.bytes

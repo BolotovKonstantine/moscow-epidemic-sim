@@ -252,10 +252,12 @@ func fit_region() -> void:
 	_view_moved()
 
 
-## Показать точку плоскости карты при заданном масштабе (для тестов и скриншотов).
+## Показать точку плоскости карты при заданном масштабе (тесты, скриншоты, облёт замера). Если масштаб
+## не меняется, участки не перестилизуются — как при обычном сдвиге (pan_pixels).
 func look_at_point(map_point: Vector2, mpp: float) -> void:
 	_camera.position = map_point
-	_set_scale(mpp)
+	if clampf(mpp, MapTheme.MIN_MPP, max_meters_per_pixel) != meters_per_pixel:
+		_set_scale(mpp)
 	_view_moved()
 
 

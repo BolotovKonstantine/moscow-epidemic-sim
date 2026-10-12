@@ -5,7 +5,8 @@ extends Node
 # нового пакета в data/packages/ рядом с проектом, иначе data/processed/map-test/ (`city_pipeline map-tile`).
 # Лимит памяти кеша участков — `--map-cache-mb=<МБ>`. F3 — отладочный оверлей. Клик по зданию
 # вблизи открывает его карточку справа (#15), Esc снимает выбор. Слева — переключатель слоёв
-# с легендой (#16); клавиши 1–7 переключают слои по порядку.
+# с легендой (#16); клавиши 1–7 переключают слои по порядку. `--bench-map=<маршрут> --bench-out=<файл>` —
+# замер просмотра карты (#17, MapBench): сценарии по маршруту, результат в файл, затем выход.
 
 const PACKAGES_DIR := "../data/packages"
 const DEFAULT_MAP_DIR := "../data/processed/map-test"
@@ -53,6 +54,26 @@ func _ready() -> void:
 			stats.static_bytes / 1048576.0, _map.streamer.limit_bytes >> 20 if _map.streamer else 0])
 	_debug.visible = OS.is_debug_build()
 	_update_status()
+	var bench := MapBench.from_args(args)
+	if not bench.is_empty():
+		_start_bench(bench, problem)
+
+
+## Замер карты (#17): оверлей скрыт, чтобы не входить в кадр; ошибка — выход с кодом 1.
+func _start_bench(bench: Dictionary, problem: String) -> void:
+	var runner := MapBench.new()
+	runner.name = "Bench"
+	if problem.is_empty():
+		runner.setup(_map, bench.get("route", ""), bench.get("out", ""), bench.get("window", ""))
+	else:
+		runner.error = problem
+	if not runner.error.is_empty():
+		printerr("Замер карты: " + runner.error)
+		runner.free()
+		get_tree().quit(1)
+		return
+	_debug.visible = false
+	add_child(runner)
 
 
 static func map_dir_from_args(args: PackedStringArray) -> String:
