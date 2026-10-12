@@ -2,7 +2,7 @@
 # Замер просмотра карты (#17) на release-экспорте macOS: экспорт, RUNS прогонов маршрута route.json
 # под /usr/bin/time -l (пиковая память процесса) и сводка summarize.py. Протокол — README.md рядом.
 #
-#   benchmarks/map_view/run.sh                    # весь замер: экспорт и два прогона
+#   benchmarks/map_view/run.sh                    # весь замер: сборка ядра, экспорт и два прогона
 #   RUNS=3 benchmarks/map_view/run.sh             # другое число прогонов
 #   NO_EXPORT=1 benchmarks/map_view/run.sh        # без повторного экспорта
 #   MAP_DIR=/путь/к/map benchmarks/map_view/run.sh   # другой каталог участков
@@ -29,10 +29,10 @@ if [ -z "$MAP_DIR" ] || [ ! -f "$MAP_DIR/index.json" ]; then
 	exit 1
 fi
 if [ -z "${NO_EXPORT:-}" ]; then
-	if [ ! -d "$ROOT/game/bin/libmesim.macos.template_release.framework" ]; then
-		echo "Нет release-библиотеки ядра: (cd native && scons platform=macos target=template_release -j8)" >&2
-		exit 1
-	fi
+	# Библиотека ядра вне Git: пересобираем из текущего native/ (scons инкрементален, без изменений — секунды),
+	# чтобы экспорт целиком соответствовал коммиту в штампе, а не устаревшей сборке в game/bin.
+	echo "Сборка release-библиотеки ядра..."
+	(cd "$ROOT/native" && scons platform=macos target=template_release -j8 -Q >/dev/null)
 	echo "Экспорт release..."
 	rm -f "$STAMP"
 	"$GODOT" --headless --path "$ROOT/game" --export-release "macOS" "$APP" >/dev/null
