@@ -340,19 +340,22 @@ QueueResult run_buckets(uint32_t n, uint64_t key) {
     constexpr uint32_t kBucket = 60, kBuckets = 48 * 60;
     std::vector<std::vector<uint64_t>> buckets(kBuckets);
     std::vector<uint8_t> done(n, 0);
-    for (uint32_t id = 0; id < n; ++id) {
-        uint32_t t = first_event(key, id);
-        buckets[t / kBucket].push_back(uint64_t(t) << 32 | id);
-    }
-    uint64_t events = 0, checksum = 0, last = 0, peak = 0;
-    for (uint32_t b = 0; b < kBuckets; ++b) {
-        if (b % 60 == 0) {  // пик по ёмкости корзин раз в модельный час
-            uint64_t live = 0;
-            for (const auto& v : buckets) live += v.capacity();
-            peak = std::max(peak, live * 8);
+    // Точный пик: суммарная ёмкость всех корзин, включая обрабатываемую (cur), обновляется при каждом росте.
+    uint64_t capacity = 0, peak = 0;
+    auto push = [&](uint32_t t, uint32_t id) {
+        auto& v = buckets[t / kBucket];
+        size_t before = v.capacity();
+        v.push_back(uint64_t(t) << 32 | id);
+        if (v.capacity() != before) {
+            capacity += v.capacity() - before;
+            peak = std::max(peak, capacity);
         }
+    };
+    for (uint32_t id = 0; id < n; ++id) push(first_event(key, id), id);
+    uint64_t events = 0, checksum = 0, last = 0;
+    for (uint32_t b = 0; b < kBuckets; ++b) {
         std::vector<uint64_t> cur;
-        cur.swap(buckets[b]);
+        cur.swap(buckets[b]);  // ёмкость переходит в cur и остаётся в сумме до освобождения
         std::sort(cur.begin(), cur.end());
         for (uint64_t e : cur) {
             if (e < last) std::abort();
@@ -360,13 +363,11 @@ QueueResult run_buckets(uint32_t n, uint64_t key) {
             uint32_t id = uint32_t(e), t = uint32_t(e >> 32);
             checksum = mix64(checksum ^ e);
             ++events;
-            if (++done[id] < 4) {
-                uint32_t nt = next_after(key, id, t, done[id]);
-                buckets[nt / kBucket].push_back(uint64_t(nt) << 32 | id);
-            }
+            if (++done[id] < 4) push(next_after(key, id, t, done[id]), id);
         }
+        capacity -= cur.capacity();
     }
-    return {seconds_since(start), events, checksum, peak + n};
+    return {seconds_since(start), events, checksum, peak * 8 + n};
 }
 
 }  // namespace
