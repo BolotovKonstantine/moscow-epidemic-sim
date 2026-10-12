@@ -21,6 +21,7 @@ func _initialize() -> void:
 func _run() -> void:
 	var root_dir := ProjectSettings.globalize_path("res://")
 	_test_vertex_data(root_dir.path_join(FIXTURE).simplify_path())
+	_test_partial_classes()
 	await _test_fixture(root_dir.path_join(FIXTURE).simplify_path())
 	await _test_without_data(root_dir.path_join(STREAM).simplify_path())
 	var package_map := preload("res://scripts/app/main.gd").latest_package_map(root_dir.path_join(PACKAGES).simplify_path())
@@ -63,7 +64,17 @@ func _test_vertex_data(fixture: String) -> void:
 	tile.sections.erase("building.row")
 	tile.sections.erase("building.res")
 	tile.sections.erase("building.est")
-	check(MapBuildingStyle.vertex_data(tile)[first].y == 255.0, "без данных зданий — класс жителей «нет данных»")
+	check(MapBuildingStyle.vertex_data(tile)[first] == Vector2(cls[first] + MapBuildingStyle.MAX_CLASSES, 255.0),
+		"без данных зданий функция — оценка, жители — «нет данных»")
+
+
+## Видимость классов — по всем запрошенным классам, даже если какого-то из них нет в таблице индекса.
+func _test_partial_classes() -> void:
+	var style := MapLineStyle.make(["river", "primary", "boundary_moscow"])
+	style.set_classes_visible(MapView.ROAD_CLASSES, false)
+	style.set_classes_visible(MapView.BOUNDARY_CLASSES, false)
+	check(not style.is_class_visible("primary") and not style.is_class_visible("boundary_moscow") and style.is_class_visible("river"),
+		"дороги и граница скрываются и без motorway и boundary_region в таблице")
 
 
 func _test_fixture(fixture: String) -> void:
@@ -123,6 +134,7 @@ func _test_fixture(fixture: String) -> void:
 		"легенда населения помечает оценку и источник")
 	check(panel.legend_text("functions").contains("оценка"), "легенда функций объясняет оценённые функции")
 	check(panel.legend_text("zones").contains("Модельная"), "зоны — модельная разбивка")
+	check(panel.legend_text("boundary").contains("Игровая настройка"), "граница региона — игровая настройка")
 	check(not panel.legend_text("roads").contains("Оценка") and panel.legend_text("roads").contains("OSM"), "дороги — данные OSM")
 	check(panel.legend_text("transit").contains("схема") and panel.legend_text("transit").contains("Оценка"), "метро — схема, остановки — оценка пайплайна")
 	check(panel.legend_text("facilities").contains("Оценка"), "точки учреждений — оценка пайплайна")
@@ -141,6 +153,10 @@ func _test_without_data(stream: String) -> void:
 	var map := _map(stream)
 	for name: String in ["population", "transit", "facilities", "zones"]:
 		check(not map.layer_available(name), "без данных слой %s недоступен" % name)
+	# Линии маршрутов без остановок: слой транспорта доступен по счётчику индекса.
+	map.index.tiles[1].transit_lines = 3
+	map._transit_lines = map.index.tiles.any(func(entry): return entry.transit_lines > 0)
+	check(map.layer_available("transit"), "транспорт доступен по линиям маршрутов без остановок")
 	for name: String in ["functions", "roads", "boundary"]:
 		check(map.layer_available(name), "слой %s доступен и без данных пакета 0.4.0" % name)
 	map.set_layer("transit", true)

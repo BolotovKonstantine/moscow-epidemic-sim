@@ -16,7 +16,8 @@ const TITLES := {
 	"transit": "Транспорт: маршруты и остановки", "facilities": "Учреждения", "zones": "Зоны 1 км",
 	"boundary": "Граница региона и Москвы",
 }
-# Источник данных слоя и пометка: observed — данные OSM, estimated — оценка пакета, model — разбивка/настройка.
+# Источник данных слоя и пометка: observed — данные OSM, estimated — оценка пакета, model — разбивка для модели,
+# setting — игровая настройка.
 const SOURCES := {
 	"functions": ["Теги зданий OSM; функция без тега самого здания — оценка пайплайна (светлее)", "estimated"],
 	"population": ["сетка GHS-POP 2020 (JRC), распределённая по зданиям OSM; на общем и среднем виде — плотность зон 1 км, вблизи — жители здания", "estimated"],
@@ -24,7 +25,7 @@ const SOURCES := {
 	"transit": ["OSM; остановки и последовательности маршрутов собраны пайплайном (объединение платформ и точек остановки — оценка, transit_stops и transit_segments пакета); линии, кроме метро, — пути маршрутов OSM; метро — схема между станциями, а не трасса", "estimated"],
 	"facilities": ["OSM (amenity, healthcare); дубли точки, корпуса и территории объединены пайплайном, точка учреждения — оценка (facilities пакета)", "estimated"],
 	"zones": ["Сетка пакета: квадраты 1 км в EPSG:32637 — разбивка для модели, не данные", "model"],
-	"boundary": ["Москва — OSM; регион — Москва и 30 км от внешнего края МКАД (решение автора)", "observed"],
+	"boundary": ["контур Москвы — OSM; граница региона — Москва и 30 км от внешнего края МКАД (решение автора, boundary.geojson пакета)", "setting"],
 }
 const ROAD_NAMES := {"motorway": "магистраль", "trunk": "скоростная дорога", "primary": "главная", "secondary": "второстепенная",
 	"tertiary": "районная", "residential": "местная", "pedestrian": "пешеходная", "service": "проезд"}
@@ -154,7 +155,7 @@ func _legend(layer: String) -> VBoxContainer:
 			_row(box, [MapTheme.line_style("boundary_region")[0]], "регион", margin)
 			_row(box, [MapTheme.line_style("boundary_moscow")[0]], "Москва", margin)
 	var source: Array = SOURCES[layer]
-	var mark: String = {"estimated": "Оценка. ", "model": "Модельная разбивка. ", "observed": ""}[source[1]]
+	var mark: String = {"estimated": "Оценка. ", "model": "Модельная разбивка. ", "setting": "Игровая настройка. ", "observed": ""}[source[1]]
 	_note(box, "%sИсточник: %s" % [mark, source[0]], margin, source[1] != "observed")
 	return box
 

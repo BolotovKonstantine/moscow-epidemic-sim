@@ -41,6 +41,7 @@ var overlay := MapDataOverlay.new()
 var _line_style: MapLineStyle
 var _transit_style: MapLineStyle
 var _building_style: MapBuildingStyle
+var _transit_lines := false   # хоть в одном участке индекса есть линии маршрутов (MapIndex: counts.transit)
 var _style: Dictionary = {}
 var _views: Dictionary = {}   # Vector3i(уровень, x, y) → MapTileView: обзор и загруженные участки
 var _camera := Camera2D.new()
@@ -110,6 +111,7 @@ func load_map(map_dir: String, cache_limit := MapTileStreamer.DEFAULT_LIMIT_MB <
 	if index.classes.get("building", []).size() > MapBuildingStyle.MAX_CLASSES:
 		return "Классов зданий больше, чем поддерживает шейдер"
 	_building_style = MapBuildingStyle.make(index.classes.get("building", []))
+	_transit_lines = index.tiles.any(func(entry): return entry.transit_lines > 0)
 	var palette := PackedColorArray()
 	for cls_name: String in index.classes.get("area", []):
 		palette.append(MapTheme.area_color(cls_name))
@@ -161,8 +163,8 @@ func layer_available(name: String) -> bool:
 	match name:
 		"population":
 			return overlay.has_layer("zones")
-		"transit":
-			return overlay.has_layer("transit")
+		"transit":   # остановки и линии маршрутов необязательны независимо друг от друга
+			return overlay.has_layer("transit") or _transit_lines
 		"facilities", "zones":
 			return overlay.has_layer(name)
 	return index != null
@@ -204,10 +206,9 @@ func _apply_layers() -> void:
 		mode = MapBuildingStyle.Mode.POPULATION
 	if mode != _building_style.mode:
 		_building_style.set_mode(mode)
-	if _line_style.is_class_visible("motorway") != layers.roads:
-		_line_style.set_classes_visible(ROAD_CLASSES, layers.roads)
-	if _line_style.is_class_visible("boundary_region") != layers.boundary:
-		_line_style.set_classes_visible(BOUNDARY_CLASSES, layers.boundary)
+	# Без проверки по одному классу: в таблице индекса может не быть любого из них.
+	_line_style.set_classes_visible(ROAD_CLASSES, layers.roads)
+	_line_style.set_classes_visible(BOUNDARY_CLASSES, layers.boundary)
 	for view: MapTileView in _views.values():
 		for node in view.transit_nodes:
 			node.visible = layers.transit

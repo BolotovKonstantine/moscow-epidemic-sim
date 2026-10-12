@@ -38,14 +38,15 @@ func set_mode(value: Mode) -> void:
 	material.set_shader_parameter("mode", value)
 
 
-## UV вершин зданий участка: класс + 16 × оценка, класс жителей (255 — нет данных: участки до 0.4.0).
+## UV вершин зданий участка: класс + 16 × оценка, класс жителей. В участках до 0.4.0 источника функции
+## нет — она показывается как оценка (осторожно), жители — «нет данных» (255).
 static func vertex_data(map_tile: MapTile) -> PackedVector2Array:
 	var cls: PackedFloat32Array = map_tile.sections["building.cls"]
 	var uv := PackedVector2Array()
 	uv.resize(cls.size())
 	if not map_tile.has_layer("building_data"):
 		for i in cls.size():
-			uv[i] = Vector2(cls[i], 255.0)
+			uv[i] = Vector2(cls[i] + MAX_CLASSES, 255.0)
 		return uv
 	var rows: PackedInt32Array = map_tile.sections["building.row"]
 	var residents: PackedFloat32Array = map_tile.sections["building.res"]
