@@ -2,6 +2,7 @@ import csv
 import json
 import math
 import gzip
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,8 +16,9 @@ from tools.city_pipeline import maplabels as ml
 from tools.city_pipeline import maptiles as mt
 from tools.city_pipeline.build import build_package, make_boundary
 from tools.city_pipeline.geo import Projector
+from tools.city_pipeline.manifest import ManifestError, validate_map_index
 from tools.city_pipeline.mapbuild import (Layer, area_class, export_test_tiles, line_class, read_overview_data, read_package,
-                                          read_subway_scheme)
+                                          read_route_ways, read_subway_scheme)
 
 
 def triangle_area(xy, triangles):
@@ -427,7 +429,8 @@ class ExportTests(unittest.TestCase):
         tram = base.way([base.node(lon - 0.004, lat - 0.001), base.node(lon + 0.004, lat - 0.001)], {"railway": "tram"})
         unfinished = base.way([base.node(lon - 0.004, lat - 0.0015), base.node(lon + 0.004, lat - 0.0015)], {"railway": "construction"})
         tunnel = base.way([base.node(lon - 0.004, lat + 0.0015), base.node(lon + 0.004, lat + 0.0015)], {"railway": "subway", "tunnel": "yes"})
-        base.relation(60, [("way", street, ""), ("way", platform, "platform")], {"type": "route", "route": "bus"})
+        planned = base.way([base.node(lon - 0.004, lat + 0.002), base.node(lon + 0.004, lat + 0.002)], {"highway": "construction"})
+        base.relation(60, [("way", street, ""), ("way", platform, "platform"), ("way", planned, "")], {"type": "route", "route": "bus"})
         base.relation(61, [("way", street, "")], {"type": "route", "route": "share_taxi"})   # тот же путь и класс — одна линия
         base.relation(62, [("way", tram, ""), ("way", unfinished, "")], {"type": "route", "route": "tram"})
         base.relation(63, [("way", rail, "")], {"type": "route", "route": "train"})
@@ -566,6 +569,25 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(len(detail["transit.off"]), len(detail["transit.xy"]))
         _, (_, overview) = self.tile(0)
         self.assertEqual({mt.TRANSIT_CLASSES[int(code)] for code in overview["transit.cls"]}, {"train"})   # обзор: электрички и метро
+
+    def test_route_ways_only_for_configured_modes(self):
+        layer = read_route_ways(self.basemap, Projector(self.crs), {"bus", "train"})
+        self.assertEqual({mt.TRANSIT_CLASSES[code] for code in layer.classes}, {"bus", "train"})
+        self.assertEqual(len(read_route_ways(self.basemap, Projector(self.crs), set()).keys), 0)
+
+    def test_index_without_data_layer_tables_is_accepted(self):
+        """Индекс пакета до 0.4.0 — только прежние таблицы классов; чужая таблица — ошибка."""
+        manifest = json.loads((self.package / "manifest.json").read_text(encoding="utf-8"))
+        index = json.loads((self.package / "map" / "index.json").read_text(encoding="utf-8"))
+        for classes, message in (({name: index["classes"][name] for name in mt.LEGACY_CLASS_TABLES}, "classes в заголовке"),
+                                 ({**index["classes"], "extra": ["x"]}, "таблицы классов"),
+                                 ({name: index["classes"][name] for name in ("area", "line", "label")}, "таблицы классов")):
+            with self.subTest(tables=sorted(classes)), tempfile.TemporaryDirectory() as tmp:
+                shutil.copytree(self.package / "map", Path(tmp) / "map")
+                (Path(tmp) / "map" / "index.json").write_text(json.dumps({**index, "classes": classes}), encoding="utf-8")
+                # Таблицы индекса проверяются до участков: прежние таблицы проходят и доходят до сверки с заголовком участка.
+                with self.assertRaisesRegex(ManifestError, message):
+                    validate_map_index(Path(tmp) / "map" / "index.json", manifest, "map-index")
 
     def test_overview_has_zones_stops_and_facilities(self):
         _, (header, overview) = self.tile(0)

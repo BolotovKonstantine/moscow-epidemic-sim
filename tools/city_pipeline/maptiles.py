@@ -64,6 +64,7 @@ MAX_TILE_BYTES = 256 << 20          # файл участка
 MAX_JSON_SECTION_BYTES = 16 << 20   # как MapTile.MAX_JSON_SECTION_BYTES: больший JSON игра не разбирает
 CLASSES = {"area": AREA_CLASSES, "building": BUILDING_CLASSES, "line": LINE_CLASSES, "label": LABEL_CLASSES,
            "transit": TRANSIT_CLASSES, "stop": STOP_CLASSES, "stop_mode": STOP_MODES, "facility": FACILITY_CLASSES}
+LEGACY_CLASS_TABLES = ("area", "building", "line", "label")   # таблицы участков до пакета 0.4.0; остальные необязательны
 
 HIGHWAY_CLASS = {
     "motorway": "motorway", "motorway_link": "motorway", "trunk": "trunk", "trunk_link": "trunk",

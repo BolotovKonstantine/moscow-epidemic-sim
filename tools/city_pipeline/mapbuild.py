@@ -127,11 +127,14 @@ def read_basemap(pbf: Path, projector: Projector):
 # Пути маршрутов: роли платформ и остановок — не путь; платформы, недостроенные и заброшенные пути не рисуются.
 ROUTE_SKIP_ROLES = ("platform", "platform_entry_only", "platform_exit_only", "stop", "stop_entry_only", "stop_exit_only")
 ROUTE_WAY_KEYS = ("highway", "railway")
-ROUTE_SKIP_RAILWAY = ("platform", "construction", "abandoned", "disused", "proposed", "razed")
+ROUTE_SKIP_LIFECYCLE = ("platform", "construction", "abandoned", "disused", "proposed", "razed")
 
 
-def read_route_ways(pbf: Path, projector: Projector):
+def read_route_ways(pbf: Path, projector: Projector, route_modes):
     """Линии маршрутов, кроме метро, по путям из отношений route вырезки OSM: Layer в метрах.
+
+    route_modes — виды транспорта из конфигурации пакета (transit.route_modes): карта показывает
+    только маршруты, которые есть в таблицах пакета.
 
     Путь, по которому идут маршруты одного класса, рисуется один раз (ключ — ID пути); маршруты
     разных классов по одному пути — отдельными линиями. Пути вне вырезки отсутствуют в ней и
@@ -139,7 +142,8 @@ def read_route_ways(pbf: Path, projector: Projector):
     """
     classes_of = {}   # ID пути → коды классов
     for obj in osmium.FileProcessor(str(pbf), osmium.osm.RELATION).with_filter(osmium.filter.TagFilter(("type", "route"))):
-        kind = mt.ROUTE_MODE_CLASS.get(obj.tags.get("route"))
+        mode = obj.tags.get("route")
+        kind = mt.ROUTE_MODE_CLASS.get(mode) if mode in route_modes else None
         if kind is None or kind == "subway":
             continue   # метро — схема по остановкам (transit_lines)
         code = mt.TRANSIT_CLASSES.index(kind)
@@ -155,8 +159,8 @@ def read_route_ways(pbf: Path, projector: Projector):
             if not obj.is_way() or obj.id not in classes_of:
                 continue
             tags = obj.tags
-            if not any(key in tags for key in ROUTE_WAY_KEYS) or tags.get("railway") in ROUTE_SKIP_RAILWAY \
-                    or tags.get("public_transport") == "platform":
+            if not any(key in tags for key in ROUTE_WAY_KEYS) or tags.get("public_transport") == "platform" \
+                    or any(tags.get(key) in ROUTE_SKIP_LIFECYCLE for key in ROUTE_WAY_KEYS):
                 continue
             try:
                 geometry = bytes.fromhex(wkb.create_linestring(obj))
@@ -526,7 +530,8 @@ class MapSource:
                                np.concatenate([base_lines.classes, self.roads.classes, pkg.boundaries.classes]),
                                np.concatenate([base_lines.geometry, self.roads.geometry, pkg.boundaries.geometry]))
         log("Маршруты…")
-        transit = read_route_ways(region_pbf, self.projector)
+        build_config = json.loads((package / "build_config.json").read_text(encoding="utf-8"))
+        transit = read_route_ways(region_pbf, self.projector, set(build_config["transit"]["route_modes"]))
         scheme = read_subway_scheme(package, self.projector)
         self.transit = clip_to_region(Layer(transit.keys + scheme.keys, np.concatenate([transit.classes, scheme.classes]),
                                             np.concatenate([transit.geometry, scheme.geometry])), pkg.region)

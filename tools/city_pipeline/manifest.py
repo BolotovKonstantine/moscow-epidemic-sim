@@ -156,7 +156,7 @@ MAP_MAX_COORD_M = 1.0e7         # как MapTile.MAX_COORD_M: |координа�
 def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
     """Проверить индекс участков карты: формат, пакет и каждый участок (путь внутри каталога карты,
     размер и SHA256). Хеш индекса записан в паспорте, хеши участков — в индексе. Возвращает число участков."""
-    from .maptiles import CLASSES, FORMAT_VERSION, INDEX_FORMAT, LEVEL_TILE_M, MAP_CREDIT, MAX_TILE_BYTES, source_credits
+    from .maptiles import CLASSES, FORMAT_VERSION, LEGACY_CLASS_TABLES, INDEX_FORMAT, LEVEL_TILE_M, MAP_CREDIT, MAX_TILE_BYTES, source_credits
 
     try:
         size = path.stat().st_size
@@ -179,7 +179,10 @@ def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
         raise ManifestError(f"{asset_id}: attribution индекса карты — список строк, первая — «{MAP_CREDIT}»")
     if attribution != source_credits(manifest):
         raise ManifestError(f"{asset_id}: attribution индекса карты не перечисляет все внешние источники паспорта: {source_credits(manifest)}")
-    if index.get("classes") != {name: list(values) for name, values in CLASSES.items()}:
+    # Таблицы слоёв данных (#16) появились в пакете 0.4.0 и необязательны: индексы прежних пакетов их не содержат.
+    classes = index.get("classes")
+    if not isinstance(classes, dict) or not set(LEGACY_CLASS_TABLES) <= set(classes) <= set(CLASSES) \
+            or any(classes[name] != list(CLASSES[name]) for name in classes):
         raise ManifestError(f"{asset_id}: таблицы классов индекса карты не совпадают с форматом")
     tiles = index.get("tiles")
     if not isinstance(tiles, list) or not tiles:
