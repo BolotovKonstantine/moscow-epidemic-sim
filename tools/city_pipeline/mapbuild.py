@@ -80,17 +80,39 @@ def line_class(tags):
     return None
 
 
+def line_level(tags):
+    """Уровень рисования линии (#23) по тегам OSM: 0 — земля, мост — его layer от 1 до MAX_LINE_LEVEL."""
+    return mt.line_level(tags.get("bridge") not in (None, "no"), tags.get("layer"))
+
+
 @dataclass
 class Layer:
-    """Объекты одного вида: стабильный ключ сортировки, код класса, метрическая геометрия."""
+    """Объекты одного вида: стабильный ключ сортировки, код класса, метрическая геометрия и уровень
+    рисования линии (#23; None — все на земле, у площадей уровня нет)."""
     keys: list = field(default_factory=list)
     classes: np.ndarray = field(default_factory=lambda: np.empty(0, np.int64))
     geometry: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=object))
+    levels: np.ndarray | None = None
+
+    def level_of(self):
+        """Уровни объектов (нули, если не заданы)."""
+        return np.zeros(len(self.keys), np.int64) if self.levels is None else self.levels
+
+    def take(self, index, geometry=None):
+        """Объекты по маске или индексам (с новой геометрией тех же объектов, если она дана)."""
+        index = np.asarray(index)
+        if index.dtype == bool:
+            index = np.nonzero(index)[0]
+        return Layer([self.keys[i] for i in index], self.classes[index],
+                     self.geometry[index] if geometry is None else geometry,
+                     None if self.levels is None else self.levels[index])
 
     def sorted(self, class_rank=True):
-        """Порядок рисования: по коду класса, затем по ключу."""
-        order = sorted(range(len(self.keys)), key=lambda i: (int(self.classes[i]) if class_rank else 0, self.keys[i]))
-        return Layer([self.keys[i] for i in order], self.classes[order], self.geometry[order])
+        """Порядок рисования: по уровню, коду класса, затем по ключу."""
+        levels = self.level_of()
+        order = sorted(range(len(self.keys)),
+                       key=lambda i: (int(levels[i]), int(self.classes[i]) if class_rank else 0, self.keys[i]))
+        return self.take(np.array(order, np.int64))
 
 
 def _osm_key(osm_type, osm_id):
@@ -121,7 +143,7 @@ def read_basemap(pbf: Path, projector: Projector):
                 geometry = bytes.fromhex(wkb.create_linestring(obj))
             except RuntimeError:
                 continue
-            line_items.append((_osm_key("w", obj.id), mt.LINE_CLASSES.index(kind), geometry))
+            line_items.append((_osm_key("w", obj.id), mt.LINE_CLASSES.index(kind), geometry, line_level(tags)))
     return _layer(area_items, projector), _layer(line_items, projector)
 
 
@@ -183,11 +205,13 @@ def read_route_ways(pbf: Path, projector: Projector, transit):
 
 
 def _layer(items, projector):
+    """Слой из (ключ, класс, WKB[, уровень]); уровень есть у линий подложки."""
     items.sort(key=lambda item: item[0])
     if not items:
         return Layer()
     geometry = projector.to_metric(shapely.from_wkb([item[2] for item in items]))
-    return Layer([item[0] for item in items], np.array([item[1] for item in items], np.int64), geometry)
+    levels = np.array([item[3] for item in items], np.int64) if len(items[0]) > 3 else None
+    return Layer([item[0] for item in items], np.array([item[1] for item in items], np.int64), geometry, levels)
 
 
 # ---------------------------------------------------------------- данные пакета
@@ -232,9 +256,10 @@ def read_package(package: Path, projector: Projector, manifest=None) -> PackageL
         [("boundary", 0), ("boundary", 1)],
         np.array([mt.LINE_CLASSES.index("boundary_moscow"), mt.LINE_CLASSES.index("boundary_region")], np.int64),
         np.array([shapely.boundary(moscow), shapely.boundary(region)], dtype=object),
+        np.zeros(2, np.int64),
     )
 
-    road_keys, road_classes, road_texts, road_names = [], [], [], []
+    road_keys, road_classes, road_texts, road_names, road_levels = [], [], [], [], []
     road_edges = road_tunnels = 0
     with gzip.open(package / "roads.geojsonl.gz", "rt", encoding="utf-8") as stream:
         for line in stream:
@@ -252,7 +277,9 @@ def read_package(package: Path, projector: Projector, manifest=None) -> PackageL
             road_classes.append(mt.LINE_CLASSES.index(kind))
             road_texts.append(geometry_text)
             road_names.append(props.get("name") or None)
-    roads = Layer(road_keys, np.array(road_classes, np.int64), projector.to_metric(shapely.from_geojson(road_texts)))
+            road_levels.append(mt.line_level(bool(props.get("bridge")), props.get("layer")))
+    roads = Layer(road_keys, np.array(road_classes, np.int64), projector.to_metric(shapely.from_geojson(road_texts)),
+                  np.array(road_levels, np.int64))
 
     attributes = _read_csv(package / "building_attributes.csv.gz")
     residents = {row["building_id"]: int(row["residents"]) for row in _read_csv(package / "population.csv.gz")}
@@ -383,13 +410,11 @@ def clip_to_region(layer: Layer, region) -> Layer:
     geometry = layer.geometry.copy()
     invalid = ~shapely.is_valid(geometry)
     geometry[invalid] = shapely.make_valid(geometry[invalid])   # самопересечения OSM ломают пересечение
-    layer = Layer(layer.keys, layer.classes, geometry)
-    inside = shapely.contains_properly(region, layer.geometry)
-    geometry = layer.geometry.copy()
+    inside = shapely.contains_properly(region, geometry)
     edge = ~inside
-    geometry[edge] = shapely.intersection(layer.geometry[edge], region)
+    geometry[edge] = shapely.intersection(geometry[edge], region)
     keep = ~shapely.is_empty(geometry)
-    return Layer([key for key, flag in zip(layer.keys, keep) if flag], layer.classes[keep], geometry[keep])
+    return layer.take(keep, geometry[keep])
 
 
 def level_layer(layer: Layer, *, classes=None, min_area=0.0, simplify=0.0, area_of=None, class_names=mt.LINE_CLASSES) -> Layer:
@@ -403,7 +428,7 @@ def level_layer(layer: Layer, *, classes=None, min_area=0.0, simplify=0.0, area_
     geometry = layer.geometry[keep]
     if simplify > 0:
         geometry = shapely.simplify(geometry, simplify, preserve_topology=True)
-    return Layer([key for key, flag in zip(layer.keys, keep) if flag], layer.classes[keep], geometry)
+    return layer.take(keep, geometry)
 
 
 def _query(layer: Layer, box, tree=None):
@@ -415,8 +440,7 @@ def _query(layer: Layer, box, tree=None):
     hits = np.sort(tree.query(shapely.box(*box)))
     clipped = shapely.clip_by_rect(layer.geometry[hits], *box)
     keep = ~shapely.is_empty(clipped)
-    hits = hits[keep]
-    return Layer([layer.keys[i] for i in hits], layer.classes[hits], clipped[keep])
+    return layer.take(hits[keep], clipped[keep])
 
 
 def tile_sections(plane: mt.MapPlane, map_origin, box, areas: Layer, lines: Layer, buildings=None, pick=False, labels=None,
@@ -435,8 +459,13 @@ def tile_sections(plane: mt.MapPlane, map_origin, box, areas: Layer, lines: Laye
                  ("area.tri", "i32", a.triangles)]
     counts["areas"] = len(areas.keys)
 
-    xy, offset, cls, tri = mt.ribbons(plane.to_local(lines.geometry, map_origin), lines.classes)
-    sections += [("line.xy", "f32", xy), ("line.off", "f32", offset), ("line.cls", "f32", cls), ("line.tri", "i32", tri)]
+    # Прямоугольник обрезки в координатах участка: концы линий на его краю продолжаются у соседа.
+    ox, oy = plane.x0 + map_origin[0], plane.y0 - map_origin[1]
+    cut_box = (box[0] - ox, oy - box[3], box[2] - ox, oy - box[1])
+    xy, offset, cls, tri, line_levels = mt.level_ribbons(plane.to_local(lines.geometry, map_origin), lines.classes,
+                                                         lines.level_of(), cut_box)
+    sections += [("line.xy", "f32", xy), ("line.off", "f32", offset), ("line.cls", "f32", cls), ("line.tri", "i32", tri),
+                 ("line.level", "i32", line_levels)]
     counts["lines"] = len(lines.keys)
     dropped = a.dropped
     bounds = [_bounds(a.xy), _bounds(xy)]
@@ -471,7 +500,7 @@ def tile_sections(plane: mt.MapPlane, map_origin, box, areas: Layer, lines: Laye
         counts["labels"] = len(labels)
     if transit is not None:
         transit = _query(transit, box, trees[2] if len(trees) > 2 else None).sorted()
-        xy, offset, cls, tri = mt.ribbons(plane.to_local(transit.geometry, map_origin), transit.classes)
+        xy, offset, cls, tri = mt.ribbons(plane.to_local(transit.geometry, map_origin), transit.classes, cut_box)
         sections += [("transit.xy", "f32", xy), ("transit.off", "f32", offset), ("transit.cls", "f32", cls),
                      ("transit.tri", "i32", tri)]
         counts["transit"] = len(transit.keys)
@@ -529,13 +558,14 @@ class MapSource:
         roads = clip_to_region(pkg.roads, pkg.region)   # рёбра на границе в пакете выходят за регион целиком
         # Ребро, лишь касающееся границы, после обрезки — точка: на карте его нет, считаем его вне региона.
         drawn = shapely.length(roads.geometry) > 0 if roads.keys else np.empty(0, bool)
-        self.roads = Layer([key for key, flag in zip(roads.keys, drawn) if flag], roads.classes[drawn], roads.geometry[drawn])
+        self.roads = roads.take(drawn)
         # Названия обрезанных дорог — по ключу: подписи считаются по той же геометрии, что рисуется.
         name_of = dict(zip(pkg.roads.keys, pkg.road_names))
         self.road_names = [name_of[key] for key in self.roads.keys]
-        self.all_lines = Layer(base_lines.keys + self.roads.keys + pkg.boundaries.keys,
-                               np.concatenate([base_lines.classes, self.roads.classes, pkg.boundaries.classes]),
-                               np.concatenate([base_lines.geometry, self.roads.geometry, pkg.boundaries.geometry]))
+        parts = (base_lines, self.roads, pkg.boundaries)
+        self.all_lines = Layer([key for part in parts for key in part.keys], np.concatenate([part.classes for part in parts]),
+                               np.concatenate([part.geometry for part in parts]),
+                               np.concatenate([part.level_of() for part in parts]))
         log("Маршруты…")
         build_config = json.loads((package / "build_config.json").read_text(encoding="utf-8"))
         transit = read_route_ways(region_pbf, self.projector, build_config["transit"])

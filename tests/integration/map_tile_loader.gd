@@ -21,6 +21,7 @@ func _initialize() -> void:
 	_test_fixture(fixture)
 	_test_rejections(fixture)
 	_test_data_layers(fixture)
+	_test_line_levels(fixture)
 	_test_views(fixture)
 	_test_overview_failure(fixture)
 	_test_undersized_bbox(fixture)
@@ -330,6 +331,76 @@ func _test_data_layers(fixture: String) -> void:
 
 
 ## Классы линий маршрутов участка в порядке кодов.
+## Уровни рисования линий (#23): разбор, проверка испорченных диапазонов и участки прежних пакетов.
+func _test_line_levels(fixture: String) -> void:
+	var tile := MapTile.open(fixture.path_join("z2/0_0.mtile"))
+	check(tile.error.is_empty(), "участок с мостами читается: " + tile.error)
+	var levels := tile.line_levels()
+	check(levels.map(func(r): return r.level) == [0, 1, 2], "уровни линий фикстуры — земля и два моста: %s" % [levels])
+	var line_classes: Array = tile.classes.line
+	var cls: PackedFloat32Array = tile.sections["line.cls"]
+	for row in levels.slice(1):
+		var names := {}
+		for i in range(row.vertex_start, row.vertex_start + row.vertex_count):
+			names[line_classes[int(cls[i])]] = true
+		check(names.keys() == [["service"], ["trunk"]][row.level - 1], "уровень %d: %s" % [row.level, names.keys()])
+	var palette := PackedColorArray()
+	palette.resize(tile.classes.area.size())
+	var prepared := MapTileView.prepare(tile, palette)
+	var meshes: Array = prepared.meshes.Lines
+	check(meshes.map(func(m): return m[0]) == [0, 1, 2], "меши линий по уровням")
+	var bridge_indices: PackedInt32Array = meshes[1][1][1][Mesh.ARRAY_INDEX]
+	var bridge_vertices: PackedVector2Array = meshes[1][1][1][Mesh.ARRAY_VERTEX]
+	check(bridge_vertices.size() == 4 and Array(bridge_indices).all(func(i): return i >= 0 and i < 4),
+		"меш моста — свои вершины и индексы от нуля")
+	var rows: PackedInt32Array = tile.sections["line.level"]
+	var cases := [
+		[func(r: PackedInt32Array): r[5] = 0, "не по возрастанию", "повтор уровня отклоняется"],
+		[func(r: PackedInt32Array): r[10] = MapTile.MAX_LINE_LEVEL + 1, "вне 0..", "уровень выше предела отклоняется"],
+		[func(r: PackedInt32Array): r[6] += 1, "подряд", "разрыв диапазона вершин отклоняется"],
+		[func(r: PackedInt32Array): r[6] -= 2, "подряд", "наложение диапазонов отклоняется"],
+		[func(r: PackedInt32Array): r[14] += 1, "выходит за", "диапазон за концом треугольников отклоняется"],
+	]
+	for item: Array in cases:
+		var bad := rows.duplicate()
+		item[0].call(bad)
+		tile.sections["line.level"] = bad
+		var problem := tile._check_layers()
+		check(item[1] in problem, "%s: %s" % [item[2], problem])
+	tile.sections["line.level"] = rows.slice(0, 10)
+	check("покрывают" in tile._check_layers(), "уровни, покрывающие не все линии, отклоняются")
+	tile.sections["line.level"] = rows
+	var tri: PackedInt32Array = tile.sections["line.tri"]
+	var original := tri[rows[13] * 3]
+	tri[rows[13] * 3] = 0   # треугольник моста ссылается на вершину земли
+	tile.sections["line.tri"] = tri
+	check("другого уровня" in tile._check_layers(), "треугольник моста на вершине земли отклоняется")
+	tri[rows[13] * 3] = original
+	tile.sections["line.tri"] = tri
+	check(tile._check_layers().is_empty(), "восстановленный участок снова корректен")
+	# Участок прежнего пакета без line.level: все линии — на земле.
+	tile.sections.erase("line.level")
+	levels = tile.line_levels()
+	check(tile._check_layers().is_empty() and levels.size() == 1 and levels[0].level == 0
+		and levels[0].vertex_count == tile.vertex_count("line"), "участок без уровней читается: все линии на земле")
+
+
+## Линии участка рисуются уровнями: все обводки и заливки уровня над нижним, мосты — своей обводкой,
+## маршруты — над всеми мостами; z_index общий для всех участков уровня подробности.
+func _check_line_order(view: MapTileView) -> void:
+	var names := view.line_nodes.map(func(n): return String(n.name))
+	check(names == ["LineCasing", "Lines", "LineCasing1", "Lines1", "LineCasing2", "Lines2"], "узлы линий по уровням: %s" % [names])
+	var z := view.line_nodes.map(func(n): return n.z_index)
+	var sorted_z := z.duplicate()
+	sorted_z.sort()
+	check(z == sorted_z and z[0] > view.get_node("BuildingOutlines").z_index and z[-1] < view.transit_nodes[0].z_index
+		and view.transit_nodes[1].z_index < MapTileView.LEVEL_Z_STEP,
+		"порядок: контуры зданий < земля < мост 1 < мост 2 < маршруты, в пределах шага уровня: %s" % [z])
+	var casing: ShaderMaterial = view.line_nodes[2].material
+	check(casing.get_shader_parameter("bridge") == true and view.line_nodes[0].material.get_shader_parameter("bridge") != true,
+		"у мостов своя обводка")
+
+
 func _transit_classes(tile: MapTile) -> Array:
 	var codes := {}
 	for code in tile.sections["transit.cls"]:
@@ -505,8 +576,10 @@ func _test_views(fixture: String) -> void:
 	check(background_z < areas_z and areas_z < buildings_z,
 		"слои уровня упорядочены через все его участки: фон %d < площади %d < здания %d" % [background_z, areas_z, buildings_z])
 	for view in map.tile_views():
-		check(view.mesh_nodes().size() == MapTileView.MESH_COUNT, "%s: %d узлов мешей вместо %d" % [
-			view.name, view.mesh_nodes().size(), MapTileView.MESH_COUNT])
+		# Мосты (#23): по паре узлов на уровень сверх земли; в фикстуре мосты двух уровней.
+		check(view.mesh_nodes().size() == MapTileView.MESH_COUNT + 4, "%s: %d узлов мешей вместо %d" % [
+			view.name, view.mesh_nodes().size(), MapTileView.MESH_COUNT + 4])
+	_check_line_order(detail)
 	# Фон уровня рисуется под его участками по z_index (проверка ниже), порядок в дереве не важен.
 	map.look_at_point(Vector2(2000, 2000), 4.0)
 	var cursor := Vector2(900, 200)
@@ -588,7 +661,8 @@ func _test_real_export(map_dir: String) -> void:
 			map.look_at_point(tile.origin + Vector2.ONE * tile.tile_size_m / 2.0, 2.0 if entry.level == 2 else 10.0)
 	map.load_visible_now()
 	var nodes := map.tile_views().map(func(v): return v.mesh_nodes().size())
-	check(nodes.all(func(n): return n == MapTileView.MESH_COUNT), "узлов на участок не зависит от числа зданий: %s" % [nodes])
+	check(nodes.all(func(n): return n >= MapTileView.MESH_COUNT and n <= MapTileView.MAX_MESH_COUNT),
+		"узлов на участок не зависит от числа зданий и дорог: %s" % [nodes])
 	for entry in map.index.tiles:
 		print("  %s: %.1f МБ" % [entry.path, entry.size_bytes / 1048576.0])
 	check(map.label_layer().label_count() > 0, "в настоящем экспорте есть подписи")

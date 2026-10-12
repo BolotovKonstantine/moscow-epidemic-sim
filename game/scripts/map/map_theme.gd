@@ -40,6 +40,10 @@ const LINE := {
 	"boundary_region": [Color("#6e5590"), Color("#6e5590"), 0.0, 2.4, 0.0],
 }
 const LINE_UNKNOWN := [Color("#999999"), Color("#999999"), 2.0, 1.0, 0.0]
+# Мосты и эстакады (#23): обводка любого класса — этого цвета и не тоньше BRIDGE_CASING_PX с каждой стороны,
+# чтобы мост читался над дорогой под ним (как в стиле OSM Carto).
+const BRIDGE_CASING := Color("#5f5850")
+const BRIDGE_CASING_PX := 1.0
 
 const BUILDING_FILL := Color("#d6cfc6")
 const BUILDING_OUTLINE := Color("#b3aa9e")

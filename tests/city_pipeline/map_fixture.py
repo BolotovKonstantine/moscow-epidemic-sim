@@ -2,7 +2,7 @@
 
 Набор пишется тем же кодом, что и настоящий экспорт (`mapbuild.tile_sections`, `write_tile`,
 `write_index`), поэтому проверяет совместимость Python-записи и GDScript-чтения. Это не карта
-Москвы: квадрат 4×4 км с водой, парком, дорогами разных классов, границей и тремя зданиями.
+Москвы: квадрат 4×4 км с водой, парком, дорогами разных классов, мостами (#23), границей и тремя зданиями.
 Готовые файлы лежат в tests/fixtures/map_tile/; тест test_maptiles проверяет, что они актуальны.
 
 Второй набор, tests/fixtures/map_stream/, — для теста подгрузки участков по камере (#14): квадрат
@@ -43,9 +43,11 @@ def _metric(geometry):
 
 
 def _layer(items, classes):
+    """Слой из (класс, геометрия[, уровень рисования линии]); без уровня — на земле."""
     keys = [f"{index:03d}" for index in range(len(items))]
-    codes = np.array([classes.index(kind) for kind, _ in items], np.int64)
-    return Layer(keys, codes, np.array([_metric(geometry) for _, geometry in items], dtype=object))
+    codes = np.array([classes.index(item[0]) for item in items], np.int64)
+    levels = np.array([item[2] if len(item) > 2 else 0 for item in items], np.int64)
+    return Layer(keys, codes, np.array([_metric(item[1]) for item in items], dtype=object), levels)
 
 
 def fixture_layers():
@@ -59,6 +61,9 @@ def fixture_layers():
         ("residential", shapely.LineString([(1000, 0), (1000, 2400)])),
         ("service", shapely.LineString([(1000, 1500), (1500, 1500), (1500, 1800)])),
         ("rail", shapely.LineString([(0, 2300), (4000, 2200)])),
+        # Мосты (#23): служебный проезд по мосту над главной улицей (уровень 1) и съезд над ним (уровень 2).
+        ("service", shapely.LineString([(1700, 700), (1700, 1300)]), 1),
+        ("trunk", shapely.LineString([(1500, 1200), (1900, 1200)]), 2),
         # Замкнутая LineString, а не LinearRing: экспорт берёт только LineString (как boundary() полигона).
         ("boundary_region", shapely.LineString([(1, 1), (3999, 1), (3999, 3999), (1, 3999), (1, 1)])),
     ], mt.LINE_CLASSES)

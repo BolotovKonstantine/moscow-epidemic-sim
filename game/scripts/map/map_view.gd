@@ -116,7 +116,8 @@ func load_map(map_dir: String, cache_limit := MapTileStreamer.DEFAULT_LIMIT_MB <
 	for cls_name: String in index.classes.get("area", []):
 		palette.append(MapTheme.area_color(cls_name))
 	_labels.set_classes(index.classes.get("label", []))
-	_style = {"line_casing": _line_style.casing, "line_fill": _line_style.fill, "transit_casing": _transit_style.casing,
+	_style = {"line_casing": _line_style.casing, "line_fill": _line_style.fill, "bridge_casing": _line_style.bridge_casing,
+		"transit_casing": _transit_style.casing,
 		"transit_fill": _transit_style.fill, "building": _building_style.material}
 	var tile := index.load_tile(index.tiles_of_level(0)[0])
 	var problem := tile.error
