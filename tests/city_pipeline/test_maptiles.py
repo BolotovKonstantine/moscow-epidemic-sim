@@ -16,7 +16,7 @@ from tools.city_pipeline import maplabels as ml
 from tools.city_pipeline import maptiles as mt
 from tools.city_pipeline.build import build_package, make_boundary
 from tools.city_pipeline.geo import Projector
-from tools.city_pipeline.manifest import ManifestError, validate_map_index
+from tools.city_pipeline.manifest import ManifestError, _check_map_tile, validate_map_index
 from tools.city_pipeline.mapbuild import (Layer, area_class, export_test_tiles, line_class, read_overview_data, read_package,
                                           read_route_ways, read_subway_scheme)
 
@@ -430,7 +430,10 @@ class ExportTests(unittest.TestCase):
         unfinished = base.way([base.node(lon - 0.004, lat - 0.0015), base.node(lon + 0.004, lat - 0.0015)], {"railway": "construction"})
         tunnel = base.way([base.node(lon - 0.004, lat + 0.0015), base.node(lon + 0.004, lat + 0.0015)], {"railway": "subway", "tunnel": "yes"})
         planned = base.way([base.node(lon - 0.004, lat + 0.002), base.node(lon + 0.004, lat + 0.002)], {"highway": "construction"})
-        base.relation(60, [("way", street, ""), ("way", platform, "platform"), ("way", planned, "")], {"type": "route", "route": "bus"})
+        # Пути с ролями остановок и платформ в вариантах с направлением и номером — тоже не путь маршрута.
+        stop_way = base.way([base.node(lon - 0.004, lat + 0.0025), base.node(lon + 0.004, lat + 0.0025)], {"highway": "service"})
+        base.relation(60, [("way", street, ""), ("way", platform, "platform"), ("way", planned, ""),
+                           ("way", stop_way, "forward_stop_1"), ("way", stop_way, "backward:platform")], {"type": "route", "route": "bus"})
         base.relation(61, [("way", street, "")], {"type": "route", "route": "share_taxi"})   # тот же путь и класс — одна линия
         base.relation(62, [("way", tram, ""), ("way", unfinished, "")], {"type": "route", "route": "tram"})
         base.relation(63, [("way", rail, "")], {"type": "route", "route": "train"})
@@ -571,9 +574,29 @@ class ExportTests(unittest.TestCase):
         self.assertEqual({mt.TRANSIT_CLASSES[int(code)] for code in overview["transit.cls"]}, {"train"})   # обзор: электрички и метро
 
     def test_route_ways_only_for_configured_modes(self):
-        layer = read_route_ways(self.basemap, Projector(self.crs), {"bus", "train"})
+        transit = mini_city_config()["transit"]
+        layer = read_route_ways(self.basemap, Projector(self.crs), {**transit, "route_modes": ["bus", "train"]})
         self.assertEqual({mt.TRANSIT_CLASSES[code] for code in layer.classes}, {"bus", "train"})
-        self.assertEqual(len(read_route_ways(self.basemap, Projector(self.crs), set()).keys), 0)
+        self.assertEqual(len(read_route_ways(self.basemap, Projector(self.crs), {**transit, "route_modes": []}).keys), 0)
+        with self.assertRaisesRegex(mt.MapTileError, "hovercraft"):
+            read_route_ways(self.basemap, Projector(self.crs), {**transit, "route_modes": ["bus", "hovercraft"]})
+
+    def test_layer_needs_its_class_tables(self):
+        """Слой с кодами классов без своей таблицы игра не откроет — validate его тоже отклоняет."""
+        data = (FIXTURE_DIR / "z0" / "0_0.mtile").read_bytes()
+        header, decoded = mt.decode_tile(data)
+        classes = {name: values for name, values in header["classes"].items() if name not in ("stop", "stop_mode")}
+        sections = [(item["name"], item["dtype"], decoded[item["name"]]) for item in header["sections"]]
+        base = {key: header[key] for key in ("package_id", "package_version", "level", "tile", "tile_size_m", "origin",
+                                             "bbox", "counts", "attribution")}
+        stripped = mt.encode_tile({**base, "classes": classes}, sections)
+        index = {"package_id": header["package_id"], "package_version": header["package_version"], "classes": classes,
+                 "attribution": header["attribution"]}
+        entry = json.loads((FIXTURE_DIR / "index.json").read_text(encoding="utf-8"))["tiles"][0]
+        with self.assertRaisesRegex(ManifestError, "слой stop"):
+            _check_map_tile(stripped, entry, index, "map-index")
+        without_stops = [item for item in sections if not item[0].startswith("stop.")]
+        _check_map_tile(mt.encode_tile({**base, "classes": classes}, without_stops), entry, index, "map-index")
 
     def test_index_without_data_layer_tables_is_accepted(self):
         """Индекс пакета до 0.4.0 — только прежние таблицы классов; чужая таблица — ошибка."""

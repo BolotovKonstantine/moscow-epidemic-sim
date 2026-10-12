@@ -24,6 +24,7 @@ import shapely
 from . import maplabels as ml
 from . import maptiles as mt
 from .geo import Projector
+from .transit import _NUMBERED as _NUMBERED_ROLE
 
 MAP_CREDIT = mt.MAP_CREDIT
 
@@ -124,22 +125,28 @@ def read_basemap(pbf: Path, projector: Projector):
     return _layer(area_items, projector), _layer(line_items, projector)
 
 
-# Пути маршрутов: роли платформ и остановок — не путь; платформы, недостроенные и заброшенные пути не рисуются.
-ROUTE_SKIP_ROLES = ("platform", "platform_entry_only", "platform_exit_only", "stop", "stop_entry_only", "stop_exit_only")
+# Пути маршрутов: роли платформ и остановок (transit.stop_roles и platform_roles конфигурации) — не путь;
+# платформы, недостроенные и заброшенные пути не рисуются.
 ROUTE_WAY_KEYS = ("highway", "railway")
 ROUTE_SKIP_LIFECYCLE = ("platform", "construction", "abandoned", "disused", "proposed", "razed")
 
 
-def read_route_ways(pbf: Path, projector: Projector, route_modes):
+def read_route_ways(pbf: Path, projector: Projector, transit):
     """Линии маршрутов, кроме метро, по путям из отношений route вырезки OSM: Layer в метрах.
 
-    route_modes — виды транспорта из конфигурации пакета (transit.route_modes): карта показывает
-    только маршруты, которые есть в таблицах пакета.
+    transit — раздел transit конфигурации пакета: карта показывает только виды маршрутов route_modes,
+    которые есть в таблицах пакета (вид без класса карты — ошибка экспорта), а члены с ролями
+    stop_roles и platform_roles (после того же отбрасывания номера «_N», что в transit.py) — не путь.
 
     Путь, по которому идут маршруты одного класса, рисуется один раз (ключ — ID пути); маршруты
     разных классов по одному пути — отдельными линиями. Пути вне вырезки отсутствуют в ней и
     просто не рисуются. Тоннели рисуются: маршрут — непрерывная линия, а не дорога.
     """
+    route_modes = set(transit["route_modes"])
+    unknown = sorted(route_modes - set(mt.ROUTE_MODE_CLASS))
+    if unknown:
+        raise mt.MapTileError(f"виды маршрутов {unknown} из конфигурации не имеют класса линий карты")
+    skip_roles = set(transit["stop_roles"]) | set(transit["platform_roles"])
     classes_of = {}   # ID пути → коды классов
     for obj in osmium.FileProcessor(str(pbf), osmium.osm.RELATION).with_filter(osmium.filter.TagFilter(("type", "route"))):
         mode = obj.tags.get("route")
@@ -148,7 +155,7 @@ def read_route_ways(pbf: Path, projector: Projector, route_modes):
             continue   # метро — схема по остановкам (transit_lines)
         code = mt.TRANSIT_CLASSES.index(kind)
         for member in obj.members:
-            if member.type == "w" and member.role not in ROUTE_SKIP_ROLES:
+            if member.type == "w" and _NUMBERED_ROLE.sub("", member.role) not in skip_roles:
                 classes_of.setdefault(member.ref, set()).add(code)
     wkb = osmium.geom.WKBFactory()
     items = []
@@ -531,7 +538,7 @@ class MapSource:
                                np.concatenate([base_lines.geometry, self.roads.geometry, pkg.boundaries.geometry]))
         log("Маршруты…")
         build_config = json.loads((package / "build_config.json").read_text(encoding="utf-8"))
-        transit = read_route_ways(region_pbf, self.projector, set(build_config["transit"]["route_modes"]))
+        transit = read_route_ways(region_pbf, self.projector, build_config["transit"])
         scheme = read_subway_scheme(package, self.projector)
         self.transit = clip_to_region(Layer(transit.keys + scheme.keys, np.concatenate([transit.classes, scheme.classes]),
                                             np.concatenate([transit.geometry, scheme.geometry])), pkg.region)

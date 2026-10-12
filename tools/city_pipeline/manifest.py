@@ -230,11 +230,11 @@ def _check_map_tile(data: bytes, entry: dict, index: dict, asset_id: str):
     import struct
     import zlib
 
-    from .maptiles import LEVEL_TILE_M, MapTileError, decode_tile
+    from .maptiles import LAYER_CLASS_TABLES, LEVEL_TILE_M, MapTileError, decode_tile
 
     name = f"{asset_id}: участок {entry['path']}"
     try:
-        header, _ = decode_tile(data)
+        header, sections = decode_tile(data)
     except (MapTileError, ValueError, KeyError, TypeError, IndexError, struct.error, zlib.error) as error:
         raise ManifestError(f"{name} не читается: {error}") from error
     if type(header.get("level")) is not int or not isinstance(header.get("tile"), list) \
@@ -246,6 +246,10 @@ def _check_map_tile(data: bytes, entry: dict, index: dict, asset_id: str):
     for key, value in expected.items():
         if header.get(key) != value:
             raise ManifestError(f"{name}: {key} в заголовке {str(header.get(key))[:100]!r}, в индексе {str(value)[:100]!r}")
+    for layer, tables in LAYER_CLASS_TABLES.items():
+        missing = [table for table in tables if table not in index["classes"]]
+        if missing and any(section.startswith(layer + ".") for section in sections):
+            raise ManifestError(f"{name}: есть слой {layer}, но в таблицах классов нет {missing}")
     size = LEVEL_TILE_M[entry["level"]]
     origin = header.get("origin")
     grid = [0.0, 0.0] if size is None else [entry["tile"][0] * size, entry["tile"][1] * size]
