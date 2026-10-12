@@ -10,13 +10,16 @@ extends Node
 # неподвижным видом нужные участки догружаются сразу (load_visible_now), затем — прогрев и замер;
 # облёт начинается с общего вида и грузит участки как обычно, в фоне. После записи результата игра
 # закрывается (код 0). Ошибка маршрута или записи, а также любая ошибка загрузки участка — код 1:
-# карта при ошибке показывает уровень грубее, и замер вышел бы обманчиво быстрым.
+# карта при ошибке показывает уровень грубее, и замер вышел бы обманчиво быстрым. Поэтому после
+# каждого сценария (вне замера) загрузчик догружает нужные участки: очистка кеша и выход отбрасывают
+# незавершённые загрузки, и их ошибки иначе не дошли бы до проверки.
 
 const FORMAT := "mesim-map-bench"
 const FORMAT_VERSION := 1
 const RESULT_VERSION := 1
 const SLOW_FRAME_USEC := 16667   # дольше — меньше 60 FPS
 const WINDOW_SETTLE_USEC := 1500000   # после смены размера окна (развёртывание анимируется) — пауза до замера
+const DRAIN_TIMEOUT_USEC := 30000000  # после сценария нужные участки догружаются не дольше этого
 
 var error := ""
 
@@ -36,6 +39,7 @@ var _cur: Dictionary = {}          # накопленное по текущем�
 var _initial_window := Vector2i.ZERO   # окно до замены на размер из маршрута (размер игры по умолчанию)
 var _window: Variant = null        # Vector2i (физические пиксели) или "maximized"
 var _ready_usec := 0
+var _drain_started := 0
 
 
 ## Пути маршрута и результата из аргументов пользователя; {} — замер не заказан.
@@ -100,6 +104,17 @@ func _process(_delta: float) -> void:
 	var now := Time.get_ticks_usec()
 	var frame := now - _last_usec if _last_usec > 0 else 0
 	_last_usec = now
+	if _phase == "drain":
+		if _map.streamer.in_flight() == 0 and _map.streamer.pending() == 0:
+			_scenario += 1
+			if _scenario >= _route.scenarios.size():
+				_write_and_quit()
+			else:
+				_start_scenario()
+		elif now - _drain_started > DRAIN_TIMEOUT_USEC:
+			_fail("участки сценария %s не догрузились за %d с" % [_route.scenarios[_scenario].name,
+				DRAIN_TIMEOUT_USEC / 1000000])
+		return
 	if _scenario < 0:
 		if now - _ready_usec < WINDOW_SETTLE_USEC:
 			return
@@ -126,11 +141,8 @@ func _process(_delta: float) -> void:
 		done = _phase_frames >= int(_route.frames)
 	if done:
 		_results.append(_finish_scenario(now))
-		_scenario += 1
-		if _scenario >= _route.scenarios.size():
-			_write_and_quit()
-		else:
-			_start_scenario()
+		_phase = "drain"
+		_drain_started = now
 
 
 func _start_scenario() -> void:
@@ -231,6 +243,7 @@ func _write_and_quit() -> void:
 		"format": "mesim-map-bench-result",
 		"format_version": RESULT_VERSION,
 		"route": _route_path,
+		"route_sha256": FileAccess.get_sha256(_route_path),
 		"package_id": index.package_id,
 		"package_version": index.package_version,
 		"map_dir": index.dir,

@@ -8,7 +8,7 @@
 #   MAP_DIR=/путь/к/map benchmarks/map_view/run.sh   # другой каталог участков
 #   WINDOW=1600x1000 benchmarks/map_view/run.sh   # окно в физических пикселях вместо развёрнутого
 #
-# Результаты — build/bench/map_view/<время>/ (вне Git): run-<n>.json, run-<n>.time.txt, summary.json, summary.md.
+# Результаты — build/bench/map_view/<время>/ (вне Git): копия route.json, run-<n>.json, run-<n>.time.txt, summary.json, summary.md.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -28,12 +28,11 @@ if [ -z "$MAP_DIR" ] || [ ! -f "$MAP_DIR/index.json" ]; then
 	echo "Нет участков карты: соберите пакет (tools/city_pipeline) или задайте MAP_DIR" >&2
 	exit 1
 fi
-if [ ! -d "$ROOT/game/bin/libmesim.macos.template_release.framework" ]; then
-	echo "Нет release-библиотеки ядра: (cd native && scons platform=macos target=template_release -j8)" >&2
-	exit 1
-fi
-
 if [ -z "${NO_EXPORT:-}" ]; then
+	if [ ! -d "$ROOT/game/bin/libmesim.macos.template_release.framework" ]; then
+		echo "Нет release-библиотеки ядра: (cd native && scons platform=macos target=template_release -j8)" >&2
+		exit 1
+	fi
 	echo "Экспорт release..."
 	rm -f "$STAMP"
 	"$GODOT" --headless --path "$ROOT/game" --export-release "macOS" "$APP" >/dev/null
@@ -52,6 +51,9 @@ fi
 
 OUT="$ROOT/build/bench/map_view/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$OUT"
+# Копия маршрута: результат воспроизводим, даже если route.json потом изменится (хеш — в run-<n>.json).
+cp "$ROUTE" "$OUT/route.json"
+ROUTE="$OUT/route.json"
 i=1
 while [ "$i" -le "$RUNS" ]; do
 	echo "Прогон $i из $RUNS..."

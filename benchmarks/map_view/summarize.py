@@ -92,6 +92,7 @@ def markdown(summary: dict) -> str:
         f"- Сборка: экспорт {first['build']} ({'редактор' if first['editor'] else 'не редактор'}), Godot {first['godot']}, "
         f"{first['renderer']}, {first['video_adapter']}; экспорт из коммита {summary['git']['commit'][:10]}"
         f"{' (с незакоммиченными изменениями)' if summary['git']['dirty'] else ''}.",
+        f"- Маршрут: route.json, SHA256 {first['route_sha256'][:12]} (копия — в каталоге прогонов).",
         f"- Пакет: {first['package_id']} {first['package_version']}; участки на диске: "
         + ", ".join(f"уровень {level} — {item['tiles']} шт., {item['bytes'] / 1048576:.1f} МБ"
                     for level, item in sorted(first["tiles_on_disk"].items())) + ".",
