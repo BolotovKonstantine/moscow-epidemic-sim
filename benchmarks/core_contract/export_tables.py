@@ -136,7 +136,7 @@ def main(package_dir: Path, out_dir: Path):
         ("ix", "i32", [int(z["zone_id"][1:].split("_")[0]) for z in zones]),
         ("iy", "i32", [int(z["zone_id"][1:].split("_")[1]) for z in zones]),
         ("residents", "u32", [z["residents"] for z in zones]),
-        ("area_m2", "u32", [round(z["area_m2"]) for z in zones]),
+        ("area_dm2", "u32", [round(z["area_m2"] * 100) for z in zones]),
     ]))
 
     # Дорожный граф: узлы по строкам road_nodes, дуги — CSR по исходному узлу (смещения — колонка узлов) (оба направления
