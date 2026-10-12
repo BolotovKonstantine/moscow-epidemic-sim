@@ -4,7 +4,8 @@ extends Node
 # Каталог участков — `--map-dir=<путь>` после `--` в командной строке, иначе каталог `map/` самого
 # нового пакета в data/packages/ рядом с проектом, иначе data/processed/map-test/ (`city_pipeline map-tile`).
 # Лимит памяти кеша участков — `--map-cache-mb=<МБ>`. F3 — отладочный оверлей. Клик по зданию
-# вблизи открывает его карточку справа (#15), Esc снимает выбор.
+# вблизи открывает его карточку справа (#15), Esc снимает выбор. Слева — переключатель слоёв
+# с легендой (#16); клавиши 1–7 переключают слои по порядку.
 
 const PACKAGES_DIR := "../data/packages"
 const DEFAULT_MAP_DIR := "../data/processed/map-test"
@@ -18,6 +19,7 @@ const DEBUG_PERIOD_USEC := 1000000   # окно, за которое оверл�
 @onready var _debug: Label = $Hud/Debug
 
 var _card := BuildingCard.new()
+var _layers := MapLayerPanel.new()
 var _core_text := ""
 var _frame_max_usec := 0      # худший кадр текущего окна
 var _frame_shown_usec := 0    # худший кадр прошлого окна (показывается)
@@ -38,6 +40,9 @@ func _ready() -> void:
 	if _map.index != null and not _map.index.attribution.is_empty():
 		# Все источники: участки несут не только геометрию OSM, но и производные данные (жители — GHS-POP).
 		_credit.text = "\n".join(_map.index.attribution)
+	if _map.index != null and _map.streamer != null:
+		$Hud.add_child(_layers)
+		_layers.bind(_map)
 	if not problem.is_empty():
 		push_error(problem)
 		_message.text = problem + ("\n\n" + EXPORT_HINT if _map.tile_views().is_empty() else "")
@@ -100,6 +105,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				_debug.visible = not _debug.visible
 			KEY_ESCAPE:
 				_map.set_selection({})
+			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7:
+				var layer: String = MapView.LAYER_NAMES[event.keycode - KEY_1]
+				if _map.streamer != null and _map.layer_available(layer):
+					_map.set_layer(layer, not _map.layers[layer])
 
 
 func _update_debug() -> void:

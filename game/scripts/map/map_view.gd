@@ -7,10 +7,18 @@ extends Node2D
 # Выбор здания (#15): клик без перетаскивания на уровне подробности 2 выбирает здание из
 # загруженных участков 2 км (правило попадания — MapPick); выбор хранит копию контура и значений
 # карточки и переживает выгрузку участка.
+# Слои (#16): set_layer переключает слои по данным пакета без перезагрузки участков — режим общего
+# материала зданий, видимость классов линий, узлы линий маршрутов и слои обзора (MapDataOverlay).
 
 signal view_changed(meters_per_pixel: float, level: int)
 signal tiles_changed
 signal selection_changed(selection: Dictionary)   # {} — выбор снят
+signal layers_changed
+
+# Слои в порядке переключателя; functions и population перекрашивают здания и исключают друг друга.
+const LAYER_NAMES := ["functions", "population", "roads", "transit", "facilities", "zones", "boundary"]
+const ROAD_CLASSES := ["service", "pedestrian", "residential", "tertiary", "secondary", "primary", "trunk", "motorway"]
+const BOUNDARY_CLASSES := ["boundary_moscow", "boundary_region"]
 
 const ZOOM_STEP := 1.25
 const PAN_GESTURE_PX := 10.0   # пикселей на единицу delta жеста прокрутки трекпада
@@ -26,8 +34,14 @@ var max_meters_per_pixel := 500.0
 var region_rect := Rect2()
 var load_stats: Dictionary = {}   # загрузка обзора: usec, static_bytes, tiles, errors
 var selection: Dictionary = {}    # выбранное здание: {id, attributes, outlines, area_m2}; {} — нет
+var layers := {"functions": false, "population": false, "roads": true, "transit": false, "facilities": false,
+	"zones": false, "boundary": true}
+var overlay := MapDataOverlay.new()
 
 var _line_style: MapLineStyle
+var _transit_style: MapLineStyle
+var _building_style: MapBuildingStyle
+var _transit_lines := false   # хоть в одном участке индекса есть линии маршрутов (MapIndex: counts.transit)
 var _style: Dictionary = {}
 var _views: Dictionary = {}   # Vector3i(уровень, x, y) → MapTileView: обзор и загруженные участки
 var _camera := Camera2D.new()
@@ -47,8 +61,11 @@ func _init() -> void:
 	_labels.name = "Labels"
 	_label_canvas.add_child(_labels)
 	add_child(_label_canvas)
+	overlay.name = "DataOverlay"
+	overlay.z_index = (MapTile.MAX_LEVEL + 1) * MapTileView.LEVEL_Z_STEP   # над всеми участками
+	add_child(overlay)
 	_highlight.name = "Selection"
-	_highlight.z_index = MapTile.MAX_LEVEL * MapTileView.LEVEL_Z_STEP + MapTileView.LEVEL_Z_STEP   # над всеми участками
+	_highlight.z_index = (MapTile.MAX_LEVEL + 2) * MapTileView.LEVEL_Z_STEP   # над участками и слоями обзора
 	add_child(_highlight)
 
 
@@ -88,18 +105,26 @@ func load_map(map_dir: String, cache_limit := MapTileStreamer.DEFAULT_LIMIT_MB <
 	if not index.error.is_empty():
 		return index.error
 	_line_style = MapLineStyle.make(index.classes.get("line", []))
-	if _line_style == null:
+	_transit_style = MapLineStyle.make(index.classes.get("transit", []), MapTheme.transit_style)
+	if _line_style == null or _transit_style == null:
 		return "Классов линий больше, чем поддерживает шейдер"
+	if index.classes.get("building", []).size() > MapBuildingStyle.MAX_CLASSES:
+		return "Классов зданий больше, чем поддерживает шейдер"
+	_building_style = MapBuildingStyle.make(index.classes.get("building", []))
+	_transit_lines = index.tiles.any(func(entry): return entry.transit_lines > 0)
 	var palette := PackedColorArray()
 	for cls_name: String in index.classes.get("area", []):
 		palette.append(MapTheme.area_color(cls_name))
 	_labels.set_classes(index.classes.get("label", []))
-	_style = {"line_casing": _line_style.casing, "line_fill": _line_style.fill}
+	_style = {"line_casing": _line_style.casing, "line_fill": _line_style.fill, "transit_casing": _transit_style.casing,
+		"transit_fill": _transit_style.fill, "building": _building_style.material}
 	var tile := index.load_tile(index.tiles_of_level(0)[0])
 	var problem := tile.error
 	if problem.is_empty():
 		var attached: Variant = _attach(tile, MapTileView.prepare(tile, palette))
 		problem = attached if attached is String else ""
+	if problem.is_empty():
+		overlay.build(tile)   # слои обзора (#16) — часть обязательной загрузки, входят в замер
 	load_stats = {
 		"usec": Time.get_ticks_usec() - started,
 		"static_bytes": OS.get_static_memory_usage() - static_before,
@@ -132,6 +157,71 @@ func tile_view(key: Vector3i) -> MapTileView:
 
 func label_layer() -> MapLabelLayer:
 	return _labels
+
+
+## Есть ли в наборе данные слоя (в участках пакетов до 0.4.0 нет зон, остановок, учреждений и маршрутов).
+## Население доступно всегда, как функции: здания без данных о жителях показываются «нет данных».
+func layer_available(name: String) -> bool:
+	match name:
+		"transit":   # остановки и линии маршрутов необязательны независимо друг от друга
+			return overlay.has_layer("transit") or _transit_lines
+		"facilities", "zones":
+			return overlay.has_layer(name)
+	return index != null
+
+
+## Включить или выключить слой; функции и население зданий исключают друг друга.
+func set_layer(name: String, on: bool) -> void:
+	if not layers.has(name):
+		push_error("Неизвестный слой карты %s" % name)
+		return
+	layers[name] = on
+	if on and name == "functions":
+		layers.population = false
+	elif on and name == "population":
+		layers.functions = false
+	_apply_layers()
+	layers_changed.emit()
+
+
+func building_style() -> MapBuildingStyle:
+	return _building_style
+
+
+func line_style() -> MapLineStyle:
+	return _line_style
+
+
+## Применить слои: только параметры материалов и видимость узлов, участки не перезагружаются.
+## Население — по зонам на общем и среднем виде (уровни 0–1: в участках 8 км нет мелких домов),
+## по зданиям вблизи (уровень 2).
+func _apply_layers() -> void:
+	if _building_style == null:
+		return
+	var level := level_for(meters_per_pixel)
+	var mode := MapBuildingStyle.Mode.PLAIN
+	if layers.functions:
+		mode = MapBuildingStyle.Mode.FUNCTIONS
+	elif layers.population and level == 2:
+		mode = MapBuildingStyle.Mode.POPULATION
+	if mode != _building_style.mode:
+		_building_style.set_mode(mode)
+	# Без проверки по одному классу: в таблице индекса может не быть любого из них.
+	_line_style.set_classes_visible(ROAD_CLASSES, layers.roads)
+	_line_style.set_classes_visible(BOUNDARY_CLASSES, layers.boundary)
+	for view: MapTileView in _views.values():
+		for node in view.transit_nodes:
+			node.visible = layers.transit
+	_set_visible(overlay.zone_fill, layers.population and level < 2)
+	_set_visible(overlay.zone_outline, layers.zones)
+	_set_visible(overlay.stations, layers.transit and meters_per_pixel <= MapTheme.STATION_MAX_MPP)
+	_set_visible(overlay.stops, layers.transit and meters_per_pixel <= MapTheme.STOP_MAX_MPP)
+	_set_visible(overlay.facilities, layers.facilities)
+
+
+static func _set_visible(node: CanvasItem, shown: bool) -> void:
+	if node != null and node.visible != shown:
+		node.visible = shown
 
 
 ## Загрузить нужные для текущего вида участки сразу, в этом потоке (тесты и скриншоты).
@@ -247,15 +337,20 @@ func _set_scale(mpp: float) -> void:
 	meters_per_pixel = clampf(mpp, MapTheme.MIN_MPP, max_meters_per_pixel)
 	_camera.zoom = Vector2.ONE / meters_per_pixel
 	_line_style.set_meters_per_pixel(meters_per_pixel)
+	_transit_style.set_meters_per_pixel(meters_per_pixel)
+	overlay.set_meters_per_pixel(meters_per_pixel)
 	for view: MapTileView in _views.values():
 		_style_view(view)
+	_apply_layers()
 	_highlight.set_meters_per_pixel(meters_per_pixel)
 	view_changed.emit(meters_per_pixel, level_for(meters_per_pixel))
 
 
 func _style_view(view: MapTileView) -> void:
 	view.building_outline.visible = meters_per_pixel <= MapTheme.BUILDING_OUTLINE_MAX_MPP
-	view.set_line_margin(_line_style.max_displacement_m(meters_per_pixel))
+	view.set_line_margin(_line_style.max_displacement_m(meters_per_pixel), _transit_style.max_displacement_m(meters_per_pixel))
+	for node in view.transit_nodes:
+		node.visible = layers.transit
 
 
 ## Вид изменился: заказать участки видимой области (с запасом) и разложить подписи.

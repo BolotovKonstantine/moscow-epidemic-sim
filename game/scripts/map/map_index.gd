@@ -99,6 +99,11 @@ func _read(index_path: String) -> String:
 		var size_bytes: Variant = item.get("size_bytes", 0)
 		if not MapTile.is_integers([size_bytes], 1) or int(size_bytes) < 0:
 			return "запись участка %s: size_bytes — целое неотрицательное" % rel_path
+		# Число линий маршрутов (#16): по нему игра решает, доступен ли слой транспорта без остановок.
+		var counts: Variant = item.get("counts", {})
+		var transit: Variant = counts.get("transit", 0) if counts is Dictionary else 0
+		if not MapTile.is_integers([transit], 1) or int(transit) < 0:
+			return "запись участка %s: counts.transit — целое неотрицательное" % rel_path
 		var identity := Vector3i(int(item.level), int(item.tile[0]), int(item.tile[1]))
 		if identity in seen:
 			return "участок z%d %d_%d указан в индексе дважды" % [identity.x, identity.y, identity.z]
@@ -109,6 +114,7 @@ func _read(index_path: String) -> String:
 			"path": rel_path,
 			"sha256": String(item.sha256),
 			"size_bytes": int(size_bytes),
+			"transit_lines": int(transit),
 			"bbox": null if bbox == null else Rect2(bbox[0], bbox[1], bbox[2] - bbox[0], bbox[3] - bbox[1]),
 		})
 	var overview := tiles_of_level(0)
