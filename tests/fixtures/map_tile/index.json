@@ -137,7 +137,7 @@
         "areas": 3,
         "facilities": 3,
         "labels": 4,
-        "lines": 5,
+        "lines": 7,
         "stops": 4,
         "transit": 2,
         "triangles_dropped": 0,
@@ -145,8 +145,8 @@
       },
       "level": 0,
       "path": "z0/0_0.mtile",
-      "sha256": "3fa5b07696d00f7e7a0df158726a847a34ef8b0e634b73381d4c4f7924a7b917",
-      "size_bytes": 5444,
+      "sha256": "fe6392544607787a6f894938ad4bcaf664ebf2fdcba5bd1e5767f3fa0ff49f27",
+      "size_bytes": 5640,
       "tile": [
         0,
         0
@@ -163,14 +163,14 @@
         "areas": 2,
         "buildings": 3,
         "labels": 3,
-        "lines": 4,
+        "lines": 6,
         "transit": 3,
         "triangles_dropped": 0
       },
       "level": 2,
       "path": "z2/0_0.mtile",
-      "sha256": "d2e8ae979d405cf966f440c8c46b5be56043a05e545ba5e4d9729cf16eb2f399",
-      "size_bytes": 5524,
+      "sha256": "d6e1dbc0f3add7b7cc85a3f1800f1fd9cdaf016074fe52593978c96e23247596",
+      "size_bytes": 5716,
       "tile": [
         0,
         0

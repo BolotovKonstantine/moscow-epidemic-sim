@@ -106,6 +106,23 @@ LEVEL_RULES = {
 }
 
 MITER_LIMIT = 3.0   # смещение стыка ленты не длиннее 3 полуширин: острый угол не даёт длинного шипа
+CUT_TOLERANCE_M = 1e-6   # конец линии на краю участка (обрезан по квадрату) — без квадратного выступа
+
+# Уровни рисования линий (#23): 0 — земля, мосты и эстакады — уровни 1..MAX_LINE_LEVEL по тегу layer.
+# Уровень рисуется целиком (все обводки, затем заливки) поверх нижнего. Как MapTile.MAX_LINE_LEVEL в игре.
+MAX_LINE_LEVEL = 5
+
+
+def line_level(bridge, layer):
+    """Уровень рисования линии: не мост — 0 (на перекрёстках сливается с другими дорогами, какой бы ни был
+    layer), мост — layer, ограниченный 1..MAX_LINE_LEVEL (мост без layer или с layer ≤ 0 — 1)."""
+    if not bridge:
+        return 0
+    try:
+        value = int(layer) if layer is not None else 1
+    except (TypeError, ValueError):
+        value = 1
+    return min(max(value, 1), MAX_LINE_LEVEL)
 
 
 def source_credits(manifest):
@@ -288,12 +305,15 @@ def ring_outline(tri: Triangulated):
     return np.column_stack((index, nxt))
 
 
-def ribbons(lines, classes):
+def ribbons(lines, classes, cut_box=None):
     """Ленты линий для шейдера ширины.
 
     Каждая точка осевой линии даёт две вершины с одинаковой позицией и смещением ±m в
     полуширинах: m — вектор стыка (miter), на концах добавлен квадратный выступ вдоль линии,
     чтобы рёбра на перекрёстках смыкались. Шейдер умножает смещение на полуширину класса.
+    cut_box — квадрат участка (minx, miny, maxx, maxy в тех же координатах): конец на его краю
+    получен обрезкой, линия продолжается в соседнем участке — выступа нет, иначе он лёг бы на
+    линии соседа поверх их порядка рисования.
     """
     lines = np.asarray(lines, dtype=object)
     classes = np.asarray(classes, dtype=np.int64)
@@ -329,8 +349,14 @@ def ribbons(lines, classes):
     cos = np.einsum("ij,ij->i", miter, n_next)
     miter *= (1.0 / np.maximum(cos, 1.0 / MITER_LIMIT))[:, None]
     cap = np.zeros_like(pts)
-    cap[first] -= d_next[first]
-    cap[last] += d_prev[last]
+    open_end = np.ones(n, bool)
+    if cut_box is not None:
+        minx, miny, maxx, maxy = cut_box
+        x, y = pts[:, 0], pts[:, 1]
+        open_end = ~((np.abs(x - minx) <= CUT_TOLERANCE_M) | (np.abs(x - maxx) <= CUT_TOLERANCE_M)
+                     | (np.abs(y - miny) <= CUT_TOLERANCE_M) | (np.abs(y - maxy) <= CUT_TOLERANCE_M))
+    cap[first & open_end] -= d_next[first & open_end]
+    cap[last & open_end] += d_prev[last & open_end]
     offset = np.empty((2 * n, 2))
     offset[0::2] = miter + cap
     offset[1::2] = -miter + cap
@@ -342,6 +368,36 @@ def ribbons(lines, classes):
     # Стабильный порядок: треугольники по отрезкам.
     triangles = triangles.reshape(2, -1, 3).transpose(1, 0, 2).reshape(-1, 3)
     return xy, offset, cls, triangles.astype(np.int64)
+
+
+def level_ribbons(lines, classes, levels, cut_box=None):
+    """Ленты линий по уровням рисования (#23): (xy, off, cls, tri, уровни).
+
+    Линии должны идти по возрастанию уровня. Вершины и треугольники каждого уровня лежат подряд;
+    строка уровней — (уровень, первая вершина, число вершин, первый треугольник, число треугольников),
+    треугольники уровня ссылаются только на его вершины.
+    """
+    levels = np.asarray(levels, dtype=np.int64)
+    if np.any(levels[1:] < levels[:-1]):
+        raise MapTileError("линии участка не упорядочены по уровню рисования")
+    parts = [], [], [], []
+    rows = []
+    vertices = triangles = 0
+    for level in np.unique(levels):
+        mask = levels == level
+        xy, offset, cls, tri = ribbons(np.asarray(lines, dtype=object)[mask], np.asarray(classes)[mask], cut_box)
+        if len(tri) == 0:
+            continue
+        rows.append((int(level), vertices, len(xy), triangles, len(tri)))
+        for target, value in zip(parts, (xy, offset, cls, tri + vertices)):
+            target.append(value)
+        vertices += len(xy)
+        triangles += len(tri)
+    if not rows:
+        empty = ribbons([], [])
+        return (*empty, np.empty((0, 5), np.int64))
+    xy, offset, cls, tri = (np.concatenate(items) for items in parts)
+    return xy, offset, cls, tri, np.array(rows, np.int64)
 
 
 def explode_lines(geometries):
@@ -372,13 +428,13 @@ SECTION_DTYPES = {name: "f32" for name in (
     "facility.xy", "facility.cls", "transit.xy", "transit.off", "transit.cls")}
 SECTION_DTYPES.update({name: "i32" for name in (
     "area.tri", "line.tri", "building.tri", "building.outline", "pick.ring",
-    "building.row", "zone.row", "zone.tri", "zone.outline", "stop.modes", "transit.tri")})
+    "building.row", "zone.row", "zone.tri", "zone.outline", "stop.modes", "transit.tri", "line.level")})
 SECTION_DTYPES.update({"pick.attrs": "json", "label.text": "json"})
 # Число столбцов числового раздела, как MapTile.COLUMNS: 1 — одномерный массив (V), иначе (N, столбцы).
 SECTION_COLUMNS = {"area.xy": 2, "area.tri": 3, "line.xy": 2, "line.off": 2, "line.tri": 3, "building.xy": 2,
                    "building.tri": 3, "building.outline": 2, "pick.ring": 3, "pick.bbox": 4, "label.xy": 2,
                    "zone.xy": 2, "zone.tri": 3, "zone.outline": 2, "stop.xy": 2, "facility.xy": 2,
-                   "transit.xy": 2, "transit.off": 2, "transit.tri": 3}
+                   "transit.xy": 2, "transit.off": 2, "transit.tri": 3, "line.level": 5}
 
 
 def encode_tile(header: dict, sections) -> bytes:

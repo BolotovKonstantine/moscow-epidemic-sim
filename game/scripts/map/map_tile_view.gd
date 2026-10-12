@@ -2,18 +2,24 @@ class_name MapTileView
 extends Node2D
 
 # Отрисовка одного участка: семь мешей (площади, заливка и контуры зданий, обводка и заливка
-# линий, обводка и заливка линий маршрутов #16) и фон подробного участка — число узлов не зависит
-# от числа зданий и дорог. Заливка зданий — общий материал MapBuildingStyle (слои функций и
+# линий, обводка и заливка линий маршрутов #16), по паре обводка+заливка на каждый уровень мостов
+# (#23) и фон подробного участка — число узлов не зависит от числа зданий и дорог и не больше
+# MAX_MESH_COUNT. Уровень линий рисуется целиком (все обводки, затем заливки) поверх нижнего:
+# на перекрёстках дороги одного уровня сливаются, мост лежит над дорогой под ним.
+# Заливка зданий — общий материал MapBuildingStyle (слои функций и
 # населения меняют его режим), данные здания — в UV вершин. Узел стоит
 # в углу участка, вершины участка заданы в метрах относительно этого угла.
 # Массивы мешей готовит prepare() — её можно вызывать в рабочем потоке (#14); узлы и меши
 # создаёт setup() в основном потоке.
 
-const MESH_COUNT := 7
+const MESH_COUNT := 7   # узлов мешей без мостов
+const MAX_MESH_COUNT := MESH_COUNT + 2 * MapTile.MAX_LINE_LEVEL
 # Слои рисуются по z_index через все участки уровня, а не участок за участком: здание, выступающее
-# за край участка, не закрывается площадями соседнего. Шаг уровня оставляет место фону уровня (0).
-const LEVEL_Z_STEP := 10
-const MESHES := ["Areas", "Buildings", "BuildingOutlines", "Lines", "Transit"]   # линии — один меш на обводку и заливку
+# за край участка, не закрывается площадями соседнего, а мост — линиями соседа под ним. Шаг уровня
+# подробности оставляет место фону уровня (0).
+const LINE_Z := 4   # обводка линий уровня k — LINE_Z + 2k, заливка — на 1 выше
+const TRANSIT_Z := LINE_Z + 2 * (MapTile.MAX_LINE_LEVEL + 1)   # линии маршрутов — над всеми мостами
+const LEVEL_Z_STEP := TRANSIT_Z + 4
 
 var level := -1
 var tile := Vector2i.ZERO
@@ -22,13 +28,15 @@ var data_bytes := 0   # оценка памяти участка: массивы
 var building_outline: MeshInstance2D
 var pick: MapPick   # данные выбора зданий (только участки 2 км), иначе null
 var transit_nodes: Array[MeshInstance2D] = []   # обводка и заливка линий маршрутов (слой «Транспорт»)
-var _line_mesh: ArrayMesh
-var _line_aabb := AABB()
+var line_nodes: Array[MeshInstance2D] = []   # обводка и заливка линий по уровням рисования, снизу вверх
+var _line_meshes: Array[ArrayMesh] = []
+var _line_aabbs: Array[AABB] = []
 var _transit_mesh: ArrayMesh
 var _transit_aabb := AABB()
 
 
 ## Массивы мешей участка: {meshes: {имя: [primitive, arrays] или null}, pick: MapPick или null, bytes}.
+## Линии ("Lines") — список [уровень рисования, [primitive, arrays]] по возрастанию уровня.
 ## Без узлов и ресурсов Godot, поэтому безопасно в рабочем потоке. palette — цвет площади по коду класса.
 ## bytes — сумма размеров массивов вершин, индексов, цветов и UV, массивов подписей и данных выбора:
 ## оценка памяти участка в кеше (GPU-копии мешей и служебные структуры Godot в неё не входят).
@@ -39,13 +47,15 @@ static func prepare(map_tile: MapTile, palette: PackedColorArray) -> Dictionary:
 		"Areas": _area_arrays(map_tile, palette),
 		"Buildings": _building_arrays(map_tile, building_xy, false),
 		"BuildingOutlines": _building_arrays(map_tile, building_xy, true),
-		"Lines": _line_arrays(map_tile, "line"),
 		"Transit": _line_arrays(map_tile, "transit"),
 	}
 	var bytes := 0
 	for item: Variant in meshes.values():
 		if item != null:
 			bytes += _arrays_bytes(item[1])
+	meshes["Lines"] = _level_line_arrays(map_tile)
+	for item: Array in meshes.Lines:
+		bytes += _arrays_bytes(item[1][1])
 	var building_pick := MapPick.from_tile(map_tile, building_xy)
 	if building_pick != null:
 		bytes += building_pick.bytes
@@ -62,7 +72,7 @@ static func label_bytes(map_tile: MapTile) -> int:
 	return bytes
 
 
-## style: {line_casing, line_fill, transit_casing, transit_fill, building: Material}; prepared — результат prepare().
+## style: {line_casing, line_fill, bridge_casing, transit_casing, transit_fill, building: Material}; prepared — результат prepare().
 func setup(map_tile: MapTile, prepared: Dictionary, style: Dictionary) -> void:
 	name = "Tile_z%d_%d_%d" % [map_tile.level, map_tile.tile.x, map_tile.tile.y]
 	level = map_tile.level
@@ -84,15 +94,26 @@ func setup(map_tile: MapTile, prepared: Dictionary, style: Dictionary) -> void:
 	_add("Buildings", _mesh(meshes.Buildings), 2).material = style.building
 	building_outline = _add("BuildingOutlines", _mesh(meshes.BuildingOutlines), 3)
 	building_outline.self_modulate = MapTheme.BUILDING_OUTLINE
-	_line_mesh = _mesh(meshes.Lines)
-	if _line_mesh != null:
-		_line_aabb = _line_mesh.get_aabb()
-	_add("LineCasing", _line_mesh, 4).material = style.line_casing
-	_add("Lines", _line_mesh, 5).material = style.line_fill
+	# Уровень 0 — узлы LineCasing и Lines есть всегда (как прежде), мосты — LineCasing<k> и Lines<k>.
+	var levels: Array = meshes.Lines
+	if levels.is_empty() or levels[0][0] != 0:
+		levels = [[0, null]] + levels
+	for item: Array in levels:
+		var line_level: int = item[0]
+		var mesh := _mesh(item[1])
+		var suffix := "" if line_level == 0 else str(line_level)
+		var casing := _add("LineCasing" + suffix, mesh, LINE_Z + 2 * line_level)
+		casing.material = style.line_casing if line_level == 0 else style.bridge_casing
+		var fill := _add("Lines" + suffix, mesh, LINE_Z + 2 * line_level + 1)
+		fill.material = style.line_fill
+		line_nodes.append_array([casing, fill])
+		if mesh != null:
+			_line_meshes.append(mesh)
+			_line_aabbs.append(mesh.get_aabb())
 	_transit_mesh = _mesh(meshes.Transit)
 	if _transit_mesh != null:
 		_transit_aabb = _transit_mesh.get_aabb()
-	transit_nodes = [_add("TransitCasing", _transit_mesh, 6), _add("Transit", _transit_mesh, 7)]
+	transit_nodes = [_add("TransitCasing", _transit_mesh, TRANSIT_Z), _add("Transit", _transit_mesh, TRANSIT_Z + 1)]
 	transit_nodes[0].material = style.transit_casing
 	transit_nodes[1].material = style.transit_fill
 
@@ -108,8 +129,8 @@ func mesh_nodes() -> Array[MeshInstance2D]:
 
 ## Расширить границы мешей линий на ширину, которую добавляет шейдер (см. MapLineStyle.max_displacement_m).
 func set_line_margin(margin_m: float, transit_margin_m: float) -> void:
-	if _line_mesh != null:
-		_line_mesh.custom_aabb = _line_aabb.grow(margin_m)
+	for i in _line_meshes.size():
+		_line_meshes[i].custom_aabb = _line_aabbs[i].grow(margin_m)
 	if _transit_mesh != null:
 		_transit_mesh.custom_aabb = _transit_aabb.grow(transit_margin_m)
 
@@ -202,18 +223,46 @@ static func _building_arrays(map_tile: MapTile, vertices: PackedVector2Array, ou
 			MapBuildingStyle.vertex_data(map_tile))
 
 
-## Ленты линий (layer "line") или линий маршрутов ("transit") — одинакового вида.
+## Ленты линий маршрутов ("transit") — одним мешем.
 static func _line_arrays(map_tile: MapTile, layer: String) -> Variant:
 	if not map_tile.has_layer(layer):
 		return null
-	# Код класса уходит в шейдер через COLOR.r (8 бит хватает: классов меньше 16).
+	return _arrays(Mesh.PRIMITIVE_TRIANGLES, _vectors(map_tile.sections[layer + ".xy"]), map_tile.sections[layer + ".tri"],
+			_class_colors(map_tile.sections[layer + ".cls"]), _vectors(map_tile.sections[layer + ".off"]))
+
+
+## Ленты линий подложки и дорог по уровням рисования (#23): [[уровень, [primitive, arrays]]].
+## Вершины уровня лежат подряд (MapTile проверил), индексы сдвигаются к началу его вершин.
+static func _level_line_arrays(map_tile: MapTile) -> Array:
+	var result := []
+	if not map_tile.has_layer("line"):
+		return result
+	var xy := _vectors(map_tile.sections["line.xy"])
+	var offset := _vectors(map_tile.sections["line.off"])
+	var colors := _class_colors(map_tile.sections["line.cls"])
+	var tri: PackedInt32Array = map_tile.sections["line.tri"]
+	for row in map_tile.line_levels():
+		var start: int = row.vertex_start
+		var end: int = start + row.vertex_count
+		var indices := tri.slice(row.tri_start * 3, (row.tri_start + row.tri_count) * 3)
+		if start > 0:
+			for i in indices.size():
+				indices[i] -= start
+		var whole: bool = start == 0 and end == xy.size()   # один уровень — массивы без копий
+		var item: Variant = _arrays(Mesh.PRIMITIVE_TRIANGLES, xy if whole else xy.slice(start, end), indices,
+				colors if whole else colors.slice(start, end), offset if whole else offset.slice(start, end))
+		if item != null:
+			result.append([row.level, item])
+	return result
+
+
+## Код класса уходит в шейдер через COLOR.r (8 бит хватает: классов меньше 16).
+static func _class_colors(cls: PackedFloat32Array) -> PackedColorArray:
 	var codes := PackedColorArray()
 	for code in MapLineStyle.MAX_CLASSES:
 		codes.append(Color(code / 255.0, 0.0, 0.0, 1.0))
-	var cls: PackedFloat32Array = map_tile.sections[layer + ".cls"]
 	var colors := PackedColorArray()
 	colors.resize(cls.size())
 	for i in cls.size():
 		colors[i] = codes[int(cls[i])]
-	return _arrays(Mesh.PRIMITIVE_TRIANGLES, _vectors(map_tile.sections[layer + ".xy"]), map_tile.sections[layer + ".tri"], colors,
-			_vectors(map_tile.sections[layer + ".off"]))
+	return colors

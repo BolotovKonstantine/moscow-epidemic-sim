@@ -112,6 +112,8 @@ func _test_fixture(fixture: String) -> void:
 	var visible: PackedFloat32Array = map.line_style().fill.get_shader_parameter("class_visible")
 	var codes: Array = map.index.classes.line
 	check(visible[codes.find("primary")] == 0.0 and visible[codes.find("river")] == 1.0, "видимость классов в шейдере")
+	var bridge_visible: PackedFloat32Array = map.line_style().bridge_casing.get_shader_parameter("class_visible")
+	check(bridge_visible == visible, "обводка мостов (#23) скрывается вместе с дорогами")
 
 	map.set_layer("transit", true)
 	var detail := map.tile_view(Vector3i(2, 0, 0))

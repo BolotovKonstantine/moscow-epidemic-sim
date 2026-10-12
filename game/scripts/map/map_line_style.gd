@@ -4,7 +4,8 @@ extends RefCounted
 # Материалы лент линий: обводка и заливка с общим шейдером. Стиль классов берётся из MapTheme
 # по именам классов из индекса; масштаб обновляется один раз на кадр для всех участков.
 # Тот же стиль служит линиям маршрутов (#16) с таблицей MapTheme.TRANSIT; слои карты скрывают
-# классы без перезагрузки участков (set_classes_visible).
+# классы без перезагрузки участков (set_classes_visible). Мосты и эстакады (#23) рисуются той же
+# заливкой, а обводкой — bridge_casing: тёмной (MapTheme.BRIDGE_CASING) и не тоньше BRIDGE_CASING_PX.
 
 const SHADER := preload("res://shaders/map_line.gdshader")
 const MAX_CLASSES := 16   # размер массивов в map_line.gdshader
@@ -12,6 +13,7 @@ const MAX_OFFSET := 4.0   # предел каждой компоненты UV л
 
 var casing := ShaderMaterial.new()
 var fill := ShaderMaterial.new()
+var bridge_casing := ShaderMaterial.new()
 var _width_m := PackedFloat32Array()
 var _min_px := PackedFloat32Array()
 var _casing_px := PackedFloat32Array()
@@ -37,7 +39,7 @@ static func make(line_classes: Array, style_of: Callable = MapTheme.line_style) 
 		width_m.append(item[2])
 		min_px.append(item[3])
 		casing_px.append(item[4])
-	for material: ShaderMaterial in [style.casing, style.fill]:
+	for material: ShaderMaterial in style._materials():
 		material.shader = SHADER
 		material.set_shader_parameter("width_m", width_m)
 		material.set_shader_parameter("min_width_px", min_px)
@@ -52,7 +54,16 @@ static func make(line_classes: Array, style_of: Callable = MapTheme.line_style) 
 	style.casing.set_shader_parameter("casing", true)
 	style.casing.set_shader_parameter("class_color", casing_color)
 	style.fill.set_shader_parameter("class_color", fill_color)
+	style.bridge_casing.set_shader_parameter("casing", true)
+	style.bridge_casing.set_shader_parameter("bridge", true)
+	style.bridge_casing.set_shader_parameter("class_color", casing_color)
+	style.bridge_casing.set_shader_parameter("bridge_casing_color", MapTheme.BRIDGE_CASING)
+	style.bridge_casing.set_shader_parameter("bridge_casing_px", MapTheme.BRIDGE_CASING_PX)
 	return style
+
+
+func _materials() -> Array[ShaderMaterial]:
+	return [casing, fill, bridge_casing]
 
 
 ## Показать или скрыть классы по именам (неизвестные имена пропускаются).
@@ -70,13 +81,13 @@ func is_class_visible(name: String) -> bool:
 
 
 func _apply_visible() -> void:
-	casing.set_shader_parameter("class_visible", _visible)
-	fill.set_shader_parameter("class_visible", _visible)
+	for material in _materials():
+		material.set_shader_parameter("class_visible", _visible)
 
 
 func set_meters_per_pixel(mpp: float) -> void:
-	casing.set_shader_parameter("meters_per_pixel", mpp)
-	fill.set_shader_parameter("meters_per_pixel", mpp)
+	for material in _materials():
+		material.set_shader_parameter("meters_per_pixel", mpp)
 
 
 ## Насколько шейдер может вынести вершину ленты от осевой линии при масштабе mpp, м.
@@ -84,5 +95,5 @@ func set_meters_per_pixel(mpp: float) -> void:
 func max_displacement_m(mpp: float) -> float:
 	var half := 0.0
 	for code in MAX_CLASSES:
-		half = maxf(half, 0.5 * maxf(_width_m[code], _min_px[code] * mpp) + _casing_px[code] * mpp)
+		half = maxf(half, 0.5 * maxf(_width_m[code], _min_px[code] * mpp) + maxf(_casing_px[code], MapTheme.BRIDGE_CASING_PX) * mpp)
 	return half * MAX_OFFSET * sqrt(2.0)   # обе компоненты до MAX_OFFSET — длина смещения до MAX_OFFSET·√2

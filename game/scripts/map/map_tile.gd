@@ -22,6 +22,7 @@ const LABEL_TOLERANCE_M := 1.0   # допуск координат участк�
 const MAX_CLASSES_PER_LAYER := 64
 const MAX_CLASS_NAME_CHARS := 64
 const MAX_LEVEL := 2   # уровни 0–2 формата 1: обзор, участки 8 и 2 км
+const MAX_LINE_LEVEL := 5   # уровни рисования линий (#23): 0 — земля, 1–5 — мосты (как maptiles.MAX_LINE_LEVEL)
 const PREAMBLE := 16   # магия, u32 версия, u32 длина заголовка
 const MAX_HEADER_BYTES := 1 << 20   # как maptiles.MAX_HEADER_BYTES экспорта
 const MAX_TILE_BYTES := 256 << 20      # предел файла участка (как maptiles.MAX_TILE_BYTES); участки центра Москвы — до ~3,5 МБ
@@ -31,6 +32,7 @@ const MAX_SECTION_BYTES := 256 << 20   # предел раздела после 
 const COLUMNS := {
 	"area.xy": 2, "area.cls": 1, "area.tri": 3,
 	"line.xy": 2, "line.off": 2, "line.cls": 1, "line.tri": 3,
+	"line.level": 5,   # уровни рисования линий (#23); в участках прежних пакетов его нет — все линии на земле
 	"building.xy": 2, "building.cls": 1, "building.tri": 3, "building.outline": 2,
 	"pick.ring": 3, "pick.bbox": 4,
 	"label.xy": 2, "label.angle": 1, "label.span": 1, "label.cls": 1, "label.weight": 1,
@@ -45,7 +47,7 @@ const COLUMNS := {
 # #15) необязательна: в участках прежних пакетов её нет, карточка показывает учреждения как unknown.
 const PICK_COLUMNS := ["id", "name", "function", "function_source", "levels", "levels_source", "footprint_m2",
 	"residents", "zone_id", "territory"]
-const INT_SECTIONS := ["area.tri", "line.tri", "building.tri", "building.outline", "pick.ring",
+const INT_SECTIONS := ["area.tri", "line.tri", "line.level", "building.tri", "building.outline", "pick.ring",
 	"building.row", "transit.tri", "zone.row", "zone.tri", "zone.outline", "stop.modes"]
 const JSON_SECTIONS := ["pick.attrs", "label.text"]
 const PER_VERTEX := ["area.cls", "line.off", "line.cls", "building.cls",
@@ -313,6 +315,9 @@ func _check_layers() -> String:
 		for name: String in ["area.xy", "line.xy", "transit.xy"]:
 			if sections.has(name) and not _within_range(sections[name], -LABEL_TOLERANCE_M, tile_size_m + LABEL_TOLERANCE_M):
 				return "%s: вершины вне квадрата участка %.0f м" % [name, tile_size_m]
+	var level_problem := _check_line_levels()
+	if not level_problem.is_empty():
+		return level_problem
 	for layer: String in ["line", "transit"]:
 		if has_layer(layer) and not _within(sections[layer + ".off"], MapLineStyle.MAX_OFFSET):
 			return "%s.off: смещение ленты больше %.0f полуширин — шейдер вынес бы её за границы отсечения" % [
@@ -321,6 +326,57 @@ func _check_layers() -> String:
 		return "в обзоре региона не должно быть зданий"
 	var problem := _check_data_layers()
 	return problem if not problem.is_empty() else _check_pick()
+
+
+## Уровни рисования линий (#23): [{level, vertex_start, vertex_count, tri_start, tri_count}] по возрастанию
+## уровня; вершины и треугольники уровня лежат подряд. Без раздела line.level (прежние пакеты) — один
+## уровень 0 со всеми линиями; без линий — пустой список.
+func line_levels() -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	if not has_layer("line"):
+		return result
+	if not sections.has("line.level"):
+		var triangles := (sections["line.tri"] as PackedInt32Array).size() / 3
+		if triangles > 0:
+			result.append({"level": 0, "vertex_start": 0, "vertex_count": vertex_count("line"), "tri_start": 0, "tri_count": triangles})
+		return result
+	var rows: PackedInt32Array = sections["line.level"]
+	for i in range(0, rows.size(), 5):
+		result.append({"level": rows[i], "vertex_start": rows[i + 1], "vertex_count": rows[i + 2],
+			"tri_start": rows[i + 3], "tri_count": rows[i + 4]})
+	return result
+
+
+## line.level: уровни 0..MAX_LINE_LEVEL по возрастанию без повторов, диапазоны вершин и треугольников
+## идут подряд и покрывают слой целиком, треугольники уровня ссылаются только на его вершины.
+func _check_line_levels() -> String:
+	if not sections.has("line.level"):
+		return ""
+	if not has_layer("line"):
+		return "line.level без линий"
+	var vertices := vertex_count("line")
+	var tri: PackedInt32Array = sections["line.tri"]
+	var next_vertex := 0
+	var next_tri := 0
+	var previous := -1
+	for row in line_levels():
+		if row.level <= previous or row.level > MAX_LINE_LEVEL:
+			return "line.level: уровень %d вне 0..%d или не по возрастанию" % [row.level, MAX_LINE_LEVEL]
+		if row.vertex_start != next_vertex or row.tri_start != next_tri or row.vertex_count <= 0 or row.tri_count <= 0:
+			return "line.level: диапазоны уровня %d не идут подряд за предыдущим или пусты" % row.level
+		previous = row.level
+		next_vertex += row.vertex_count
+		next_tri += row.tri_count
+		if next_vertex > vertices or next_tri * 3 > tri.size():
+			return "line.level: уровень %d выходит за %d вершин и %d треугольников" % [row.level, vertices, tri.size() / 3]
+		var own := tri.slice(row.tri_start * 3, next_tri * 3)
+		own.sort()
+		if own[0] < row.vertex_start or own[-1] >= next_vertex:
+			return "line.level: треугольник уровня %d ссылается на вершину другого уровня" % row.level
+	if next_vertex != vertices or next_tri * 3 != tri.size():
+		return "line.level: уровни покрывают %d из %d вершин и %d из %d треугольников" % [
+			next_vertex, vertices, next_tri, tri.size() / 3]
+	return ""
 
 
 ## Слои данных (#16): полнота, длины по строкам, коды классов, ссылки строк и вершин, значения.

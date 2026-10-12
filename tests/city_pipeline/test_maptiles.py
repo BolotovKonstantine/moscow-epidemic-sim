@@ -17,8 +17,8 @@ from tools.city_pipeline import maptiles as mt
 from tools.city_pipeline.build import build_package, make_boundary
 from tools.city_pipeline.geo import Projector
 from tools.city_pipeline.manifest import ManifestError, _check_map_tile, validate_map_index
-from tools.city_pipeline.mapbuild import (Layer, area_class, export_test_tiles, line_class, read_overview_data, read_package,
-                                          read_route_ways, read_subway_scheme)
+from tools.city_pipeline.mapbuild import (Layer, area_class, export_test_tiles, line_class, line_level, read_overview_data,
+                                          read_package, read_route_ways, read_subway_scheme, tile_sections)
 
 
 def triangle_area(xy, triangles):
@@ -67,6 +67,60 @@ class GeometryTests(unittest.TestCase):
         xy, _, cls, tri = mt.ribbons(np.array([clipped], dtype=object), np.array([2]))
         self.assertEqual(len(xy), 8)       # две части по две точки
         self.assertEqual(len(tri), 4)
+
+
+class LineLevelTests(unittest.TestCase):
+    """Уровни рисования линий (#23): мосты и эстакады — над дорогами под ними."""
+
+    def test_level_from_bridge_and_layer(self):
+        cases = [({}, 0), ({"layer": "3"}, 0), ({"bridge": "no", "layer": "2"}, 0), ({"bridge": "yes"}, 1),
+                 ({"bridge": "viaduct", "layer": "2"}, 2), ({"bridge": "yes", "layer": "-1"}, 1),
+                 ({"bridge": "yes", "layer": "9"}, mt.MAX_LINE_LEVEL), ({"bridge": "yes", "layer": "1;2"}, 1)]
+        for tags, level in cases:
+            with self.subTest(tags=tags):
+                self.assertEqual(line_level(tags), level)
+        self.assertEqual(mt.line_level(True, 3), 3)     # дороги пакета: bridge — bool, layer — int
+        self.assertEqual(mt.line_level(False, 3), 0)
+
+    def test_levels_are_contiguous_ranges(self):
+        lines = np.array([shapely.LineString([(0, 0), (10, 0)]), shapely.LineString([(0, 5), (10, 5)]),
+                          shapely.LineString([(5, -5), (5, 10)])], dtype=object)
+        xy, offset, cls, tri, levels = mt.level_ribbons(lines, np.array([4, 9, 2]), np.array([0, 0, 2]))
+        self.assertEqual(levels.tolist(), [[0, 0, 8, 0, 4], [2, 8, 4, 4, 2]])
+        self.assertEqual(len(xy), 12)
+        self.assertTrue((tri[:4] < 8).all() and (tri[4:] >= 8).all())
+        self.assertEqual(cls[8:].tolist(), [2] * 4)
+        with self.assertRaises(mt.MapTileError):
+            mt.level_ribbons(lines, np.array([4, 9, 2]), np.array([0, 2, 0]))
+        self.assertEqual(mt.level_ribbons(lines[:0], np.empty(0), np.empty(0))[4].shape, (0, 5))
+
+    def test_bridge_is_drawn_after_ground_lines_of_any_class(self):
+        plane = mt.MapPlane(0.0, 2000.0)
+        box, origin = plane.tile_box(2, 0, 0)
+        service = mt.LINE_CLASSES.index("service")
+        motorway = mt.LINE_CLASSES.index("motorway")
+        lines = Layer(["a", "b", "c"], np.array([motorway, service, service]),
+                      np.array([shapely.LineString([(0, 1000), (2000, 1000)]), shapely.LineString([(1000, 500), (1000, 1500)]),
+                                shapely.LineString([(500, 500), (500, 1500)])], dtype=object), np.array([0, 1, 0]))
+        sections, _, _ = tile_sections(plane, origin, box, Layer(), lines)
+        named = {name: value for name, _, value in sections}
+        self.assertEqual(named["line.level"][:, 0].tolist(), [0, 1])
+        first, count = named["line.level"][1, 1:3]
+        # Внутри уровня — по классу: на земле проезд ниже магистрали, мост-проезд — над ней.
+        self.assertEqual(named["line.cls"][:first].tolist(), [service] * 4 + [motorway] * 4)
+        self.assertEqual(named["line.cls"][first:first + count].tolist(), [service] * 4)
+
+    def test_cut_ends_have_no_cap(self):
+        plane = mt.MapPlane(0.0, 2000.0)
+        box, origin = plane.tile_box(2, 0, 0)
+        road = Layer(["a"], np.array([mt.LINE_CLASSES.index("residential")]),
+                     np.array([shapely.LineString([(500, 1000), (3000, 1000)])], dtype=object))
+        sections, _, _ = tile_sections(plane, origin, box, Layer(), road)
+        named = {name: value for name, _, value in sections}
+        xy, offset = named["line.xy"], named["line.off"]
+        self.assertEqual(xy[-1].tolist(), [2000.0, 1000.0])
+        np.testing.assert_allclose(offset[-2:, 0], [0, 0])     # обрезанный конец: у соседа линия продолжается
+        np.testing.assert_allclose(offset[:2, 0], [-1, -1])    # настоящий конец — с выступом
 
 
 class LabelGeometryTests(unittest.TestCase):
@@ -401,6 +455,9 @@ class ExportTests(unittest.TestCase):
         base.square(lon + 0.004, lat, 0.0015, {"leisure": "park"})
         line = [base.node(lon - 0.01, lat - 0.003), base.node(lon + 0.01, lat - 0.003)]
         rail = base.way(line, {"railway": "rail"})
+        # Железнодорожный мост над улицей «Первая» (#23).
+        base.way([base.node(lon - 0.003, lat - 0.002), base.node(lon - 0.003, lat + 0.002)],
+                 {"railway": "rail", "bridge": "yes", "layer": "1"})
         # Названия для подписей: город, район Москвы, река.
         base.node(lon + 0.003, lat + 0.003, {"place": "city", "name": "Тестград", "population": "1000"})
         outline = base.square(lon - 0.03, lat + 0.03, 0.003, {"place": "village", "name": "Контурное"})   # место-площадь
@@ -493,6 +550,19 @@ class ExportTests(unittest.TestCase):
         self.assertTrue(set(attrs["function_source"]) <= {"tag", "tag+poi", "poi", "site", "unknown"})
         self.assertTrue(set(attrs["levels_source"]) <= {"tag", "height", "default"})
         self.assertTrue(all(isinstance(value, int) and value >= 0 for value in attrs["residents"]))
+
+    def test_bridges_get_levels(self):
+        # Железная дорога-мост подложки (уровень 1) у центра и дорога-мост пакета (tertiary, layer 2) севернее.
+        _, (_, sections) = self.tile(1)
+        rows = sections["line.level"]
+        self.assertEqual(rows[:, 0].tolist(), [0, 1, 2])
+        self.assertEqual(rows[:, 1].tolist(), np.concatenate([[0], np.cumsum(rows[:-1, 2])]).tolist())
+        self.assertEqual(rows[:, 3].tolist(), np.concatenate([[0], np.cumsum(rows[:-1, 4])]).tolist())
+        for level, kind in ((1, "rail"), (2, "tertiary")):
+            start, count = rows[level, 1:3]
+            self.assertEqual({mt.LINE_CLASSES[int(code)] for code in sections["line.cls"][start:start + count]}, {kind})
+        _, (_, sections) = self.tile(0)
+        self.assertEqual(sections["line.level"][:, 0].tolist(), [0, 1])   # в обзоре нет tertiary
 
     def test_basemap_layers_present(self):
         _, (_, sections) = self.tile(2)

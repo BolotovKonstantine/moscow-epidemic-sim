@@ -4,6 +4,7 @@ shader_type canvas_item;
 // линии, UV — смещение в полуширинах (стык и квадратные концы), код класса — в COLOR.r * 255.
 // Ширина на экране — max(ширина в метрах, минимум в пикселях) плюс обводка для прохода casing.
 // Стиль классов задаёт MapTheme через массивы ниже. Тот же шейдер рисует линии маршрутов (#16).
+// Обводка мостов и эстакад (#23, bridge) — общего тёмного цвета и не тоньше bridge_casing_px.
 
 const int MAX_CLASSES = 16;
 
@@ -14,14 +15,18 @@ uniform float casing_px[MAX_CLASSES];
 uniform float class_visible[MAX_CLASSES];   // 0 — класс скрыт слоем (#16): лента схлопывается в линию нулевой ширины
 uniform float meters_per_pixel = 1.0;
 uniform bool casing = false;
+uniform bool bridge = false;
+uniform vec4 bridge_casing_color : source_color = vec4(0.0, 0.0, 0.0, 1.0);
+uniform float bridge_casing_px = 0.0;
 
 void vertex() {
 	int cls = clamp(int(round(COLOR.r * 255.0)), 0, MAX_CLASSES - 1);
 	float width = max(width_m[cls], min_width_px[cls] * meters_per_pixel);
+	float casing_width = bridge ? max(casing_px[cls], bridge_casing_px) : casing_px[cls];
 	if (casing) {
-		width += 2.0 * casing_px[cls] * meters_per_pixel;
+		width += 2.0 * casing_width * meters_per_pixel;
 	}
 	VERTEX += UV * (0.5 * width);
-	COLOR = class_color[cls];
+	COLOR = casing && bridge ? bridge_casing_color : class_color[cls];
 	COLOR.a *= class_visible[cls];
 }
