@@ -26,6 +26,16 @@
       "control",
       "other"
     ],
+    "facility": [
+      "hospital",
+      "clinic",
+      "doctors",
+      "university",
+      "college",
+      "school",
+      "kindergarten",
+      "police"
+    ],
     "label": [
       "capital",
       "okrug",
@@ -60,6 +70,28 @@
       "rail",
       "boundary_moscow",
       "boundary_region"
+    ],
+    "stop": [
+      "platform",
+      "stop_position",
+      "station"
+    ],
+    "stop_mode": [
+      "bus",
+      "share_taxi",
+      "trolleybus",
+      "tram",
+      "light_rail",
+      "monorail",
+      "train",
+      "subway"
+    ],
+    "transit": [
+      "bus",
+      "trolleybus",
+      "tram",
+      "train",
+      "subway"
     ]
   },
   "format": "mesim-map-index",
@@ -99,18 +131,22 @@
         0.0,
         0.0,
         4000.0,
-        3999.0
+        4000.0
       ],
       "counts": {
         "areas": 3,
+        "facilities": 3,
         "labels": 4,
         "lines": 5,
-        "triangles_dropped": 0
+        "stops": 4,
+        "transit": 2,
+        "triangles_dropped": 0,
+        "zones": 4
       },
       "level": 0,
       "path": "z0/0_0.mtile",
-      "sha256": "84df1b9ddb15e7b04b61b518caaf4d950c91badd73904842e48489a3eee415a5",
-      "size_bytes": 2968,
+      "sha256": "3fa5b07696d00f7e7a0df158726a847a34ef8b0e634b73381d4c4f7924a7b917",
+      "size_bytes": 5444,
       "tile": [
         0,
         0
@@ -128,12 +164,13 @@
         "buildings": 3,
         "labels": 3,
         "lines": 4,
+        "transit": 3,
         "triangles_dropped": 0
       },
       "level": 2,
       "path": "z2/0_0.mtile",
-      "sha256": "13359d148584feb61d241c5650e4b6bcd80c2ec66b055876c1ae93bf638d2549",
-      "size_bytes": 4244,
+      "sha256": "d2e8ae979d405cf966f440c8c46b5be56043a05e545ba5e4d9729cf16eb2f399",
+      "size_bytes": 5524,
       "tile": [
         0,
         0

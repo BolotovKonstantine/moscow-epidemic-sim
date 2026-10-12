@@ -34,21 +34,38 @@ const COLUMNS := {
 	"building.xy": 2, "building.cls": 1, "building.tri": 3, "building.outline": 2,
 	"pick.ring": 3, "pick.bbox": 4,
 	"label.xy": 2, "label.angle": 1, "label.span": 1, "label.cls": 1, "label.weight": 1,
+	# Слои по данным пакета (#16, с пакета 0.4.0; в прежних участках их нет).
+	"building.row": 1, "building.res": 1, "building.est": 1,
+	"transit.xy": 2, "transit.off": 2, "transit.cls": 1, "transit.tri": 3,
+	"zone.xy": 2, "zone.row": 1, "zone.tri": 3, "zone.outline": 2, "zone.res": 1, "zone.area": 1,
+	"stop.xy": 2, "stop.cls": 1, "stop.modes": 1,
+	"facility.xy": 2, "facility.cls": 1,
 }
 # Колонки карточки здания в pick.attrs (docs/city-package.md#участки-карты). facilities (с пакета 0.3.0,
 # #15) необязательна: в участках прежних пакетов её нет, карточка показывает учреждения как unknown.
 const PICK_COLUMNS := ["id", "name", "function", "function_source", "levels", "levels_source", "footprint_m2",
 	"residents", "zone_id", "territory"]
-const INT_SECTIONS := ["area.tri", "line.tri", "building.tri", "building.outline", "pick.ring"]
+const INT_SECTIONS := ["area.tri", "line.tri", "building.tri", "building.outline", "pick.ring",
+	"building.row", "transit.tri", "zone.row", "zone.tri", "zone.outline", "stop.modes"]
 const JSON_SECTIONS := ["pick.attrs", "label.text"]
 const PER_VERTEX := ["area.cls", "line.off", "line.cls", "building.cls",
-	"label.angle", "label.span", "label.cls", "label.weight"]
+	"label.angle", "label.span", "label.cls", "label.weight", "transit.off", "transit.cls"]
 const LAYERS := {
 	"area": ["area.xy", "area.cls", "area.tri"],
 	"line": ["line.xy", "line.off", "line.cls", "line.tri"],
 	"building": ["building.xy", "building.cls", "building.tri", "building.outline"],
 	"label": ["label.xy", "label.angle", "label.span", "label.cls", "label.weight", "label.text"],
+	"transit": ["transit.xy", "transit.off", "transit.cls", "transit.tri"],   # линии маршрутов — ленты, как line
 }
+# Слои данных (#16) проверяет _check_data_layers: строки и маски в них — не индексы вершин.
+# Зоны 1 км, остановки и учреждения есть только в обзоре: он загружен всегда, при любом масштабе.
+const DATA_LAYERS := {
+	"zone": ["zone.xy", "zone.row", "zone.tri", "zone.outline", "zone.res", "zone.area"],
+	"stop": ["stop.xy", "stop.cls", "stop.modes"],
+	"facility": ["facility.xy", "facility.cls"],
+	"building_data": ["building.row", "building.res", "building.est"],   # по строке здания участка
+}
+const OVERVIEW_LAYERS := ["zone", "stop", "facility"]
 
 var error := ""
 var path := ""
@@ -78,11 +95,12 @@ static func open(file_path: String, expected: Dictionary = {}) -> MapTile:
 
 
 func has_layer(layer: String) -> bool:
-	return sections.has(LAYERS[layer][0])
+	return sections.has((LAYERS[layer] if LAYERS.has(layer) else DATA_LAYERS[layer])[0])
 
 
+## Число вершин (точек) слоя по его разделу координат; у building_data координат нет.
 func vertex_count(layer: String) -> int:
-	return (sections[LAYERS[layer][0]] as PackedFloat32Array).size() / 2
+	return (sections[(LAYERS[layer] if LAYERS.has(layer) else DATA_LAYERS[layer])[0]] as PackedFloat32Array).size() / 2
 
 
 func _read(file_path: String, expected: Dictionary) -> String:
@@ -292,14 +310,89 @@ func _check_layers() -> String:
 			return "раздел %s: код класса вне списка из %d классов" % [cls_name, class_list.size()]
 	# Площади и линии подробного участка обрезаны по его квадрату; выступать за край могут только здания.
 	if level > 0:
-		for name: String in ["area.xy", "line.xy"]:
+		for name: String in ["area.xy", "line.xy", "transit.xy"]:
 			if sections.has(name) and not _within_range(sections[name], -LABEL_TOLERANCE_M, tile_size_m + LABEL_TOLERANCE_M):
 				return "%s: вершины вне квадрата участка %.0f м" % [name, tile_size_m]
-	if has_layer("line") and not _within(sections["line.off"], MapLineStyle.MAX_OFFSET):
-		return "line.off: смещение ленты больше %.0f полуширин — шейдер вынес бы её за границы отсечения" % MapLineStyle.MAX_OFFSET
+	for layer: String in ["line", "transit"]:
+		if has_layer(layer) and not _within(sections[layer + ".off"], MapLineStyle.MAX_OFFSET):
+			return "%s.off: смещение ленты больше %.0f полуширин — шейдер вынес бы её за границы отсечения" % [
+				layer, MapLineStyle.MAX_OFFSET]
 	if level == 0 and has_layer("building"):
 		return "в обзоре региона не должно быть зданий"
-	return _check_pick()
+	var problem := _check_data_layers()
+	return problem if not problem.is_empty() else _check_pick()
+
+
+## Слои данных (#16): полнота, длины по строкам, коды классов, ссылки строк и вершин, значения.
+func _check_data_layers() -> String:
+	for layer: String in DATA_LAYERS:
+		var names: Array = DATA_LAYERS[layer]
+		var present := names.filter(func(n): return sections.has(n))
+		if present.is_empty():
+			continue
+		if present.size() != names.size():
+			return "слой %s неполон: есть только %s" % [layer, present]
+		if layer in OVERVIEW_LAYERS and level != 0:
+			return "слой %s бывает только в обзоре региона" % layer
+	if has_layer("zone"):
+		var zones := (sections["zone.res"] as PackedFloat32Array).size()
+		var vertices := vertex_count("zone")
+		if (sections["zone.area"] as PackedFloat32Array).size() != zones or (sections["zone.row"] as PackedInt32Array).size() != vertices:
+			return "зоны: zone.area — по значению на зону (%d), zone.row — на вершину (%d)" % [zones, vertices]
+		if not _indices_within(sections["zone.row"], zones) or not _indices_within(sections["zone.tri"], vertices) \
+				or not _indices_within(sections["zone.outline"], vertices):
+			return "зоны: строка зоны или вершина вне данных"
+		if not _within_range(sections["zone.res"], 0.0, INF) or not _within_range(sections["zone.area"], 0.0, INF):
+			return "зоны: жители и площадь не могут быть отрицательными"
+	for layer: String in ["stop", "facility"]:
+		if has_layer(layer) and ((sections[layer + ".cls"] as PackedFloat32Array).size() != vertex_count(layer)
+				or not _codes_within(sections[layer + ".cls"], classes.get(layer, []).size())):
+			return "%s.cls: по коду класса на точку из %d классов" % [layer, classes.get(layer, []).size()]
+	if has_layer("stop"):
+		var bits: int = classes.get("stop_mode", []).size()
+		if (sections["stop.modes"] as PackedInt32Array).size() != vertex_count("stop") or bits > 30 \
+				or not _indices_within(sections["stop.modes"], 1 << bits):
+			return "stop.modes: по маске на остановку из %d видов транспорта" % bits
+	# Точки и вершины зон лежат в охвате обзора: иначе их не покажет ни камера, ни отсечение.
+	if level == 0:
+		var area := Rect2(bbox.position - origin, bbox.size).grow(LABEL_TOLERANCE_M)
+		for name: String in ["zone.xy", "stop.xy", "facility.xy"]:
+			if sections.has(name) and not _points_within(sections[name], area):
+				return "%s: точки вне охвата обзора %s" % [name, area]
+	if has_layer("building_data"):
+		if not has_layer("building"):
+			return "данные зданий без зданий"
+		var buildings := (sections["building.res"] as PackedFloat32Array).size()
+		if (sections["building.est"] as PackedFloat32Array).size() != buildings \
+				or (sections["building.row"] as PackedInt32Array).size() != vertex_count("building") \
+				or not _indices_within(sections["building.row"], buildings):
+			return "данные зданий: building.res и building.est — по значению на здание (%d), building.row — на вершину" % buildings
+		if sections.has("pick.bbox") and (sections["pick.bbox"] as PackedFloat32Array).size() / 4 != buildings:
+			return "данные зданий: %d строк, а в данных выбора %d" % [buildings, (sections["pick.bbox"] as PackedFloat32Array).size() / 4]
+		if not _within_range(sections["building.res"], 0.0, INF) or not _codes_within(sections["building.est"], 2):
+			return "данные зданий: жители не отрицательны, building.est — 0 или 1"
+	return ""
+
+
+## Охват слоёв данных (#16) в плоскости карты: линии маршрутов, зоны, остановки и учреждения
+## (координаты в заголовке учитывают и их); null — таких слоёв нет. Здания — в мешах MapTileView.
+func data_bounds() -> Variant:
+	var low := Vector2(INF, INF)
+	var high := Vector2(-INF, -INF)
+	for name: String in ["transit.xy", "zone.xy", "stop.xy", "facility.xy"]:
+		var xy: PackedFloat32Array = sections.get(name, PackedFloat32Array())
+		for i in range(0, xy.size(), 2):
+			low = Vector2(minf(low.x, xy[i]), minf(low.y, xy[i + 1]))
+			high = Vector2(maxf(high.x, xy[i]), maxf(high.y, xy[i + 1]))
+	return null if low.x > high.x else Rect2(origin + low, high - low)
+
+
+## Точки (x, y подряд) внутри прямоугольника.
+static func _points_within(xy: PackedFloat32Array, area: Rect2) -> bool:
+	for i in range(0, xy.size(), 2):
+		if xy[i] < area.position.x or xy[i] > area.end.x or xy[i + 1] < area.position.y or xy[i + 1] > area.end.y:
+			return false
+	return true
 
 
 ## Прямоугольники совпадают с абсолютным допуском (is_equal_approx растит допуск с координатами).
