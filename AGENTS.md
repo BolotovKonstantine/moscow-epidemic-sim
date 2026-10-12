@@ -19,6 +19,7 @@ Moscow Epidemic Sim — хобби-игра на Godot: вымышленная �
 | [docs/roadmap.md](docs/roadmap.md) | Этапы 0–8, критерии готовности, первые задачи, обязательные проверки |
 | [docs/architecture.md](docs/architecture.md) | Стек, структура каталогов, границы модулей, память, сохранения |
 | [docs/model.md](docs/model.md) | Состояния болезни, формулы риска, поездки, медицина, меры, шаг времени |
+| [docs/sim-core.md](docs/sim-core.md) | Расчётные таблицы `sim/`, ID, единицы, время и очередь, RNG, API ядра, снимки, бюджет памяти |
 | [docs/agent-profile.md](docs/agent-profile.md) | 10 основных атрибутов жителя и их механизмы |
 | [docs/data.md](docs/data.md) | Источники, происхождение данных, граница региона, сборка городского пакета, лицензии |
 | [docs/city-package.md](docs/city-package.md) | Формат паспорта, версии, проверка источников и файлов пакета |
