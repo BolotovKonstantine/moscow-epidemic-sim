@@ -351,17 +351,59 @@ func _read_route(path: String) -> String:
 	for key in ["window", "warmup_frames", "frames", "scenarios"]:
 		if not doc.has(key):
 			return "Маршрут замера %s: нет поля %s" % [path, key]
-	if doc.scenarios.is_empty():
+	for key in ["warmup_frames", "frames"]:
+		if not _is_number(doc[key]) or int(doc[key]) <= 0:
+			return "Маршрут замера %s: %s — целое число больше нуля" % [path, key]
+	if not doc.scenarios is Array or doc.scenarios.is_empty():
 		return "Маршрут замера %s: нет сценариев" % path
-	for scenario: Dictionary in doc.scenarios:
-		for name: String in scenario.get("layers", {}):
-			if not _map.layers.has(name) or not _map.layer_available(name):
-				return "Маршрут замера %s, сценарий %s: слой %s недоступен" % [path, scenario.get("name"), name]
-		var route: Array = scenario.get("route", [])
-		if not scenario.has("view") and route.size() < 2:
-			return "Маршрут замера %s, сценарий %s: нужен view или route из двух точек" % [path, scenario.get("name")]
+	for scenario: Variant in doc.scenarios:
+		var problem := _scenario_problem(scenario)
+		if not problem.is_empty():
+			var name: Variant = scenario.get("name") if scenario is Dictionary else null
+			return "Маршрут замера %s, сценарий %s: %s" % [path, name, problem]
 	_route = doc
 	return ""
+
+
+## Ошибка в описании сценария ("" — всё верно): ошибка маршрута во время замера оставила бы игру
+## открытой, поэтому всё проверяется до старта.
+func _scenario_problem(scenario: Variant) -> String:
+	if not scenario is Dictionary or not scenario.get("name") is String:
+		return "нужен объект с именем name"
+	var layers: Variant = scenario.get("layers", {})
+	if not layers is Dictionary:
+		return "layers — объект {слой: вкл.}"
+	for name: Variant in layers:
+		if not _map.layers.has(name) or not _map.layer_available(name):
+			return "слой %s недоступен" % name
+	if scenario.has("view") == scenario.has("route"):
+		return "нужен ровно один из view и route"
+	if scenario.has("view"):
+		return "" if _view_valid(scenario) else "view — \"fit\" или {point: [E, N], mpp > 0}"
+	var route: Variant = scenario.route
+	if not route is Array or route.size() < 2:
+		return "route — список из двух точек и больше"
+	var last := -INF
+	for item: Variant in route:
+		if not item is Dictionary or not _is_number(item.get("t")) or float(item.t) < last or not _view_valid(item):
+			return "точка route — {t не меньше предыдущей, view: \"fit\" или point: [E, N] и mpp > 0}"
+		last = float(item.t)
+	return "" if last > 0.0 else "у последней точки route t больше нуля"
+
+
+## Вид сценария или точки маршрута: view = "fit", view = {point, mpp} или point и mpp в самой точке.
+static func _view_valid(item: Dictionary) -> bool:
+	var view: Variant = item.get("view")
+	if view is String:
+		return view == "fit"
+	var spec: Dictionary = view if view is Dictionary else item
+	var point: Variant = spec.get("point")
+	return point is Array and point.size() == 2 and _is_number(point[0]) and _is_number(point[1]) \
+		and _is_number(spec.get("mpp")) and float(spec.mpp) > 0.0
+
+
+static func _is_number(value: Variant) -> bool:
+	return value is float or value is int
 
 
 ## [ширина, высота] (числа или строки) → Vector2i; "maximized" — как есть; иначе null.

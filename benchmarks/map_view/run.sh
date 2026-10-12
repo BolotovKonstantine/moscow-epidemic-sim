@@ -37,7 +37,9 @@ if [ -z "${NO_EXPORT:-}" ]; then
 	rm -f "$STAMP"
 	"$GODOT" --headless --path "$ROOT/game" --export-release "macOS" "$APP" >/dev/null
 	DIRTY=false
-	[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ] && DIRTY=true
+	# Входы экспорта — native/ (с подмодулем) и game/, включая неотслеживаемые файлы: их подхватывают
+	# Glob в SConstruct и export_filter="all_resources"; игнорируемые (сборки, .godot/) не считаются.
+	[ -n "$(git -C "$ROOT" status --porcelain -- native game)" ] && DIRTY=true
 	printf '{"commit": "%s", "dirty": %s}\n' "$(git -C "$ROOT" rev-parse HEAD)" "$DIRTY" >"$STAMP"
 fi
 if [ ! -x "$BIN" ]; then
