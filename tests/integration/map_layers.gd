@@ -124,7 +124,8 @@ func _test_fixture(fixture: String) -> void:
 	check(panel.legend_text("functions").contains("оценка"), "легенда функций объясняет оценённые функции")
 	check(panel.legend_text("zones").contains("Модельная"), "зоны — модельная разбивка")
 	check(not panel.legend_text("roads").contains("Оценка") and panel.legend_text("roads").contains("OSM"), "дороги — данные OSM")
-	check(panel.legend_text("transit").contains("схема"), "метро — схема")
+	check(panel.legend_text("transit").contains("схема") and panel.legend_text("transit").contains("Оценка"), "метро — схема, остановки — оценка пайплайна")
+	check(panel.legend_text("facilities").contains("Оценка"), "точки учреждений — оценка пайплайна")
 	var box: CheckBox = panel._boxes["functions"]
 	box.button_pressed = true
 	check(map.layers.functions and not map.layers.population and not panel._boxes["population"].button_pressed,

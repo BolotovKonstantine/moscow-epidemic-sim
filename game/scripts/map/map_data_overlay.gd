@@ -9,7 +9,7 @@ const POINT_SHADER := preload("res://shaders/map_point.gdshader")
 
 var zone_fill: MeshInstance2D
 var zone_outline: MeshInstance2D
-var stations: MeshInstance2D   # станции и остановки метро и электричек
+var stations: MeshInstance2D   # станции и платформы метро и электричек (по виду транспорта, не по виду объекта)
 var stops: MeshInstance2D      # прочие остановки
 var facilities: MeshInstance2D
 var counts := {"zones": 0, "stations": 0, "stops": 0, "facilities": 0}
@@ -75,7 +75,6 @@ func _build_zones(tile: MapTile) -> void:
 
 func _build_stops(tile: MapTile) -> void:
 	var modes: Array = tile.classes.get("stop_mode", [])
-	var kinds: Array = tile.classes.get("stop", [])
 	var heavy := 0   # метро и электрички: показываются как станции и на дальнем масштабе
 	for name: String in ["subway", "train"]:
 		if modes.has(name):
@@ -84,9 +83,7 @@ func _build_stops(tile: MapTile) -> void:
 	for name: String in MapTheme.STOP_MODE_COLORS:
 		if modes.has(name):
 			mode_order.append([1 << modes.find(name), MapTheme.STOP_MODE_COLORS[name]])
-	var station_code := kinds.find("station")
 	var xy: PackedFloat32Array = tile.sections["stop.xy"]
-	var cls: PackedFloat32Array = tile.sections["stop.cls"]
 	var masks: PackedInt32Array = tile.sections["stop.modes"]
 	var groups := [[PackedVector2Array(), PackedColorArray()], [PackedVector2Array(), PackedColorArray()]]
 	for i in masks.size():
@@ -95,7 +92,8 @@ func _build_stops(tile: MapTile) -> void:
 			if masks[i] & item[0]:
 				color = item[1]
 				break
-		var group: Array = groups[0] if int(cls[i]) == station_code or masks[i] & heavy else groups[1]
+		# Дальний масштаб — только метро и электрички: станция автобусов (public_transport=station) — обычная остановка.
+		var group: Array = groups[0] if masks[i] & heavy else groups[1]
 		group[0].append(Vector2(xy[2 * i], xy[2 * i + 1]))
 		group[1].append(color)
 	stations = _points_node("Stations", groups[0][0], groups[0][1], MapTheme.STATION_RADIUS_PX, 3)
