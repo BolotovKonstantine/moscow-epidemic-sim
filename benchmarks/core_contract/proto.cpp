@@ -17,7 +17,6 @@
 #include <cstring>
 #include <fstream>
 #include <memory>
-#include <queue>
 #include <string>
 #include <vector>
 
@@ -140,7 +139,9 @@ std::string parse_table(const uint8_t* data, size_t bytes, Table& t) {
         const uint8_t* d = data + kHeaderFixed + i * kColumnDesc;
         Column c{fixed_ascii(d, 32), d[32], load_le<uint64_t>(d + 40), load_le<uint64_t>(d + 48), load_le<uint64_t>(d + 56)};
         if (c.name.empty() || c.dtype == 0 || c.dtype > 10) return "неизвестный тип колонки " + c.name;
-        if (c.offset % kAlign || c.offset < prev_end || c.size != c.count * kDtypeSize[c.dtype] || c.offset + c.size > bytes)
+        // Границы без переполнения u64: деление вместо умножения, вычитание вместо сложения.
+        if (c.offset % kAlign || c.offset < prev_end || c.offset > bytes || c.size > bytes - c.offset ||
+            c.size % kDtypeSize[c.dtype] || c.count != c.size / kDtypeSize[c.dtype])
             return "колонка " + c.name + " вне файла, не выровнена или перекрывается";
         for (const Column& o : t.columns) if (o.name == c.name) return "повтор колонки " + c.name;
         prev_end = c.offset + c.size;
@@ -304,21 +305,31 @@ uint32_t next_after(uint64_t key, uint32_t id, uint32_t t, uint32_t k) {
 
 QueueResult run_heap(uint32_t n, uint64_t key) {
     auto start = Clock::now();
-    std::priority_queue<uint64_t, std::vector<uint64_t>, std::greater<uint64_t>> q;
+    // Куча на векторе, чтобы видеть его ёмкость: пик памяти — по ёмкости, а не по числу элементов.
+    std::vector<uint64_t> q;
     std::vector<uint8_t> done(n, 0);
-    for (uint32_t id = 0; id < n; ++id) q.push(uint64_t(first_event(key, id)) << 32 | id);
-    uint64_t events = 0, checksum = 0, last = 0;
+    auto later = std::greater<uint64_t>();
+    for (uint32_t id = 0; id < n; ++id) {
+        q.push_back(uint64_t(first_event(key, id)) << 32 | id);
+        std::push_heap(q.begin(), q.end(), later);
+    }
+    uint64_t events = 0, checksum = 0, last = 0, peak = q.capacity() * 8;
     while (!q.empty()) {
-        uint64_t e = q.top();
-        q.pop();
+        std::pop_heap(q.begin(), q.end(), later);
+        uint64_t e = q.back();
+        q.pop_back();
         if (e < last) std::abort();  // порядок (время, ID) нарушен
         last = e;
         uint32_t id = uint32_t(e), t = uint32_t(e >> 32);
         checksum = mix64(checksum ^ e);
         ++events;
-        if (++done[id] < 4) q.push(uint64_t(next_after(key, id, t, done[id])) << 32 | id);
+        if (++done[id] < 4) {
+            q.push_back(uint64_t(next_after(key, id, t, done[id])) << 32 | id);
+            std::push_heap(q.begin(), q.end(), later);
+            peak = std::max<uint64_t>(peak, q.capacity() * 8);
+        }
     }
-    return {seconds_since(start), events, checksum, uint64_t(n) * 8 + n};
+    return {seconds_since(start), events, checksum, peak + n};
 }
 
 // Корзины по минуте на горизонт суток; корзина сортируется перед обработкой. События внутри
@@ -426,7 +437,13 @@ int main(int argc, char** argv) {
         std::memcpy(broken.data() + kHeaderFixed + 48, &huge, 8);
         Table y;
         std::string e2 = parse_table(broken.data(), broken.size(), y);
-        std::printf("  \"corrupt_rejected\": %s,\n", (!e1.empty() && !e2.empty()) ? "true" : "false");
+        // Смещение у края u64: сложение offset + size переполнилось бы и прошло проверку.
+        std::memcpy(broken.data() + kHeaderFixed + 48, &t.columns[0].offset, 8);
+        uint64_t wrap = ~uint64_t(0) - 63;
+        std::memcpy(broken.data() + kHeaderFixed + 48, &wrap, 8);
+        Table z;
+        std::string e3 = parse_table(broken.data(), broken.size(), z);
+        std::printf("  \"corrupt_rejected\": %s,\n", (!e1.empty() && !e2.empty() && !e3.empty()) ? "true" : "false");
     }
 
     // 2. Генерация населения: дом по точным числам жителей зданий, счётчиковый RNG.
@@ -441,6 +458,10 @@ int main(int argc, char** argv) {
         uint64_t total = 0;
         for (uint64_t i = 0; i < res->count; ++i) total += residents[i];
         if (population == 0) population = uint32_t(total);
+        if (population > total) {  // дома выдаются только по жителям зданий пакета
+            std::fprintf(stderr, "население %u больше жителей пакета %llu\n", population, (unsigned long long)total);
+            return 2;
+        }
 
         uint64_t before = phys_footprint();
         auto t0 = Clock::now();

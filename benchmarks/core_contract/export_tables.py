@@ -10,6 +10,7 @@ import csv
 import gzip
 import hashlib
 import json
+import re
 import struct
 import sys
 import time
@@ -36,6 +37,8 @@ TERRITORIES = ["moscow", "buffer"]
 ROAD_CLASSES = ["service", "pedestrian", "residential", "tertiary", "secondary", "primary", "trunk", "motorway"]
 SHARES = ["residential", "work", "retail", "education", "medical", "transport", "control", "other"]
 OSM_TYPES = {"n": 0, "w": 1, "r": 2}
+PACKAGE_ID = re.compile(r"[a-z0-9-]{1,31}")
+PACKAGE_VERSION = re.compile(r"[0-9A-Za-z.+-]{1,15}")
 
 
 def pad(n):
@@ -49,9 +52,10 @@ def fixed(text, size):
     return raw + b"\0" * (size - len(raw))
 
 
-def write_table(path, name, schema_version, package, columns):
-    """columns — список (имя, dtype, массив). Колонки выровнены на 64 байта от начала файла."""
-    rows = len(columns[0][2])
+def write_table(path, name, schema_version, package, columns, rows=None):
+    """columns — список (имя, dtype, массив). Колонки выровнены на 64 байта от начала файла.
+    rows по умолчанию — длина первой колонки; у CSR смещений rows + 1 элементов, поэтому rows задаётся явно."""
+    rows = len(columns[0][2]) if rows is None else rows
     header_size = pad(HEADER_FIXED + COLUMN_DESC * len(columns))
     offset = header_size
     descs, blobs = [], []
@@ -95,6 +99,8 @@ def main(package_dir: Path, out_dir: Path):
     started = time.perf_counter()
     manifest = json.loads((package_dir / "manifest.json").read_text(encoding="utf-8"))
     package = {"package_id": manifest["package_id"], "package_version": manifest["package_version"]}
+    if not PACKAGE_ID.fullmatch(package["package_id"]) or not PACKAGE_VERSION.fullmatch(package["package_version"]):
+        sys.exit(f"расчётные таблицы требуют package_id [a-z0-9-]{{1,31}} и package_version [0-9A-Za-z.+-]{{1,15}}: {package}")
     projector = Projector(manifest["region"]["metric_crs"])
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -133,7 +139,7 @@ def main(package_dir: Path, out_dir: Path):
         ("area_m2", "u32", [round(z["area_m2"]) for z in zones]),
     ]))
 
-    # Дорожный граф: узлы по строкам road_nodes, дуги — CSR по исходному узлу (оба направления
+    # Дорожный граф: узлы по строкам road_nodes, дуги — CSR по исходному узлу (смещения — колонка узлов) (оба направления
     # двустороннего ребра; флаг 1 — проезд разрешён в этом направлении, 0 — только пешком).
     node_index = {int(n["node_id"]): i for i, n in enumerate(nodes)}
     arcs = []
@@ -154,7 +160,8 @@ def main(package_dir: Path, out_dir: Path):
         ("y_cm", "i32", to_cm(y0 - ny)),
         ("zone", "u32", [zone_index.get(n["zone_id"], NONE_U32) for n in nodes]),
         ("strong_component", "u32", [int(n["strong_component"]) for n in nodes]),
-    ]))
+        ("arc_offset", "u32", offsets),  # CSR: rows + 1 элементов
+    ], rows=len(nodes)))
     tables.append(write_table(out_dir / "road_arcs.mtab", "road_arcs", 1, package, [
         ("to", "u32", [r[1] for r in arcs]),
         ("length_cm", "u32", [r[2] for r in arcs]),
@@ -162,9 +169,6 @@ def main(package_dir: Path, out_dir: Path):
         ("car", "u8", [1 if r[4] else 0 for r in arcs]),
         ("way_id", "u64", [r[5] for r in arcs]),
         ("way_part", "u16", [r[6] for r in arcs]),
-    ]))
-    tables.append(write_table(out_dir / "road_csr.mtab", "road_csr", 1, package, [
-        ("arc_offset", "u32", offsets),
     ]))
 
     index = {"format": "mesim-sim-index-prototype", "format_version": FORMAT_VERSION, **package,
