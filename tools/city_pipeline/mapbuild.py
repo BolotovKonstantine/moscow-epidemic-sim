@@ -24,6 +24,7 @@ import shapely
 from . import maplabels as ml
 from . import maptiles as mt
 from .geo import Projector
+from .transit import _NUMBERED as _NUMBERED_ROLE
 
 MAP_CREDIT = mt.MAP_CREDIT
 
@@ -122,6 +123,63 @@ def read_basemap(pbf: Path, projector: Projector):
                 continue
             line_items.append((_osm_key("w", obj.id), mt.LINE_CLASSES.index(kind), geometry))
     return _layer(area_items, projector), _layer(line_items, projector)
+
+
+# Пути маршрутов: роли платформ и остановок (transit.stop_roles и platform_roles конфигурации) — не путь;
+# платформы, недостроенные и заброшенные пути не рисуются.
+ROUTE_WAY_KEYS = ("highway", "railway")
+ROUTE_SKIP_LIFECYCLE = ("platform", "construction", "abandoned", "disused", "proposed", "razed")
+
+
+def read_route_ways(pbf: Path, projector: Projector, transit):
+    """Линии маршрутов, кроме метро, по путям из отношений route вырезки OSM: Layer в метрах.
+
+    transit — раздел transit конфигурации пакета: карта показывает только виды маршрутов route_modes,
+    которые есть в таблицах пакета (вид без класса карты — ошибка экспорта), а члены с ролями
+    stop_roles и platform_roles (после того же отбрасывания номера «_N», что в transit.py) — не путь.
+
+    Путь, по которому идут маршруты одного класса, рисуется один раз (ключ — ID пути); маршруты
+    разных классов по одному пути — отдельными линиями. Пути вне вырезки отсутствуют в ней и
+    просто не рисуются. Тоннели рисуются: маршрут — непрерывная линия, а не дорога.
+    """
+    route_modes = set(transit["route_modes"])
+    unknown = sorted(route_modes - set(mt.ROUTE_MODE_CLASS))
+    if unknown:
+        raise mt.MapTileError(f"виды маршрутов {unknown} из конфигурации не имеют класса линий карты")
+    skip_roles = set(transit["stop_roles"]) | set(transit["platform_roles"])
+    classes_of = {}   # ID пути → коды классов
+    for obj in osmium.FileProcessor(str(pbf), osmium.osm.RELATION).with_filter(osmium.filter.TagFilter(("type", "route"))):
+        mode = obj.tags.get("route")
+        kind = mt.ROUTE_MODE_CLASS.get(mode) if mode in route_modes else None
+        if kind is None or kind == "subway":
+            continue   # метро — схема по остановкам (transit_lines)
+        code = mt.TRANSIT_CLASSES.index(kind)
+        for member in obj.members:
+            if member.type == "w" and _NUMBERED_ROLE.sub("", member.role) not in skip_roles:
+                classes_of.setdefault(member.ref, set()).add(code)
+    wkb = osmium.geom.WKBFactory()
+    items = []
+    if classes_of:
+        processor = (osmium.FileProcessor(str(pbf), osmium.osm.NODE | osmium.osm.WAY).with_locations()
+                     .with_filter(osmium.filter.IdFilter(sorted(classes_of)).enable_for(osmium.osm.WAY)))
+        for obj in processor:
+            if not obj.is_way() or obj.id not in classes_of:
+                continue
+            tags = obj.tags
+            if not any(key in tags for key in ROUTE_WAY_KEYS) or tags.get("public_transport") == "platform" \
+                    or any(tags.get(key) in ROUTE_SKIP_LIFECYCLE for key in ROUTE_WAY_KEYS):
+                continue
+            try:
+                geometry = bytes.fromhex(wkb.create_linestring(obj))
+            except RuntimeError:
+                continue
+            for code in sorted(classes_of[obj.id]):
+                items.append((("w", obj.id), code, geometry))
+    items.sort(key=lambda item: (item[0], item[1]))
+    if not items:
+        return Layer()
+    geometry = projector.to_metric(shapely.from_wkb([item[2] for item in items]))
+    return Layer([item[0] for item in items], np.array([item[1] for item in items], np.int64), geometry)
 
 
 def _layer(items, projector):
@@ -224,6 +282,80 @@ def read_package(package: Path, projector: Projector, manifest=None) -> PackageL
                          rows, np.column_stack((x, y)), classes, moscow, road_names, road_edges, road_tunnels)
 
 
+def read_subway_scheme(package: Path, projector: Projector):
+    """Схема метро (решение автора по #16): прямые отрезки между соседними остановками маршрутов
+    метро из transit_segments.csv.gz; пара остановок рисуется один раз в любом направлении."""
+    stops = {row["stop_id"]: (float(row["lon"]), float(row["lat"])) for row in _read_csv(package / "transit_stops.csv.gz")}
+    pairs = set()
+    for row in _read_csv(package / "transit_segments.csv.gz"):
+        if mt.ROUTE_MODE_CLASS.get(row["mode"]) == "subway":
+            a, b = sorted((row["from_stop"], row["to_stop"]))
+            if a != b:
+                pairs.add((a, b))
+    pairs = sorted(pairs)
+    if not pairs:
+        return Layer()
+    missing = sorted({stop for pair in pairs for stop in pair} - set(stops))
+    if missing:
+        raise mt.MapTileError(f"отрезки метро ссылаются на остановки, которых нет в transit_stops: {missing[:3]}")
+    lines = shapely.linestrings([[stops[a], stops[b]] for a, b in pairs])
+    code = mt.TRANSIT_CLASSES.index("subway")
+    return Layer([("s", a, b) for a, b in pairs], np.full(len(pairs), code, np.int64), projector.to_metric(lines))
+
+
+@dataclass
+class OverviewData:
+    """Слои обзора по данным пакета (#16): зоны 1 км, остановки и учреждения — во всём регионе."""
+    zones: np.ndarray            # метрические контуры зон в порядке файла
+    zone_residents: np.ndarray   # жители зоны (оценка пакета)
+    zone_area: np.ndarray        # площадь зоны внутри региона, м²
+    stop_xy: np.ndarray          # (S, 2) метры
+    stop_class: np.ndarray
+    stop_modes: np.ndarray       # битовая маска mt.STOP_MODES
+    facility_xy: np.ndarray      # (F, 2) метры
+    facility_class: np.ndarray
+    stops_outside: int = 0       # остановки маршрутов за границей региона (inside=0): на карту не попадают
+    facilities_outside: int = 0
+
+
+def read_overview_data(package: Path, projector: Projector, region) -> OverviewData:
+    """Зоны, остановки и учреждения пакета для обзора. Неизвестный вид — ошибка экспорта."""
+    zones, props = read_zones(package, projector)
+    stops = _read_csv(package / "transit_stops.csv.gz")
+    inside = [row for row in stops if row["inside"] == "1"]
+    stop_class, stop_modes = [], []
+    for row in inside:
+        if row["kind"] not in mt.STOP_CLASSES:
+            raise mt.MapTileError(f"остановка {row['stop_id']}: вид {row['kind']!r} не имеет класса карты")
+        mask = 0
+        for mode in filter(None, row["modes"].split(";")):
+            if mode not in mt.STOP_MODES:
+                raise mt.MapTileError(f"остановка {row['stop_id']}: вид транспорта {mode!r} не имеет бита карты")
+            mask |= 1 << mt.STOP_MODES.index(mode)
+        stop_class.append(mt.STOP_CLASSES.index(row["kind"]))
+        stop_modes.append(mask)
+    facilities = _read_csv(package / "facilities.csv.gz")
+    for row in facilities:
+        if row["kind"] not in mt.FACILITY_CLASSES:
+            raise mt.MapTileError(f"учреждение {row['facility_id']}: вид {row['kind']!r} не имеет класса карты")
+    fx, fy = projector.xy([float(row["lon"]) for row in facilities], [float(row["lat"]) for row in facilities])
+    facility_xy = np.column_stack((np.atleast_1d(fx), np.atleast_1d(fy))) if facilities else np.empty((0, 2))
+    shapely.prepare(region)
+    facility_in = shapely.contains_xy(region, facility_xy[:, 0], facility_xy[:, 1]) if facilities else np.empty(0, bool)
+    sx, sy = projector.xy([float(row["lon"]) for row in inside], [float(row["lat"]) for row in inside])
+    return OverviewData(
+        zones=zones,
+        zone_residents=np.array([float(item["residents"]) for item in props]),
+        zone_area=np.array([float(item["area_m2"]) for item in props]),
+        stop_xy=np.column_stack((np.atleast_1d(sx), np.atleast_1d(sy))) if inside else np.empty((0, 2)),
+        stop_class=np.array(stop_class, np.int64), stop_modes=np.array(stop_modes, np.int64),
+        facility_xy=facility_xy[facility_in],
+        facility_class=np.array([mt.FACILITY_CLASSES.index(row["kind"]) for row in facilities], np.int64)[facility_in]
+        if facilities else np.empty(0, np.int64),
+        stops_outside=len(stops) - len(inside), facilities_outside=int((~facility_in).sum()),
+    )
+
+
 def read_building_geometry(package: Path, wanted: set, projector: Projector):
     """Метрические контуры и имена зданий из списка ID (файл читается потоком, разбирается только нужное)."""
     found = {}
@@ -260,11 +392,11 @@ def clip_to_region(layer: Layer, region) -> Layer:
     return Layer([key for key, flag in zip(layer.keys, keep) if flag], layer.classes[keep], geometry[keep])
 
 
-def level_layer(layer: Layer, *, classes=None, min_area=0.0, simplify=0.0, area_of=None) -> Layer:
+def level_layer(layer: Layer, *, classes=None, min_area=0.0, simplify=0.0, area_of=None, class_names=mt.LINE_CLASSES) -> Layer:
     """Отбор и упрощение слоя для уровня подробности. Площадь отбора — по исходной геометрии."""
     keep = np.ones(len(layer.keys), bool)
     if classes is not None:
-        allowed = {mt.LINE_CLASSES.index(name) for name in classes}
+        allowed = {class_names.index(name) for name in classes}
         keep &= np.isin(layer.classes, list(allowed))
     if min_area > 0:
         keep &= shapely.area(layer.geometry if area_of is None else area_of) >= min_area
@@ -288,10 +420,11 @@ def _query(layer: Layer, box, tree=None):
 
 
 def tile_sections(plane: mt.MapPlane, map_origin, box, areas: Layer, lines: Layer, buildings=None, pick=False, labels=None,
-                  trees=(None, None)):
-    """Разделы файла участка: площади, линии, (если есть) здания с данными выбора и подписи.
+                  trees=(None, None, None), transit: Layer | None = None, overview: OverviewData | None = None):
+    """Разделы файла участка: площади, линии, (если есть) здания с данными выбора, подписи, линии
+    маршрутов и (в обзоре) зоны, остановки и учреждения.
 
-    trees — готовые индексы слоёв areas и lines (сборка всего региона строит их один раз).
+    trees — готовые индексы слоёв areas, lines и transit (сборка всего региона строит их один раз).
     """
     areas = _query(areas, box, trees[0]).sorted()
     lines = _query(lines, box, trees[1]).sorted()
@@ -313,7 +446,11 @@ def tile_sections(plane: mt.MapPlane, map_origin, box, areas: Layer, lines: Laye
         b = mt.triangulate(plane.to_local(geometry, map_origin))
         dropped += b.dropped
         sections += [("building.xy", "f32", b.xy), ("building.cls", "f32", classes[b.owner] if len(b.owner) else np.empty(0)),
-                     ("building.tri", "i32", b.triangles), ("building.outline", "i32", mt.ring_outline(b))]
+                     ("building.tri", "i32", b.triangles), ("building.outline", "i32", mt.ring_outline(b)),
+                     # Слои зданий (#16): строка здания вершины, жители (оценка) и признак оценённой функции.
+                     ("building.row", "i32", b.owner),
+                     ("building.res", "f32", np.array(attrs["residents"], np.float64).reshape(-1)),
+                     ("building.est", "f32", np.array([source != "tag" for source in attrs["function_source"]], np.float64).reshape(-1))]
         counts["buildings"] = len(geometry)
         bounds.append(_bounds(b.xy))
         if pick:
@@ -332,10 +469,35 @@ def tile_sections(plane: mt.MapPlane, map_origin, box, areas: Layer, lines: Laye
     if labels is not None:
         sections += labels.sections(plane, map_origin)
         counts["labels"] = len(labels)
+    if transit is not None:
+        transit = _query(transit, box, trees[2] if len(trees) > 2 else None).sorted()
+        xy, offset, cls, tri = mt.ribbons(plane.to_local(transit.geometry, map_origin), transit.classes)
+        sections += [("transit.xy", "f32", xy), ("transit.off", "f32", offset), ("transit.cls", "f32", cls),
+                     ("transit.tri", "i32", tri)]
+        counts["transit"] = len(transit.keys)
+        bounds.append(_bounds(xy))
+    if overview is not None:
+        z = mt.triangulate(plane.to_local(overview.zones, map_origin))
+        dropped += z.dropped
+        stops = _local_points(plane, map_origin, overview.stop_xy)
+        facilities = _local_points(plane, map_origin, overview.facility_xy)
+        sections += [("zone.xy", "f32", z.xy), ("zone.row", "i32", z.owner), ("zone.tri", "i32", z.triangles),
+                     ("zone.outline", "i32", mt.ring_outline(z)), ("zone.res", "f32", overview.zone_residents),
+                     ("zone.area", "f32", overview.zone_area),
+                     ("stop.xy", "f32", stops), ("stop.cls", "f32", overview.stop_class), ("stop.modes", "i32", overview.stop_modes),
+                     ("facility.xy", "f32", facilities), ("facility.cls", "f32", overview.facility_class)]
+        counts.update(zones=len(overview.zones), stops=len(stops), facilities=len(facilities))
+        bounds += [_bounds(z.xy), _bounds(stops), _bounds(facilities)]
     counts["triangles_dropped"] = int(dropped)
     known = [item for item in bounds if item is not None]
     bbox = [min(item[0] for item in known), min(item[1] for item in known), max(item[2] for item in known), max(item[3] for item in known)] if known else None
     return sections, counts, bbox
+
+
+def _local_points(plane: mt.MapPlane, map_origin, xy):
+    """Метрические точки (N, 2) → координаты участка."""
+    xy = np.asarray(xy, np.float64).reshape(-1, 2)
+    return np.column_stack((xy[:, 0] - (plane.x0 + map_origin[0]), (plane.y0 - map_origin[1]) - xy[:, 1]))
 
 
 def _bounds(xy):
@@ -374,6 +536,13 @@ class MapSource:
         self.all_lines = Layer(base_lines.keys + self.roads.keys + pkg.boundaries.keys,
                                np.concatenate([base_lines.classes, self.roads.classes, pkg.boundaries.classes]),
                                np.concatenate([base_lines.geometry, self.roads.geometry, pkg.boundaries.geometry]))
+        log("Маршруты…")
+        build_config = json.loads((package / "build_config.json").read_text(encoding="utf-8"))
+        transit = read_route_ways(region_pbf, self.projector, build_config["transit"])
+        scheme = read_subway_scheme(package, self.projector)
+        self.transit = clip_to_region(Layer(transit.keys + scheme.keys, np.concatenate([transit.classes, scheme.classes]),
+                                            np.concatenate([transit.geometry, scheme.geometry])), pkg.region)
+        self.overview = read_overview_data(package, self.projector, pkg.region)
         log("Названия…")
         self.label_sources = ml.read_label_sources(region_pbf, self.projector)
         self.region_labels = ml.region_labels(self.label_sources, ml.read_stations(package, self.projector), pkg.region, pkg.moscow)
@@ -386,18 +555,21 @@ class MapSource:
         self.outlines, self.names = read_building_geometry(self.package, wanted, self.projector)
 
     def level(self, level):
-        """(площади, линии, их индексы) уровня: отбор, упрощение и повторная обрезка по региону."""
+        """(площади, линии, линии маршрутов, их индексы) уровня: отбор, упрощение и повторная обрезка по региону."""
         if level not in self._levels:
             rules = mt.LEVEL_RULES[level]
             areas = level_layer(self.base_areas, min_area=rules.area_min_m2, simplify=rules.area_simplify_m)
             lines = level_layer(self.all_lines, classes=rules.line_classes, simplify=rules.line_simplify_m)
+            transit = level_layer(self.transit, classes=rules.transit_classes, simplify=rules.line_simplify_m,
+                                  class_names=mt.TRANSIT_CLASSES)
             # Упрощение может срезать вогнутый край региона хордой: обрезаем по региону ещё раз.
             if rules.area_simplify_m > 0:
                 areas = clip_to_region(areas, self.pkg.region)
             if rules.line_simplify_m > 0:
                 lines = clip_to_region(lines, self.pkg.region)
-            trees = tuple(shapely.STRtree(layer.geometry) if layer.keys else None for layer in (areas, lines))
-            self._levels[level] = (areas, lines, trees)
+                transit = clip_to_region(transit, self.pkg.region)
+            trees = tuple(shapely.STRtree(layer.geometry) if layer.keys else None for layer in (areas, lines, transit))
+            self._levels[level] = (areas, lines, transit, trees)
         return self._levels[level]
 
     def building_rows(self, level, ix, iy):
@@ -430,7 +602,7 @@ class MapSource:
         rules = mt.LEVEL_RULES[level]
         pkg = self.pkg
         box, origin = self.plane.tile_box(level, ix, iy, pkg.region.bounds)
-        areas, lines, trees = self.level(level)
+        areas, lines, transit, trees = self.level(level)
         buildings = None
         if rules.buildings:
             rows = self.building_rows(level, ix, iy)
@@ -454,7 +626,8 @@ class MapSource:
             labels = ml.tile_labels(level, box, self.roads, self.road_names, self.label_sources, pkg.region,
                                     self._streets[level], self._rivers).within(pkg.region)
         sections, counts, bbox = tile_sections(self.plane, origin, box, areas, lines, buildings, pick=rules.pick,
-                                               labels=labels, trees=trees)
+                                               labels=labels, trees=trees, transit=transit,
+                                               overview=self.overview if level == 0 else None)
         return sections, counts, bbox, origin
 
 
@@ -621,6 +794,10 @@ def coverage_summary(source: MapSource, tiles):
         "road_edges": pkg.road_edges, "road_edges_tunnel": pkg.road_tunnels,
         "road_edges_outside_region": len(pkg.roads.keys) - len(source.roads.keys), "road_edges_drawn": len(roads_hit),
         "zones": len(zones),
+        # Слои по данным пакета (#16): зоны, остановки и учреждения — в обзоре, линии маршрутов — во всех уровнях.
+        "transit_lines": {name: int((source.transit.classes == code).sum()) for code, name in enumerate(mt.TRANSIT_CLASSES)},
+        "stops": len(source.overview.stop_xy), "stops_outside_region": source.overview.stops_outside,
+        "facilities": len(source.overview.facility_xy), "facilities_outside_region": source.overview.facilities_outside,
     }
 
 
@@ -629,13 +806,20 @@ def _tile_ids(tile, source):
     return [source.pkg.building_rows["id"][i] for i in source.building_rows(level, ix, iy)]
 
 
-def read_zone_geometry(package: Path, projector: Projector):
-    """Метрические контуры зон 1 км из zones.geojsonl.gz в порядке файла."""
-    texts = []
+def read_zones(package: Path, projector: Projector):
+    """Метрические контуры зон 1 км из zones.geojsonl.gz и их свойства, в порядке файла."""
+    texts, props = [], []
     with gzip.open(package / "zones.geojsonl.gz", "rt", encoding="utf-8") as stream:
         for line in stream:
-            texts.append(line.rstrip("\n").split(',"geometry":', 1)[1][:-1])
-    return projector.to_metric(shapely.from_geojson(texts)) if texts else np.empty(0, dtype=object)
+            props_text, geometry_text = line.rstrip("\n")[len('{"type":"Feature","properties":'):-1].split(',"geometry":', 1)
+            props.append(json.loads(props_text))
+            texts.append(geometry_text)
+    return (projector.to_metric(shapely.from_geojson(texts)) if texts else np.empty(0, dtype=object)), props
+
+
+def read_zone_geometry(package: Path, projector: Projector):
+    """Метрические контуры зон 1 км из zones.geojsonl.gz в порядке файла."""
+    return read_zones(package, projector)[0]
 
 
 def write_tile(out: Path, pkg, level, ix, iy, origin, sections, counts, bbox):

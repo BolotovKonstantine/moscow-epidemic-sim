@@ -2,6 +2,7 @@ import csv
 import json
 import math
 import gzip
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,7 +16,9 @@ from tools.city_pipeline import maplabels as ml
 from tools.city_pipeline import maptiles as mt
 from tools.city_pipeline.build import build_package, make_boundary
 from tools.city_pipeline.geo import Projector
-from tools.city_pipeline.mapbuild import Layer, area_class, export_test_tiles, line_class, read_package
+from tools.city_pipeline.manifest import ManifestError, _check_map_tile, validate_map_index
+from tools.city_pipeline.mapbuild import (Layer, area_class, export_test_tiles, line_class, read_overview_data, read_package,
+                                          read_route_ways, read_subway_scheme)
 
 
 def triangle_area(xy, triangles):
@@ -397,7 +400,7 @@ class ExportTests(unittest.TestCase):
         base.square(lon, lat, 0.002, {"natural": "water"})
         base.square(lon + 0.004, lat, 0.0015, {"leisure": "park"})
         line = [base.node(lon - 0.01, lat - 0.003), base.node(lon + 0.01, lat - 0.003)]
-        base.way(line, {"railway": "rail"})
+        rail = base.way(line, {"railway": "rail"})
         # Названия для подписей: город, район Москвы, река.
         base.node(lon + 0.003, lat + 0.003, {"place": "city", "name": "Тестград", "population": "1000"})
         outline = base.square(lon - 0.03, lat + 0.03, 0.003, {"place": "village", "name": "Контурное"})   # место-площадь
@@ -419,6 +422,22 @@ class ExportTests(unittest.TestCase):
                                                            "name": "Тестовое водохранилище"})   # тот же контур отношением
         base.square(lon - 0.03, lat - 0.03, 0.004, {"natural": "water", "boundary": "administrative",
                                                     "name": "Пограничный пруд"})   # вода с тегом границы
+        # Маршруты (#16): автобус по улице (платформа-линия — не путь), трамвай по рельсам, недостроенный
+        # путь не рисуется, электричка по железной дороге выше; пути метро берутся не из OSM, а из схемы.
+        street = base.way([base.node(lon - 0.004, lat + 0.001), base.node(lon + 0.004, lat + 0.001)], {"highway": "residential"})
+        platform = base.way([base.node(lon - 0.001, lat + 0.0012), base.node(lon + 0.001, lat + 0.0012)], {"public_transport": "platform"})
+        tram = base.way([base.node(lon - 0.004, lat - 0.001), base.node(lon + 0.004, lat - 0.001)], {"railway": "tram"})
+        unfinished = base.way([base.node(lon - 0.004, lat - 0.0015), base.node(lon + 0.004, lat - 0.0015)], {"railway": "construction"})
+        tunnel = base.way([base.node(lon - 0.004, lat + 0.0015), base.node(lon + 0.004, lat + 0.0015)], {"railway": "subway", "tunnel": "yes"})
+        planned = base.way([base.node(lon - 0.004, lat + 0.002), base.node(lon + 0.004, lat + 0.002)], {"highway": "construction"})
+        # Пути с ролями остановок и платформ в вариантах с направлением и номером — тоже не путь маршрута.
+        stop_way = base.way([base.node(lon - 0.004, lat + 0.0025), base.node(lon + 0.004, lat + 0.0025)], {"highway": "service"})
+        base.relation(60, [("way", street, ""), ("way", platform, "platform"), ("way", planned, ""),
+                           ("way", stop_way, "forward_stop_1"), ("way", stop_way, "backward:platform")], {"type": "route", "route": "bus"})
+        base.relation(61, [("way", street, "")], {"type": "route", "route": "share_taxi"})   # тот же путь и класс — одна линия
+        base.relation(62, [("way", tram, ""), ("way", unfinished, "")], {"type": "route", "route": "tram"})
+        base.relation(63, [("way", rail, "")], {"type": "route", "route": "train"})
+        base.relation(64, [("way", tunnel, "")], {"type": "route", "route": "subway"})
         cls.basemap = root / "basemap.osm"
         cls.basemap.write_text(base.xml(), encoding="utf-8")
         cls.crs = config["metric_crs"]
@@ -539,6 +558,150 @@ class ExportTests(unittest.TestCase):
     def test_export_is_reproducible(self):
         again = export_test_tiles(self.package, self.basemap, self.crs, *CENTER, self.root / "again", log=lambda *_: None)
         self.assertEqual([tile["sha256"] for tile in again["tiles"]], [tile["sha256"] for tile in self.index["tiles"]])
+
+
+    def test_transit_lines_follow_route_ways(self):
+        _, (_, detail) = self.tile(2)
+        codes = sorted(set(detail["transit.cls"].astype(int)))
+        self.assertEqual([mt.TRANSIT_CLASSES[code] for code in codes], ["bus", "tram", "train"])
+        lengths = {}
+        for code in codes:   # ленты: две вершины на точку; автобус — одна линия из двух точек, без платформы
+            lengths[mt.TRANSIT_CLASSES[code]] = int((detail["transit.cls"] == code).sum())
+        self.assertEqual(lengths["bus"], 4)
+        self.assertEqual(lengths["tram"], 4)
+        self.assertEqual(len(detail["transit.off"]), len(detail["transit.xy"]))
+        _, (_, overview) = self.tile(0)
+        self.assertEqual({mt.TRANSIT_CLASSES[int(code)] for code in overview["transit.cls"]}, {"train"})   # обзор: электрички и метро
+
+    def test_route_ways_only_for_configured_modes(self):
+        transit = mini_city_config()["transit"]
+        layer = read_route_ways(self.basemap, Projector(self.crs), {**transit, "route_modes": ["bus", "train"]})
+        self.assertEqual({mt.TRANSIT_CLASSES[code] for code in layer.classes}, {"bus", "train"})
+        self.assertEqual(len(read_route_ways(self.basemap, Projector(self.crs), {**transit, "route_modes": []}).keys), 0)
+        with self.assertRaisesRegex(mt.MapTileError, "hovercraft"):
+            read_route_ways(self.basemap, Projector(self.crs), {**transit, "route_modes": ["bus", "hovercraft"]})
+
+    def test_layer_needs_its_class_tables(self):
+        """Слой с кодами классов без своей таблицы игра не откроет — validate его тоже отклоняет."""
+        data = (FIXTURE_DIR / "z0" / "0_0.mtile").read_bytes()
+        header, decoded = mt.decode_tile(data)
+        classes = {name: values for name, values in header["classes"].items() if name not in ("stop", "stop_mode")}
+        sections = [(item["name"], item["dtype"], decoded[item["name"]]) for item in header["sections"]]
+        base = {key: header[key] for key in ("package_id", "package_version", "level", "tile", "tile_size_m", "origin",
+                                             "bbox", "counts", "attribution")}
+        stripped = mt.encode_tile({**base, "classes": classes}, sections)
+        index = {"package_id": header["package_id"], "package_version": header["package_version"], "classes": classes,
+                 "attribution": header["attribution"]}
+        entry = json.loads((FIXTURE_DIR / "index.json").read_text(encoding="utf-8"))["tiles"][0]
+        with self.assertRaisesRegex(ManifestError, "слой stop"):
+            _check_map_tile(stripped, entry, index, "map-index")
+        without_stops = [item for item in sections if not item[0].startswith("stop.")]
+        _check_map_tile(mt.encode_tile({**base, "classes": classes}, without_stops), entry, index, "map-index")
+
+    def test_index_without_data_layer_tables_is_accepted(self):
+        """Индекс пакета до 0.4.0 — только прежние таблицы классов; чужая таблица — ошибка."""
+        manifest = json.loads((self.package / "manifest.json").read_text(encoding="utf-8"))
+        index = json.loads((self.package / "map" / "index.json").read_text(encoding="utf-8"))
+        for classes, message in (({name: index["classes"][name] for name in mt.LEGACY_CLASS_TABLES}, "classes в заголовке"),
+                                 ({**index["classes"], "extra": ["x"]}, "таблицы классов"),
+                                 ({name: index["classes"][name] for name in ("area", "line", "label")}, "таблицы классов")):
+            with self.subTest(tables=sorted(classes)), tempfile.TemporaryDirectory() as tmp:
+                shutil.copytree(self.package / "map", Path(tmp) / "map")
+                (Path(tmp) / "map" / "index.json").write_text(json.dumps({**index, "classes": classes}), encoding="utf-8")
+                # Таблицы индекса проверяются до участков: прежние таблицы проходят и доходят до сверки с заголовком участка.
+                with self.assertRaisesRegex(ManifestError, message):
+                    validate_map_index(Path(tmp) / "map" / "index.json", manifest, "map-index")
+
+    def test_overview_has_zones_stops_and_facilities(self):
+        _, (header, overview) = self.tile(0)
+        zones = [json.loads(line)["properties"] for line in gzip.open(self.package / "zones.geojsonl.gz", "rt", encoding="utf-8")]
+        self.assertEqual(overview["zone.res"].tolist(), [float(zone["residents"]) for zone in zones])
+        self.assertEqual(int(overview["zone.res"].sum()), sum(zone["residents"] for zone in zones))
+        self.assertTrue(np.allclose(overview["zone.area"], [zone["area_m2"] for zone in zones]))
+        rows = overview["zone.row"]
+        self.assertEqual(len(rows), len(overview["zone.xy"]))
+        self.assertEqual(set(rows.tolist()), set(range(len(zones))))
+        # Площадь треугольников зоны равна её площади: заливка без дыр и наложений.
+        for row in (0, len(zones) - 1):
+            mask = np.all(rows[overview["zone.tri"]] == row, axis=1)
+            self.assertAlmostEqual(triangle_area(overview["zone.xy"], overview["zone.tri"][mask]), zones[row]["area_m2"], delta=1.0)
+        with gzip.open(self.package / "transit_stops.csv.gz", "rt", encoding="utf-8") as stream:
+            stops = list(csv.DictReader(stream))
+        inside = [row for row in stops if row["inside"] == "1"]
+        self.assertEqual(len(overview["stop.xy"]), len(inside))
+        self.assertLess(len(inside), len(stops))   # остановка за границей региона на карту не попадает
+        bus = 1 << mt.STOP_MODES.index("bus")
+        self.assertTrue(np.all(overview["stop.modes"] & bus))
+        with gzip.open(self.package / "facilities.csv.gz", "rt", encoding="utf-8") as stream:
+            facilities = list(csv.DictReader(stream))
+        self.assertEqual(len(overview["facility.xy"]), header["counts"]["facilities"])
+        self.assertEqual(sorted(mt.FACILITY_CLASSES[int(code)] for code in overview["facility.cls"]),
+                         sorted(row["kind"] for row in facilities))
+        _, (_, detail) = self.tile(2)
+        self.assertNotIn("zone.xy", detail)
+        self.assertNotIn("stop.xy", detail)
+
+    def test_building_layers_match_card(self):
+        for level in (1, 2):
+            _, (_, sections) = self.tile(level)
+            self.assertEqual(len(sections["building.row"]), len(sections["building.xy"]))
+            self.assertEqual(int(sections["building.row"].max()) + 1, len(sections["building.res"]))
+            self.assertEqual(len(sections["building.est"]), len(sections["building.res"]))
+        _, (_, detail) = self.tile(2)
+        attrs = detail["pick.attrs"]
+        self.assertEqual(detail["building.res"].tolist(), [float(value) for value in attrs["residents"]])
+        self.assertEqual(detail["building.est"].tolist(), [float(source != "tag") for source in attrs["function_source"]])
+        self.assertIn(1.0, detail["building.est"].tolist())
+        self.assertIn(0.0, detail["building.est"].tolist())
+
+
+class PackageLayerTests(unittest.TestCase):
+    """Чтение слоёв карты из файлов пакета без сборки всего пакета."""
+
+    def write(self, directory, name, rows):
+        with gzip.open(directory / name, "wt", encoding="utf-8", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
+
+    def stops(self, directory, kind="station", modes="subway"):
+        self.write(directory, "transit_stops.csv.gz", [
+            {"stop_id": f"n{i}", "osm_ids": f"n{i}", "kind": kind, "name": "", "lon": 37.6 + i * 0.01, "lat": 55.75,
+             "inside": 1, "zone_id": "", "modes": modes} for i in range(3)])
+
+    def test_subway_scheme_joins_neighbouring_stops_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            self.stops(directory)
+            segment = {"route_id": "r1", "sequence": 0, "mode": "subway", "from_stop": "n0", "to_stop": "n1", "distance_m": 1}
+            self.write(directory, "transit_segments.csv.gz", [
+                segment, {**segment, "sequence": 1, "from_stop": "n1", "to_stop": "n2"},
+                {**segment, "route_id": "r2", "from_stop": "n1", "to_stop": "n0"},   # обратное направление — та же пара
+                {**segment, "route_id": "r3", "mode": "bus", "from_stop": "n0", "to_stop": "n2"}])
+            scheme = read_subway_scheme(directory, Projector("EPSG:32637"))
+        self.assertEqual(scheme.keys, [("s", "n0", "n1"), ("s", "n1", "n2")])
+        self.assertTrue(np.all(scheme.classes == mt.TRANSIT_CLASSES.index("subway")))
+        self.assertTrue(np.all(shapely.get_num_points(scheme.geometry) == 2))
+
+    def test_unknown_kinds_fail_export(self):
+        projector = Projector("EPSG:32637")
+        region = shapely.box(*projector.xy(37.5, 55.7), *projector.xy(37.7, 55.8))
+        for stops, kind, message in ((("station", "subway"), "school", None), (("depot", "bus"), "school", "depot"),
+                                     (("station", "hovercraft"), "school", "hovercraft"), (("station", "bus"), "zoo", "zoo")):
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp)
+                self.stops(directory, *stops)
+                self.write(directory, "facilities.csv.gz", [{"facility_id": "n9", "kind": kind, "name": "", "source": "node",
+                    "osm_ids": "n9", "lon": 37.6, "lat": 55.75, "zone_id": "", "building_ids": "", "capacity": "unknown"}])
+                with gzip.open(directory / "zones.geojsonl.gz", "wt", encoding="utf-8") as stream:
+                    stream.write('{"type":"Feature","properties":{"area_m2":1.0,"residents":5},"geometry":'
+                                 '{"type":"Polygon","coordinates":[[[37.6,55.75],[37.61,55.75],[37.61,55.76],[37.6,55.75]]]}}\n')
+                if message is None:
+                    data = read_overview_data(directory, projector, region)
+                    self.assertEqual((len(data.stop_xy), len(data.facility_xy), data.zone_residents.tolist()), (3, 1, [5.0]))
+                else:
+                    with self.assertRaisesRegex(mt.MapTileError, message):
+                        read_overview_data(directory, projector, region)
 
 
 class GodotFixtureTests(unittest.TestCase):

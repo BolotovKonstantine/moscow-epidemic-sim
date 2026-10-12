@@ -20,6 +20,7 @@ func _initialize() -> void:
 	var fixture := root.path_join(FIXTURE).simplify_path()
 	_test_fixture(fixture)
 	_test_rejections(fixture)
+	_test_data_layers(fixture)
 	_test_views(fixture)
 	_test_overview_failure(fixture)
 	_test_undersized_bbox(fixture)
@@ -271,6 +272,71 @@ func _test_rejections(fixture: String) -> void:
 		many.append("c%d" % i)
 	doc.classes = {"area": many, "line": []}
 	_expect_index_error(doc, "больше 64 классов", "огромная таблица классов отклоняется")
+
+
+## Слои по данным пакета (#16): зоны, остановки и учреждения в обзоре, линии маршрутов и данные зданий;
+## испорченные значения отклоняются.
+func _test_data_layers(fixture: String) -> void:
+	var index := MapIndex.open(fixture)
+	var overview := index.load_tile(index.tiles_of_level(0)[0])
+	var detail := index.load_tile(index.tiles_of_level(2)[0])
+	check(overview.error.is_empty() and detail.error.is_empty(), "фикстура со слоями данных читается: %s %s" % [overview.error, detail.error])
+	if not overview.error.is_empty() or not detail.error.is_empty():
+		return
+	check(overview.has_layer("zone") and overview.has_layer("stop") and overview.has_layer("facility"), "в обзоре зоны, остановки, учреждения")
+	check(not detail.has_layer("zone") and not detail.has_layer("stop"), "в участке 2 км нет слоёв обзора")
+	check(Array(overview.sections["zone.res"]) == [310.0, 0.0, 1200.0, 45.0], "жители четырёх зон")
+	check(overview.vertex_count("stop") == 4 and overview.vertex_count("facility") == 3, "4 остановки и 3 учреждения")
+	var bus: int = 1 << overview.classes.stop_mode.find("bus")
+	var trolleybus: int = 1 << overview.classes.stop_mode.find("trolleybus")
+	check(overview.sections["stop.modes"][0] == bus | trolleybus, "маска видов транспорта остановки")
+	check(overview.has_layer("transit") and detail.has_layer("transit"), "линии маршрутов в обзоре и участке")
+	# Участок 2 км 0_0 задевают автобус, троллейбус и трамвай; в обзоре — только электричка и метро.
+	check(_transit_classes(detail) == ["bus", "trolleybus", "tram"], "линии маршрутов участка: %s" % [_transit_classes(detail)])
+	check(_transit_classes(overview) == ["train", "subway"], "линии маршрутов обзора: %s" % [_transit_classes(overview)])
+	check(detail.has_layer("building_data") and Array(detail.sections["building.res"]) == [310.0, 0.0, 0.0], "жители зданий")
+	check(Array(detail.sections["building.est"]) == [0.0, 1.0, 1.0], "оценённая функция: всё, кроме тега здания")
+
+	var cases := [
+		[overview, "zone.row", 0, 4, "строка зоны"],
+		[overview, "zone.res", 1, -1.0, "отрицательными"],
+		[overview, "stop.modes", 0, 1 << 20, "stop.modes"],
+		[overview, "stop.cls", 0, 3.0, "stop.cls"],
+		[overview, "facility.cls", 0, 0.5, "facility.cls"],
+		[overview, "facility.xy", 0, -500.0, "вне охвата обзора"],
+		[detail, "building.row", 0, 3, "building.row"],
+		[detail, "building.est", 0, 2.0, "building.est"],
+		[detail, "transit.cls", 0, 9.0, "transit.cls"],
+		[detail, "transit.xy", 0, 2500.0, "вне квадрата участка"],
+	]
+	for item: Array in cases:
+		var tile: MapTile = item[0]
+		var name: String = item[1]
+		var saved: Variant = tile.sections[name][item[2]]
+		tile.sections[name][item[2]] = item[3]
+		var problem := tile._check_layers()
+		check(item[4] in problem, "%s = %s отклоняется (ошибка: «%s»)" % [name, item[3], problem])
+		tile.sections[name][item[2]] = saved
+	check(overview._check_layers().is_empty() and detail._check_layers().is_empty(), "после восстановления участки снова верны")
+	var res: PackedFloat32Array = detail.sections["building.res"]
+	detail.sections.erase("building.res")
+	check("неполон" in detail._check_layers(), "неполные данные зданий отклоняются")
+	detail.sections["building.res"] = res
+	var zone_xy: PackedFloat32Array = overview.sections["zone.xy"]
+	detail.sections["zone.xy"] = zone_xy
+	for name: String in ["zone.row", "zone.tri", "zone.outline", "zone.res", "zone.area"]:
+		detail.sections[name] = overview.sections[name]
+	check("только в обзоре" in detail._check_layers(), "зоны в участке 2 км отклоняются")
+
+
+## Классы линий маршрутов участка в порядке кодов.
+func _transit_classes(tile: MapTile) -> Array:
+	var codes := {}
+	for code in tile.sections["transit.cls"]:
+		codes[int(code)] = true
+	var sorted := codes.keys()
+	sorted.sort()
+	return sorted.map(func(code): return tile.classes.transit[code])
 
 
 func _expect_error(bytes: PackedByteArray, expected: Dictionary, fragment: String, message: String) -> void:

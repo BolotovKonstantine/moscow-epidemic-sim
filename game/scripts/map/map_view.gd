@@ -289,7 +289,12 @@ func _attach(tile: MapTile, prepared: Dictionary) -> Variant:
 	var view := MapTileView.new()
 	view.setup(tile, prepared, _style)
 	# По охвату ограничивается камера и выбираются участки: он должен совпадать с геометрией.
-	var problem := _bbox_problem(tile.bbox if tile.bbox_declared else null, view.geometry_bounds())
+	# Слои данных (#16) пока не рисуются, но входят в охват заголовка: сверяем со всей геометрией.
+	var bounds: Variant = view.geometry_bounds()
+	var data: Variant = tile.data_bounds()
+	if data != null:
+		bounds = data if bounds == null else (bounds as Rect2).merge(data)
+	var problem := _bbox_problem(tile.bbox if tile.bbox_declared else null, bounds)
 	if not problem.is_empty():
 		view.free()
 		return "%s: %s" % [tile.path.get_file(), problem]

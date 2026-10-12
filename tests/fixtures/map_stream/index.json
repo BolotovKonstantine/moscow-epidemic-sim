@@ -26,6 +26,16 @@
       "control",
       "other"
     ],
+    "facility": [
+      "hospital",
+      "clinic",
+      "doctors",
+      "university",
+      "college",
+      "school",
+      "kindergarten",
+      "police"
+    ],
     "label": [
       "capital",
       "okrug",
@@ -60,6 +70,28 @@
       "rail",
       "boundary_moscow",
       "boundary_region"
+    ],
+    "stop": [
+      "platform",
+      "stop_position",
+      "station"
+    ],
+    "stop_mode": [
+      "bus",
+      "share_taxi",
+      "trolleybus",
+      "tram",
+      "light_rail",
+      "monorail",
+      "train",
+      "subway"
+    ],
+    "transit": [
+      "bus",
+      "trolleybus",
+      "tram",
+      "train",
+      "subway"
     ]
   },
   "format": "mesim-map-index",
@@ -109,8 +141,8 @@
       },
       "level": 0,
       "path": "z0/0_0.mtile",
-      "sha256": "1ebb39a9917bdf9b91ac767164a4da6a9388c09dfd94e63042843b93b9891054",
-      "size_bytes": 2880,
+      "sha256": "39ec24e37949a6879f382509b8a53256e75e7e524bc230eff70b2f8a952f864a",
+      "size_bytes": 3176,
       "tile": [
         0,
         0
@@ -131,8 +163,8 @@
       },
       "level": 1,
       "path": "z1/0_0.mtile",
-      "sha256": "7890a65981469ad5ee238bc59a3a558c2cb10bbd7329545dd19f516bc2473db1",
-      "size_bytes": 3052,
+      "sha256": "070535d1c762c18e476b87faf247acbe3b5c0435e851244f794005ea6aae92d9",
+      "size_bytes": 3772,
       "tile": [
         0,
         0
@@ -153,8 +185,8 @@
       },
       "level": 1,
       "path": "z1/1_0.mtile",
-      "sha256": "69289d41137c8444ddc62c751ad486d77d398971ed121c9e8779357c3178941a",
-      "size_bytes": 2824,
+      "sha256": "91646ab353a4022dfd9d3e7092c5952e14cd373b9e5acf0a58aa3c6675924d63",
+      "size_bytes": 3532,
       "tile": [
         1,
         0
@@ -175,8 +207,8 @@
       },
       "level": 1,
       "path": "z1/0_1.mtile",
-      "sha256": "42513bd3bf963530cd6c45598fcd8332240dd664ce06a4e7ed91aeff01923677",
-      "size_bytes": 2752,
+      "sha256": "44d783e5391d44373b8b1c9b696fffdb3e7323aadc111154872b4f426f20dafa",
+      "size_bytes": 3456,
       "tile": [
         0,
         1
@@ -197,8 +229,8 @@
       },
       "level": 1,
       "path": "z1/1_1.mtile",
-      "sha256": "b099b3d82d3040b80c5156b0edafbd26aa20a90fb997fe20b0032ce4c026208c",
-      "size_bytes": 2612,
+      "sha256": "760842239da519060fecf9e56a053443d76f235264f96c8f8f977b6d1d030562",
+      "size_bytes": 3304,
       "tile": [
         1,
         1
@@ -220,8 +252,8 @@
       },
       "level": 2,
       "path": "z2/0_0.mtile",
-      "sha256": "696e80d52b76656582a9bf897e03df67d1b2951554618af3b9999418a90905bf",
-      "size_bytes": 3668,
+      "sha256": "f36995d7d105973d8080a1178215e9ddca6fcdb97d460f4f83e22f20bcb23e8c",
+      "size_bytes": 4320,
       "tile": [
         0,
         0
@@ -243,8 +275,8 @@
       },
       "level": 2,
       "path": "z2/1_0.mtile",
-      "sha256": "8f12016eed57fe3bf2ede617f5c75a9cbae7e7fb80884e790a6442ed40ba0f2a",
-      "size_bytes": 3656,
+      "sha256": "fb2451d0b514e6aa5c980dcccab9d9035f125274f282ae011b8e4f2f2581dd11",
+      "size_bytes": 4308,
       "tile": [
         1,
         0
@@ -266,8 +298,8 @@
       },
       "level": 2,
       "path": "z2/2_0.mtile",
-      "sha256": "148cecc41671d338ca564dc86531a2a4dfde3ecfa24ba6480d9777d8a7ac13e0",
-      "size_bytes": 3656,
+      "sha256": "1eb8e3064587d9e02438ed718b8d15dcab72a64c64e3af7a37813fe0256680a6",
+      "size_bytes": 4308,
       "tile": [
         2,
         0
@@ -289,8 +321,8 @@
       },
       "level": 2,
       "path": "z2/3_0.mtile",
-      "sha256": "07c80f6187dd500e25f8bc4ee6c6fe5798449e6195bfff69bc928444a207f82b",
-      "size_bytes": 3656,
+      "sha256": "f7127678d9509229b2e2f02a04e57297cd02fb3d18326d12a156aae609a6e1e6",
+      "size_bytes": 4308,
       "tile": [
         3,
         0
@@ -312,8 +344,8 @@
       },
       "level": 2,
       "path": "z2/4_0.mtile",
-      "sha256": "a272bb2dd4b79ade823462dd81e072aa10029695e6bc50f98b1a9ed548e091a8",
-      "size_bytes": 3656,
+      "sha256": "c343c8cbe7e153d624d0bf9dc30465cfffd805161110b00c56d720130241429c",
+      "size_bytes": 4308,
       "tile": [
         4,
         0
@@ -335,8 +367,8 @@
       },
       "level": 2,
       "path": "z2/5_0.mtile",
-      "sha256": "c92eac9fda57a16d15e50d5b54cddec07cae11175db758765de175a634dd2f23",
-      "size_bytes": 3676,
+      "sha256": "1d6096909ca1d43b88a42b9f22ca18cd467f056923e16f418df4e1c8c2450d68",
+      "size_bytes": 4328,
       "tile": [
         5,
         0
@@ -358,8 +390,8 @@
       },
       "level": 2,
       "path": "z2/0_1.mtile",
-      "sha256": "de8dc617c6065d467bd183d05a6c3dbe1f43193ac2aa535a69015abac69f7340",
-      "size_bytes": 3660,
+      "sha256": "b1f2025bfe06bba9f29d7b4746fee276b8bd13c680d74da448ce685a8d9c21a9",
+      "size_bytes": 4312,
       "tile": [
         0,
         1
@@ -381,8 +413,8 @@
       },
       "level": 2,
       "path": "z2/1_1.mtile",
-      "sha256": "28a83fdc5174e9cafc44350e6e42e04d4d3bb56c182a85249308e0876a563ea2",
-      "size_bytes": 3708,
+      "sha256": "619d03410964698f0ca2e876e8e42a7c28a0e3fbff6c688f98495d8c8333e404",
+      "size_bytes": 4360,
       "tile": [
         1,
         1
@@ -404,8 +436,8 @@
       },
       "level": 2,
       "path": "z2/2_1.mtile",
-      "sha256": "80890fdc68bd172722145bdb5829b6b26c9fd32380b7248c6231554c8dffa5b6",
-      "size_bytes": 3632,
+      "sha256": "bd942cef954e24c82b1c3de381ff3991080e3c762376ec3cc3ee445fcf206a5e",
+      "size_bytes": 4284,
       "tile": [
         2,
         1
@@ -427,8 +459,8 @@
       },
       "level": 2,
       "path": "z2/3_1.mtile",
-      "sha256": "133914b91a87a2092a4475d680009fffaacc14b465c8de3c456837d4d306d250",
-      "size_bytes": 3636,
+      "sha256": "c00116bfebff9b2cb7a9b89fb95969ced7a23b3365b70512018963139b10b94f",
+      "size_bytes": 4288,
       "tile": [
         3,
         1
@@ -450,8 +482,8 @@
       },
       "level": 2,
       "path": "z2/4_1.mtile",
-      "sha256": "f1d9ac7cee5c379b1bf7f0d542a554b09b68248eb8af80a6f89e49df6637fbce",
-      "size_bytes": 3632,
+      "sha256": "23decfe192aa1bbe9033de16c0f01a86eacfadd70d5518d0bb29692c6c63aa2f",
+      "size_bytes": 4284,
       "tile": [
         4,
         1
@@ -473,8 +505,8 @@
       },
       "level": 2,
       "path": "z2/5_1.mtile",
-      "sha256": "ebc5911d1ffe3039adf5f0752d31a7af21dfdd6fba5c700568dafa29ab40fc54",
-      "size_bytes": 3660,
+      "sha256": "f7a268000fa563750056d39d214e3d9aa84665f8deac414262619de6be786130",
+      "size_bytes": 4312,
       "tile": [
         5,
         1
@@ -496,8 +528,8 @@
       },
       "level": 2,
       "path": "z2/0_2.mtile",
-      "sha256": "a0041a2162cc107d81d062b12b282a5d52d7dfc6ee6da70a205f7efe2063de10",
-      "size_bytes": 3740,
+      "sha256": "9b826cab8f30b38d45f01542c9060b8de15abb2e425f039c3d040fbb7780a180",
+      "size_bytes": 4392,
       "tile": [
         0,
         2
@@ -519,8 +551,8 @@
       },
       "level": 2,
       "path": "z2/1_2.mtile",
-      "sha256": "b44da60f7b07fccb836da883f7fc751c2c877a646bf13537782d796a63c51b0a",
-      "size_bytes": 3708,
+      "sha256": "193da17450bdd7de5ecd93dbfda3c230ddac227a3a54236b8ce63dec3052aba0",
+      "size_bytes": 4360,
       "tile": [
         1,
         2
@@ -542,8 +574,8 @@
       },
       "level": 2,
       "path": "z2/2_2.mtile",
-      "sha256": "bbf5cd416d38dde44317b172fe12a11bc9a1d9148242f377e8c2ccf1bae8bbe0",
-      "size_bytes": 3712,
+      "sha256": "c01c47ae0983a6cb8d1e3a702fae441c19f7819d6fbf8c22eee897e0159c5bfa",
+      "size_bytes": 4364,
       "tile": [
         2,
         2
@@ -565,8 +597,8 @@
       },
       "level": 2,
       "path": "z2/3_2.mtile",
-      "sha256": "cd1dc43bd5beaf8e49ca065d4b6d3e4b85f119c47d1b5a3903b5d14d6acd666a",
-      "size_bytes": 3716,
+      "sha256": "f2b2283d93b7454aa52579dd11cfe8fdee13ae209a8880377e1b4e9e734c2fb7",
+      "size_bytes": 4368,
       "tile": [
         3,
         2
@@ -588,8 +620,8 @@
       },
       "level": 2,
       "path": "z2/4_2.mtile",
-      "sha256": "ad5b938cc2be1be2158b67af2df925b75f53067fe5f35d96fcd3e80aad56fe96",
-      "size_bytes": 3712,
+      "sha256": "92d5e9154f1b80ee92cd621204c38c76ae935722bb39567d9c7291b00495dcde",
+      "size_bytes": 4364,
       "tile": [
         4,
         2
@@ -611,8 +643,8 @@
       },
       "level": 2,
       "path": "z2/5_2.mtile",
-      "sha256": "a3b3f8b26fee0363ef7e75c15d6a8eec014ecdd009bfaf7895cf8d99f362b3c8",
-      "size_bytes": 3740,
+      "sha256": "422a938be09bc11bf66fae469be8c464984a0200c975fd77e1e0c74a85958639",
+      "size_bytes": 4392,
       "tile": [
         5,
         2
@@ -634,8 +666,8 @@
       },
       "level": 2,
       "path": "z2/0_3.mtile",
-      "sha256": "cde17897fb75b6a912919f1c7c847a676ababeac6eab1c13b0bcf2f90b07bd67",
-      "size_bytes": 3652,
+      "sha256": "a527efc39fc27d319ee3783917dfd5dcd64f3c0fe807f22a7fe17ec34db9f3d7",
+      "size_bytes": 4304,
       "tile": [
         0,
         3
@@ -657,8 +689,8 @@
       },
       "level": 2,
       "path": "z2/1_3.mtile",
-      "sha256": "e70d37253cb0ffdd010c29f71c317e73edbcf07740ef9b4ba451c02205f99738",
-      "size_bytes": 3632,
+      "sha256": "f3d14694aed0910bda8da34e0ff00a9d608e7a5b83c3533b63d8fe6b0e9fa52f",
+      "size_bytes": 4284,
       "tile": [
         1,
         3
@@ -680,8 +712,8 @@
       },
       "level": 2,
       "path": "z2/2_3.mtile",
-      "sha256": "fec9480eebda00278cd699c8f2f5a600c4935d88898eb6389af055c5110f0815",
-      "size_bytes": 3632,
+      "sha256": "8bf6e64f745b4b4839419d915248905521817488def9e5d3f5b4cebb10fa02fc",
+      "size_bytes": 4284,
       "tile": [
         2,
         3
@@ -703,8 +735,8 @@
       },
       "level": 2,
       "path": "z2/3_3.mtile",
-      "sha256": "09f332f35b974f60ed572be018c87db804261e3c968879fb0ee6963b109e2351",
-      "size_bytes": 3632,
+      "sha256": "26631dfc444f38118e16bbcac9c8ad0aeddcf9261fe3f33c43cac781e20b7253",
+      "size_bytes": 4284,
       "tile": [
         3,
         3
@@ -726,8 +758,8 @@
       },
       "level": 2,
       "path": "z2/4_3.mtile",
-      "sha256": "92b585565da9efd3b18dbe5f4e99d84af393c982c8599be5e8d32ef2b8dd293d",
-      "size_bytes": 3632,
+      "sha256": "ebe17edb6a6d7d9a8e7bd2f0370e121049c0b7f958289ebdaa9585e6bc30c554",
+      "size_bytes": 4284,
       "tile": [
         4,
         3
@@ -749,8 +781,8 @@
       },
       "level": 2,
       "path": "z2/5_3.mtile",
-      "sha256": "661edc7be2c82e527de13b228757e1cf5b33a5c4a3c67f0023fbf5d87b313b5a",
-      "size_bytes": 3664,
+      "sha256": "e538a56522cef1b05fbcbed0e47f47121a43983a740e2428c092644caa41b956",
+      "size_bytes": 4316,
       "tile": [
         5,
         3
@@ -772,8 +804,8 @@
       },
       "level": 2,
       "path": "z2/0_4.mtile",
-      "sha256": "77dcafec11331d004efdf3b03bfea556926a2ea8c7834282c1b466239463095c",
-      "size_bytes": 3660,
+      "sha256": "21d8ac2d373667227fa0c060585b2538e6a5e98c5edba9fd504fc83148315cd4",
+      "size_bytes": 4312,
       "tile": [
         0,
         4
@@ -795,8 +827,8 @@
       },
       "level": 2,
       "path": "z2/1_4.mtile",
-      "sha256": "fe934f45917db2a124dae550f36cecd4c5bf40bc2c466ef21ec915bc613f97de",
-      "size_bytes": 3628,
+      "sha256": "ef9b0954f8119dc97fb52f262eed16cdc2d39743fb83e9b9507acbf47058f93c",
+      "size_bytes": 4280,
       "tile": [
         1,
         4
@@ -818,8 +850,8 @@
       },
       "level": 2,
       "path": "z2/2_4.mtile",
-      "sha256": "5e923be9e7975af2a1b836d34780bc434f491084f31374b731e78e835f5cbcaf",
-      "size_bytes": 3628,
+      "sha256": "8159bb1411fb5aad46b60aee21cab1f1396f347e6b0af3252ca218a765ece3b0",
+      "size_bytes": 4280,
       "tile": [
         2,
         4
@@ -841,8 +873,8 @@
       },
       "level": 2,
       "path": "z2/3_4.mtile",
-      "sha256": "c67c8014dd69fa2f2dc8382bc7590549c7c748b252fcfd5f3cc15dc1de24356a",
-      "size_bytes": 3636,
+      "sha256": "6f028ca0af3c8e436feb92d514654daef5b19d4b3197ed5ff39af0a42f2c1b7b",
+      "size_bytes": 4288,
       "tile": [
         3,
         4
@@ -864,8 +896,8 @@
       },
       "level": 2,
       "path": "z2/4_4.mtile",
-      "sha256": "35fba2c810d6aae8a919c2bbf211c83088d1228c8a4823cb74d5fe2a5e25f8a9",
-      "size_bytes": 3632,
+      "sha256": "3580c3c8454835c49ff3e2ca379ee3ebdddb5f04a6e6a208a700b33a8ab25c41",
+      "size_bytes": 4284,
       "tile": [
         4,
         4
@@ -887,8 +919,8 @@
       },
       "level": 2,
       "path": "z2/5_4.mtile",
-      "sha256": "f5381121968e2d8b22e033a0756d749115329d5595495ba688b54b14bf3a901a",
-      "size_bytes": 3660,
+      "sha256": "8514b6906343ccd2cf29589cfd5fe5ab14a1b7155c449c6535b889f11faf38ba",
+      "size_bytes": 4312,
       "tile": [
         5,
         4
@@ -910,8 +942,8 @@
       },
       "level": 2,
       "path": "z2/0_5.mtile",
-      "sha256": "c5bb049c069e149b6045188f8b1b4f62e65597e078866271baabd83b2419dceb",
-      "size_bytes": 3676,
+      "sha256": "8043ee692eeb70ac613c166d15239b94ac48588f522b89ad6df3d8784277db8c",
+      "size_bytes": 4328,
       "tile": [
         0,
         5
@@ -933,8 +965,8 @@
       },
       "level": 2,
       "path": "z2/1_5.mtile",
-      "sha256": "233fd7c6cbb3175e072606acf151e3eda62da1284862a5b45dfd0de36cac12ce",
-      "size_bytes": 3656,
+      "sha256": "a1978cf223eeed179d9b64ab8b886f1b657161f745f576d81f123ba00c6448ff",
+      "size_bytes": 4308,
       "tile": [
         1,
         5
@@ -956,8 +988,8 @@
       },
       "level": 2,
       "path": "z2/2_5.mtile",
-      "sha256": "ff63b10cf25d87cf6096c7bb8574b3e7cb9efead095ccde06852c208d3b5f05d",
-      "size_bytes": 3656,
+      "sha256": "cf50823ea9845996ad2efda47bb959ccafccd65e9e5710948450f474c871310f",
+      "size_bytes": 4308,
       "tile": [
         2,
         5
@@ -979,8 +1011,8 @@
       },
       "level": 2,
       "path": "z2/3_5.mtile",
-      "sha256": "a301fef37bcd2cda2d38332068958d98a9df4d989fadcceb35399ab4cfb3224d",
-      "size_bytes": 3668,
+      "sha256": "2e7978a1dee6030f544b9be1218cc3354f2689404d1aab6307dd10f3b1b4f4e8",
+      "size_bytes": 4320,
       "tile": [
         3,
         5
@@ -1002,8 +1034,8 @@
       },
       "level": 2,
       "path": "z2/4_5.mtile",
-      "sha256": "5530a980a88643db7063df1feb45662a8a39429af48e75d07a307e931ec054c5",
-      "size_bytes": 3656,
+      "sha256": "5c81582707b89d0c608ef3e154d466113dc7d532bbb1008cf0a4ed4b6b6cc7a6",
+      "size_bytes": 4308,
       "tile": [
         4,
         5
@@ -1025,8 +1057,8 @@
       },
       "level": 2,
       "path": "z2/5_5.mtile",
-      "sha256": "35934c994aeb59b9a7a8735576ab6bf65d2fe590f02fe083f58840881681ad0b",
-      "size_bytes": 3676,
+      "sha256": "86505214e3d60bc10a4c1da98bc2c26cb3e1013b7a6238dcfd535b0c81929932",
+      "size_bytes": 4328,
       "tile": [
         5,
         5

@@ -140,7 +140,9 @@ def build_report(context):
         # Экспорт карты сам отказывается писать участки с нарушенным покрытием; здесь — итог для отчёта.
         checks.append(_check("map_tiles_cover_package", tiles["buildings_in_detail_tiles"] == tiles["buildings"],
                              f"{tiles['buildings_in_detail_tiles']} зданий по одному в участках 2 км, {tiles['road_edges_drawn']} рёбер дорог на карте "
-                             f"(тоннели {tiles['road_edges_tunnel']} не рисуются), каждая из {tiles['zones']} зон 1 км задевает участки 8 и 2 км"))
+                             f"(тоннели {tiles['road_edges_tunnel']} не рисуются), каждая из {tiles['zones']} зон 1 км задевает участки 8 и 2 км; "
+                             f"в обзоре {tiles['stops']} остановок и {tiles['facilities']} учреждений (вне региона и не на карте: "
+                             f"{tiles['stops_outside_region']} остановок, {tiles['facilities_outside_region']} учреждений), линий маршрутов {sum(tiles['transit_lines'].values())}"))
     if population.allocated_total != int(residents.sum()) or zone_total != int(residents.sum()):
         raise ReportError("Нарушено сохранение населения между зданиями и зонами")
 

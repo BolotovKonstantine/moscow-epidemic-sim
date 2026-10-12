@@ -20,7 +20,7 @@ import shapely
 
 from tools.city_pipeline import maplabels as ml
 from tools.city_pipeline import maptiles as mt
-from tools.city_pipeline.mapbuild import Layer, tile_sections, write_index, write_tile
+from tools.city_pipeline.mapbuild import Layer, OverviewData, level_layer, tile_sections, write_index, write_tile
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "map_tile"
 STREAM_DIR = FIXTURE_DIR.parent / "map_stream"
@@ -78,6 +78,33 @@ def fixture_layers():
     return areas, lines, (geometry, classes, attrs)
 
 
+def fixture_transit():
+    """Линии маршрутов: автобус и троллейбус по главной улице, трамвай, электричка и схема метро."""
+    return _layer([
+        ("bus", shapely.LineString([(0, 1000), (4000, 1000)])),
+        ("trolleybus", shapely.LineString([(0, 1000), (4000, 1000)])),
+        ("tram", shapely.LineString([(1000, 0), (1000, 2400)])),
+        ("train", shapely.LineString([(0, 2300), (4000, 2200)])),
+        ("subway", shapely.LineString([(500, 3500), (3500, 500)])),
+    ], mt.TRANSIT_CLASSES)
+
+
+def fixture_overview():
+    """Зоны 2×2 км (одна пустая), остановки и учреждения обзора."""
+    zones = np.array([_metric(shapely.box(x, y, x + 2000, y + 2000)) for y in (0, 2000) for x in (0, 2000)], dtype=object)
+    def points(items):
+        return np.array([[_metric(shapely.Point(x, y)).x, _metric(shapely.Point(x, y)).y] for x, y in items])
+    bit = {mode: 1 << mt.STOP_MODES.index(mode) for mode in mt.STOP_MODES}
+    return OverviewData(
+        zones=zones, zone_residents=np.array([310.0, 0.0, 1200.0, 45.0]), zone_area=np.full(4, 4_000_000.0),
+        stop_xy=points([(1500, 1000), (1000, 600), (500, 3500), (2000, 2250)]),
+        stop_class=np.array([mt.STOP_CLASSES.index(kind) for kind in ("platform", "stop_position", "station", "station")]),
+        stop_modes=np.array([bit["bus"] | bit["trolleybus"], bit["tram"], bit["subway"], bit["train"]]),
+        facility_xy=points([(1320, 1130), (1625, 1610), (3000, 3000)]),
+        facility_class=np.array([mt.FACILITY_CLASSES.index(kind) for kind in ("school", "clinic", "police")]),
+    )
+
+
 def fixture_labels(level):
     """Подписи: обзор — места, район, река и станция; участок 2 км — улицы вдоль линий."""
     def row(x, y, angle, span, kind, weight, text):
@@ -107,7 +134,10 @@ def write_fixture(out: Path):
     for level, building_data in ((0, None), (2, buildings)):
         box, origin = PLANE.tile_box(level, 0, 0, region_bounds)
         sections, counts, bbox = tile_sections(PLANE, origin, box, areas, lines, building_data, pick=level == 2,
-                                               labels=fixture_labels(level))
+                                               labels=fixture_labels(level),
+                                               transit=level_layer(fixture_transit(), classes=mt.LEVEL_RULES[level].transit_classes,
+                                                                   class_names=mt.TRANSIT_CLASSES),
+                                               overview=fixture_overview() if level == 0 else None)
         tiles.append(write_tile(out, package, level, 0, 0, origin, sections, counts, bbox))
     return write_index(out, package, "EPSG:32637", PLANE, tiles, "Синтетический набор для теста загрузчика Godot (#12).")
 

@@ -42,6 +42,17 @@ LABEL_CLASSES = (
     "capital", "okrug", "municipality", "city", "town", "district", "village", "suburb", "hamlet",
     "river_major", "river", "water", "street_major", "street", "metro", "rail_station",
 )
+# Слои по данным пакета (#16). Линии маршрутов: метро — схема между остановками, остальное — пути
+# из отношений маршрутов OSM. Вид транспорта маршрута → класс линии (маршрутка рисуется как автобус,
+# монорельс и light_rail — как трамвай).
+TRANSIT_CLASSES = ("bus", "trolleybus", "tram", "train", "subway")
+ROUTE_MODE_CLASS = {"bus": "bus", "share_taxi": "bus", "trolleybus": "trolleybus", "tram": "tram",
+                    "light_rail": "tram", "monorail": "tram", "train": "train", "subway": "subway"}
+# Остановки (transit_stops.csv.gz): вид объекта и виды транспорта — биты маски stop.modes в этом порядке.
+STOP_CLASSES = ("platform", "stop_position", "station")
+STOP_MODES = ("bus", "share_taxi", "trolleybus", "tram", "light_rail", "monorail", "train", "subway")
+# Учреждения (facilities.csv.gz): медицина, образование, полиция.
+FACILITY_CLASSES = ("hospital", "clinic", "doctors", "university", "college", "school", "kindergarten", "police")
 # Пределы подписей; те же проверяет игра (MapTile.MAX_LABELS, MAX_LABEL_CHARS).
 MAX_LABELS = 100_000
 MAX_LABEL_CHARS = 200
@@ -51,7 +62,11 @@ MAX_SECTION_BYTES = 256 << 20       # раздел после распаковк
 MAX_DECODED_BYTES = 512 << 20       # все разделы участка после распаковки
 MAX_TILE_BYTES = 256 << 20          # файл участка
 MAX_JSON_SECTION_BYTES = 16 << 20   # как MapTile.MAX_JSON_SECTION_BYTES: больший JSON игра не разбирает
-CLASSES = {"area": AREA_CLASSES, "building": BUILDING_CLASSES, "line": LINE_CLASSES, "label": LABEL_CLASSES}
+CLASSES = {"area": AREA_CLASSES, "building": BUILDING_CLASSES, "line": LINE_CLASSES, "label": LABEL_CLASSES,
+           "transit": TRANSIT_CLASSES, "stop": STOP_CLASSES, "stop_mode": STOP_MODES, "facility": FACILITY_CLASSES}
+LEGACY_CLASS_TABLES = ("area", "building", "line", "label")   # таблицы участков до пакета 0.4.0; остальные необязательны
+# Необязательные таблицы обязательны, если в участке есть разделы слоя с их кодами (иначе игра отклонит коды).
+LAYER_CLASS_TABLES = {"transit": ("transit",), "stop": ("stop", "stop_mode"), "facility": ("facility",)}
 
 HIGHWAY_CLASS = {
     "motorway": "motorway", "motorway_link": "motorway", "trunk": "trunk", "trunk_link": "trunk",
@@ -72,12 +87,14 @@ class LevelRules:
     building_min_m2: float = 0.0
     building_simplify_m: float = 0.0
     pick: bool = False
+    transit_classes: frozenset = frozenset(TRANSIT_CLASSES)   # линии маршрутов; упрощение — как у линий
 
 
 LEVEL_RULES = {
     0: LevelRules(
         line_classes=frozenset({"river", "primary", "trunk", "motorway", "rail", "boundary_moscow", "boundary_region"}),
-        line_simplify_m=25.0, area_min_m2=50_000.0, area_simplify_m=25.0, buildings=False),
+        line_simplify_m=25.0, area_min_m2=50_000.0, area_simplify_m=25.0, buildings=False,
+        transit_classes=frozenset({"train", "subway"})),
     1: LevelRules(
         line_classes=frozenset({"river", "tertiary", "secondary", "primary", "trunk", "motorway", "rail",
                                 "boundary_moscow", "boundary_region"}),
@@ -350,12 +367,18 @@ DTYPES = {"f32": "<f4", "i32": "<i4"}
 # Имя раздела → тип; как MapTile.COLUMNS, INT_SECTIONS и JSON_SECTIONS в игре: другие разделы игра не читает.
 SECTION_DTYPES = {name: "f32" for name in (
     "area.xy", "area.cls", "line.xy", "line.off", "line.cls", "building.xy", "building.cls", "pick.bbox",
-    "label.xy", "label.angle", "label.span", "label.cls", "label.weight")}
-SECTION_DTYPES.update({name: "i32" for name in ("area.tri", "line.tri", "building.tri", "building.outline", "pick.ring")})
+    "label.xy", "label.angle", "label.span", "label.cls", "label.weight",
+    "building.res", "building.est", "zone.xy", "zone.res", "zone.area", "stop.xy", "stop.cls",
+    "facility.xy", "facility.cls", "transit.xy", "transit.off", "transit.cls")}
+SECTION_DTYPES.update({name: "i32" for name in (
+    "area.tri", "line.tri", "building.tri", "building.outline", "pick.ring",
+    "building.row", "zone.row", "zone.tri", "zone.outline", "stop.modes", "transit.tri")})
 SECTION_DTYPES.update({"pick.attrs": "json", "label.text": "json"})
 # Число столбцов числового раздела, как MapTile.COLUMNS: 1 — одномерный массив (V), иначе (N, столбцы).
 SECTION_COLUMNS = {"area.xy": 2, "area.tri": 3, "line.xy": 2, "line.off": 2, "line.tri": 3, "building.xy": 2,
-                   "building.tri": 3, "building.outline": 2, "pick.ring": 3, "pick.bbox": 4, "label.xy": 2}
+                   "building.tri": 3, "building.outline": 2, "pick.ring": 3, "pick.bbox": 4, "label.xy": 2,
+                   "zone.xy": 2, "zone.tri": 3, "zone.outline": 2, "stop.xy": 2, "facility.xy": 2,
+                   "transit.xy": 2, "transit.off": 2, "transit.tri": 3}
 
 
 def encode_tile(header: dict, sections) -> bytes:
