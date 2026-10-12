@@ -5,10 +5,12 @@ extends Node
 # неподвижные виды и облёт по ключевым точкам камеры во времени. Запуск — после `--` в командной
 # строке: `--bench-map=<маршрут> --bench-out=<результат.json>` (обёртка — benchmarks/map_view/run.sh).
 # Вертикальная синхронизация и предел FPS выключены: время кадра — между соседними кадрами
-# основного цикла, то есть сколько стоит кадр, а не частота экрана. Перед неподвижным видом
-# нужные участки догружаются сразу (load_visible_now), затем — прогрев и замер; облёт начинается
-# с общего вида и грузит участки как обычно, в фоне. После записи результата игра закрывается
-# (код 0; ошибка маршрута или записи — код 1).
+# основного цикла, то есть сколько стоит кадр, а не частота экрана. Каждый сценарий начинается
+# с пустого кеша участков (остаётся только обзор), чтобы не зависеть от предыдущих. Перед
+# неподвижным видом нужные участки догружаются сразу (load_visible_now), затем — прогрев и замер;
+# облёт начинается с общего вида и грузит участки как обычно, в фоне. После записи результата игра
+# закрывается (код 0). Ошибка маршрута или записи, а также любая ошибка загрузки участка — код 1:
+# карта при ошибке показывает уровень грубее, и замер вышел бы обманчиво быстрым.
 
 const FORMAT := "mesim-map-bench"
 const FORMAT_VERSION := 1
@@ -92,6 +94,9 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if not error.is_empty():
 		return
+	if not _map.streamer.errors.is_empty():
+		_fail("ошибка загрузки участка: %s" % _map.streamer.errors[0])
+		return
 	var now := Time.get_ticks_usec()
 	var frame := now - _last_usec if _last_usec > 0 else 0
 	_last_usec = now
@@ -136,6 +141,7 @@ func _start_scenario() -> void:
 	for name: String in layers:
 		_map.set_layer(name, bool(layers[name]))
 	_map.set_selection({})
+	_map.streamer.clear()
 	if scenario.has("route"):
 		_apply_route(scenario.route, 0.0)
 	else:
@@ -162,7 +168,6 @@ func _begin_measure() -> void:
 		"evicted_before": streamer.evicted_total,
 		"poll_before": streamer.poll_usec.size(),
 		"load_before": streamer.load_usec.size(),
-		"errors_before": streamer.errors.size(),
 		"video_peak": 0.0,
 	}
 
@@ -204,7 +209,6 @@ func _finish_scenario(now: int) -> Dictionary:
 		"missing_frames": _cur.missing_frames,
 		"tiles_attached": streamer.loaded_total - _cur.loaded_before,
 		"tiles_evicted": streamer.evicted_total - _cur.evicted_before,
-		"tile_errors": streamer.errors.size() - _cur.errors_before,
 		"attach_poll_ms": _stats(streamer.poll_usec.slice(_cur.poll_before), 0.001),
 		"tile_load_ms": _stats(streamer.load_usec.slice(_cur.load_before), 0.001),
 		"cache_peak_mb": _cur.cache_peak / 1048576.0,
@@ -257,8 +261,7 @@ func _write_and_quit() -> void:
 	}
 	var file := FileAccess.open(_out_path, FileAccess.WRITE)
 	if file == null:
-		push_error("Замер карты: не удалось записать %s (%s)" % [_out_path, error_string(FileAccess.get_open_error())])
-		get_tree().quit(1)
+		_fail("не удалось записать %s (%s)" % [_out_path, error_string(FileAccess.get_open_error())])
 		return
 	file.store_string(JSON.stringify(result, "  ") + "\n")
 	file.close()
@@ -268,6 +271,12 @@ func _write_and_quit() -> void:
 			item.frames, item.tiles_attached])
 	print("Замер карты записан: %s" % _out_path)
 	get_tree().quit(0)
+
+
+func _fail(message: String) -> void:
+	error = message
+	printerr("Замер карты: " + message)
+	get_tree().quit(1)
 
 
 ## Ключевые точки облёта: положение — линейно, масштаб — по логарифму (равномерный зум).

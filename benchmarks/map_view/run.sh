@@ -16,6 +16,7 @@ RUNS=${RUNS:-2}
 ROUTE="$ROOT/benchmarks/map_view/route.json"
 APP="$ROOT/build/exports/macos-release/MoscowEpidemicSim.app"
 BIN="$APP/Contents/MacOS/Moscow Epidemic Sim"   # имя — config/name проекта
+STAMP="$APP.commit.json"   # из какого коммита собран экспорт: сводка берёт коммит отсюда, а не из HEAD
 PYTHON=${PYTHON:-/opt/homebrew/bin/python3.14}
 GODOT=${GODOT:-godot}
 
@@ -34,10 +35,18 @@ fi
 
 if [ -z "${NO_EXPORT:-}" ]; then
 	echo "Экспорт release..."
+	rm -f "$STAMP"
 	"$GODOT" --headless --path "$ROOT/game" --export-release "macOS" "$APP" >/dev/null
+	DIRTY=false
+	[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ] && DIRTY=true
+	printf '{"commit": "%s", "dirty": %s}\n' "$(git -C "$ROOT" rev-parse HEAD)" "$DIRTY" >"$STAMP"
 fi
 if [ ! -x "$BIN" ]; then
 	echo "Нет release-экспорта: $BIN" >&2
+	exit 1
+fi
+if [ ! -f "$STAMP" ]; then
+	echo "Неизвестно, из какого коммита собран экспорт ($STAMP): запустите без NO_EXPORT" >&2
 	exit 1
 fi
 
@@ -51,4 +60,4 @@ while [ "$i" -le "$RUNS" ]; do
 		>"$OUT/run-$i.log" 2>"$OUT/run-$i.time.txt"
 	i=$((i + 1))
 done
-"$PYTHON" -I "$ROOT/benchmarks/map_view/summarize.py" "$ROOT" "$APP" "$OUT"
+"$PYTHON" -I "$ROOT/benchmarks/map_view/summarize.py" "$APP" "$OUT"

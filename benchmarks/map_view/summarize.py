@@ -2,7 +2,7 @@
 /usr/bin/time -l, устройство, коммит и пакет. Пишет summary.json и summary.md в каталог прогонов
 и печатает таблицу. Только стандартная библиотека; запускает benchmarks/map_view/run.sh.
 
-    python3.14 -I summarize.py <корень репозитория> <путь к .app> <каталог прогонов>
+    python3.14 -I summarize.py <путь к .app> <каталог прогонов>
 """
 
 import json
@@ -66,15 +66,15 @@ def device() -> dict:
     }
 
 
-def git(root: Path) -> dict:
-    return {
-        "commit": run(["git", "rev-parse", "HEAD"], root),
-        "dirty": bool(run(["git", "status", "--porcelain", "--untracked-files=no"], root)),
-    }
+def build_commit(app: Path) -> dict:
+    """Коммит, из которого собран экспорт (run.sh пишет его при экспорте рядом с .app)."""
+    stamp = app.with_name(app.name + ".commit.json")
+    return json.loads(stamp.read_text()) if stamp.exists() else {"commit": "unknown", "dirty": None}
 
 
 def fmt_mb(value) -> str:
-    return "—" if value is None else f"{value:.0f}"
+    """Нет значения (не измеряется или не разобрано из вывода time) — «нет данных», а не 0."""
+    return "нет данных" if value is None else f"{value:.0f}"
 
 
 def cell(value, fmt: str) -> str:
@@ -90,7 +90,7 @@ def markdown(summary: dict) -> str:
         f"- Устройство: {summary['device']['model']}, {summary['device']['cpu']}, "
         f"{summary['device']['memory_gb']:.0f} ГБ; {summary['device']['os']}; питание: {summary['device']['power']}.",
         f"- Сборка: экспорт {first['build']} ({'редактор' if first['editor'] else 'не редактор'}), Godot {first['godot']}, "
-        f"{first['renderer']}, {first['video_adapter']}; коммит {summary['git']['commit'][:10]}"
+        f"{first['renderer']}, {first['video_adapter']}; экспорт из коммита {summary['git']['commit'][:10]}"
         f"{' (с незакоммиченными изменениями)' if summary['git']['dirty'] else ''}.",
         f"- Пакет: {first['package_id']} {first['package_version']}; участки на диске: "
         + ", ".join(f"уровень {level} — {item['tiles']} шт., {item['bytes'] / 1048576:.1f} МБ"
@@ -105,8 +105,8 @@ def markdown(summary: dict) -> str:
     for n, item in enumerate(runs, 1):
         proc = item.get("process", {})
         lines.append(f"| {n} | {item['overview_load_ms']:.0f} | {item['cache_peak_total_mb']:.0f} | "
-                     f"{fmt_mb(item['static_memory_peak_mb'])} | {proc.get('max_rss_mb', 0):.0f} | "
-                     f"{proc.get('peak_footprint_mb', 0):.0f} |")
+                     f"{fmt_mb(item['static_memory_peak_mb'])} | {fmt_mb(proc.get('max_rss_mb'))} | "
+                     f"{fmt_mb(proc.get('peak_footprint_mb'))} |")
     for scenario in first["scenarios"]:
         name = scenario["name"]
         per_run = [next(s for s in item["scenarios"] if s["name"] == name) for item in runs]
@@ -122,11 +122,14 @@ def markdown(summary: dict) -> str:
 
 
 def main() -> int:
-    root, app, out = (Path(arg) for arg in sys.argv[1:4])
+    app, out = (Path(arg) for arg in sys.argv[1:3])
     runs = []
     for path in sorted(out.glob("run-*.json"), key=lambda p: int(p.stem.split("-")[1])):
         item = json.loads(path.read_text())
         item["process"] = time_stats(path.with_suffix(".time.txt"))
+        if len(item["process"]) < 3:
+            print(f"{path.name}: в выводе /usr/bin/time -l нет части метрик процесса — в сводке «нет данных»",
+                  file=sys.stderr)
         runs.append(item)
     if not runs:
         print(f"В {out} нет результатов прогонов (см. run-*.log и run-*.time.txt)", file=sys.stderr)
@@ -135,7 +138,7 @@ def main() -> int:
         "format": "mesim-map-bench-summary",
         "time": out.name,
         "device": device(),
-        "git": git(root),
+        "git": build_commit(app),
         "app": str(app),
         "runs": runs,
     }
