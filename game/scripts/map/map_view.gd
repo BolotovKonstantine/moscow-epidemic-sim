@@ -123,6 +123,8 @@ func load_map(map_dir: String, cache_limit := MapTileStreamer.DEFAULT_LIMIT_MB <
 	if problem.is_empty():
 		var attached: Variant = _attach(tile, MapTileView.prepare(tile, palette))
 		problem = attached if attached is String else ""
+	if problem.is_empty():
+		overlay.build(tile)   # слои обзора (#16) — часть обязательной загрузки, входят в замер
 	load_stats = {
 		"usec": Time.get_ticks_usec() - started,
 		"static_bytes": OS.get_static_memory_usage() - static_before,
@@ -134,7 +136,6 @@ func load_map(map_dir: String, cache_limit := MapTileStreamer.DEFAULT_LIMIT_MB <
 		return "Обзор региона не загружен\n" + problem
 	# Охват — из заголовка обзора, защищённого SHA256 (с индексом он сверен при загрузке).
 	region_rect = tile.bbox   # у обзора охват обязателен (MapTile)
-	overlay.build(tile)
 	streamer = MapTileStreamer.new(index, palette, cache_limit, _attach, _detach)
 	fit_region()
 	return ""
@@ -159,10 +160,9 @@ func label_layer() -> MapLabelLayer:
 
 
 ## Есть ли в наборе данные слоя (в участках пакетов до 0.4.0 нет зон, остановок, учреждений и маршрутов).
+## Население доступно всегда, как функции: здания без данных о жителях показываются «нет данных».
 func layer_available(name: String) -> bool:
 	match name:
-		"population":
-			return overlay.has_layer("zones")
 		"transit":   # остановки и линии маршрутов необязательны независимо друг от друга
 			return overlay.has_layer("transit") or _transit_lines
 		"facilities", "zones":

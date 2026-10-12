@@ -3,7 +3,8 @@ extends PanelContainer
 
 # Переключатель слоёв карты с легендой (#16): у каждого включённого слоя — обозначения, источник
 # данных и пометка оценок и модельных значений. Цвета берутся из MapTheme, тексты — здесь.
-# Слой без данных в наборе участков (пакеты до 0.4.0) недоступен.
+# Слой без данных в наборе участков (пакеты до 0.4.0) недоступен. Заголовок «Слои» сворачивает панель,
+# чтобы она не закрывала край карты.
 
 const WIDTH := 290.0
 const MARGIN := 8.0
@@ -38,6 +39,8 @@ var _boxes := {}     # слой → CheckBox
 var _legends := {}   # слой → VBoxContainer
 var _list := VBoxContainer.new()
 var _scroll := ScrollContainer.new()
+var _header := Button.new()
+var collapsed := false
 
 
 func _init() -> void:
@@ -56,7 +59,19 @@ func _init() -> void:
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_list.add_theme_constant_override("separation", 2)
 	_scroll.add_child(_list)
-	add_child(_scroll)
+	var column := VBoxContainer.new()
+	_header.flat = true
+	_header.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_header.focus_mode = Control.FOCUS_NONE
+	_header.tooltip_text = "Свернуть или развернуть панель слоёв"
+	_header.add_theme_font_size_override("font_size", 14)
+	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
+		_header.add_theme_color_override(state, Color("#2b2b2b"))
+	_header.pressed.connect(func(): set_collapsed(not collapsed))
+	column.add_child(_header)
+	column.add_child(_scroll)
+	add_child(column)
+	set_collapsed(false)
 
 
 func _ready() -> void:
@@ -67,11 +82,6 @@ func _ready() -> void:
 ## Привязать к карте: переключатели по MapView.LAYER_NAMES, недоступные слои выключены.
 func bind(map: MapView) -> void:
 	_map = map
-	var title := Label.new()
-	title.text = "Слои"
-	title.add_theme_font_size_override("font_size", 14)
-	title.add_theme_color_override("font_color", Color("#2b2b2b"))
-	_list.add_child(title)
 	for layer: String in MapView.LAYER_NAMES:
 		var box := CheckBox.new()
 		box.text = TITLES[layer]
@@ -96,6 +106,14 @@ func bind(map: MapView) -> void:
 	sync()
 
 
+## Свернуть панель до заголовка (слои остаются включёнными) или развернуть.
+func set_collapsed(value: bool) -> void:
+	collapsed = value
+	_header.text = ("▸ Слои" if collapsed else "▾ Слои")
+	_scroll.visible = not collapsed
+	_fit()
+
+
 ## Переключатели и легенды по состоянию карты (слои могли переключиться программно).
 func sync() -> void:
 	for layer: String in _boxes:
@@ -115,8 +133,12 @@ func legend_text(layer: String) -> String:
 
 func _fit() -> void:
 	var viewport := get_viewport_rect().size if is_inside_tree() else Vector2(1280, 720)
-	var available := maxf(120.0, viewport.y - TOP - BOTTOM_RESERVE)
+	var available := maxf(120.0, viewport.y - TOP - BOTTOM_RESERVE - _header.get_combined_minimum_size().y - 16.0)
 	_scroll.custom_minimum_size = Vector2(WIDTH - 16, minf(_list.get_combined_minimum_size().y, available))
+	if collapsed:
+		offset_right = offset_left + _header.get_combined_minimum_size().x + 16
+	else:
+		offset_right = offset_left + WIDTH
 	reset_size()
 
 

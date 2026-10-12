@@ -143,6 +143,11 @@ func _test_fixture(fixture: String) -> void:
 	check(map.layers.functions and not map.layers.population and not panel._boxes["population"].button_pressed,
 		"переключатель включает слой и снимает исключающий")
 	check(panel._legends["functions"].visible and not panel._legends["population"].visible, "легенда — только у включённых слоёв")
+	panel.set_collapsed(true)
+	check(not panel._scroll.visible and map.layers.functions and panel.size.x < MapLayerPanel.WIDTH,
+		"свёрнутая панель — только заголовок, слои остаются включёнными (ширина %.0f)" % panel.size.x)
+	panel.set_collapsed(false)
+	check(panel._scroll.visible, "панель разворачивается")
 	panel.free()
 	map.free()
 	await process_frame
@@ -151,13 +156,13 @@ func _test_fixture(fixture: String) -> void:
 ## Участки без слоёв данных (как пакеты до 0.4.0): слои данных недоступны, остальное работает.
 func _test_without_data(stream: String) -> void:
 	var map := _map(stream)
-	for name: String in ["population", "transit", "facilities", "zones"]:
+	for name: String in ["transit", "facilities", "zones"]:
 		check(not map.layer_available(name), "без данных слой %s недоступен" % name)
 	# Линии маршрутов без остановок: слой транспорта доступен по счётчику индекса.
 	map.index.tiles[1].transit_lines = 3
 	map._transit_lines = map.index.tiles.any(func(entry): return entry.transit_lines > 0)
 	check(map.layer_available("transit"), "транспорт доступен по линиям маршрутов без остановок")
-	for name: String in ["functions", "roads", "boundary"]:
+	for name: String in ["functions", "population", "roads", "boundary"]:
 		check(map.layer_available(name), "слой %s доступен и без данных пакета 0.4.0" % name)
 	map.set_layer("transit", true)
 	map.set_layer("population", true)
