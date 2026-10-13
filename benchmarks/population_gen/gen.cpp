@@ -269,6 +269,8 @@ void compose(const Params& p, const Sampler& sm, int territory, Rng& r, int size
         int row = std::min(size, 6) - 2;
         double q[4];
         for (int k = 1; k < 4; ++k) q[k] = tp.kids_p[row * 4 + k] * sm.kids_scale;
+        double with_kids = q[1] + q[2] + q[3];
+        if (with_kids > 1) for (int k = 1; k < 4; ++k) q[k] /= with_kids;  // сохранить соотношение 1 : 2 : 3+ детей
         q[0] = std::max(0.0, 1 - q[1] - q[2] - q[3]);
         int k = categorical(r, q, 4);
         if (k == 3) {
@@ -315,7 +317,8 @@ uint8_t pick_role(const TerritoryParams& tp, int age, Rng& r) {
     if (age < kAdult) {
         if (u < tp.p_gen[age]) return kPupil;
         if (u < tp.p_gen[age] + tp.p_prof[age]) return kStudent;
-        if (v < tp.p_emp[age]) return kWorker;
+        // Как у взрослых: занятость среди не учащихся, чтобы сохранить долю работающих переписи.
+        if (v < std::min(1.0, tp.p_emp[age] / std::max(1e-9, 1 - tp.p_gen[age] - tp.p_prof[age]))) return kWorker;
         return kNotWorking;
     }
     if (u < tp.p_prof[age]) return kStudent;
@@ -768,6 +771,8 @@ int main(int argc, char** argv) {
                 calibrate_s, g.count_s, g.fill_s, g.households, (after - before) / 1048576.0, double(after - before) / double(population));
 
     Invariants inv = check(p, c, pop);
+    bool broken = pop.age.size() != population || inv.building_mismatch || inv.split_households || inv.empty_households ||
+                  inv.no_adult || inv.parent_gap;
     std::printf("  \"invariants\": {\"persons_equal_residents\": %s, \"building_mismatch\": %lld, \"split_households\": %lld, \"empty_households\": %lld, \"no_adult\": %lld, \"parent_gap_violations\": %lld},\n",
                 pop.age.size() == population ? "true" : "false", (long long)inv.building_mismatch, (long long)inv.split_households,
                 (long long)inv.empty_households, (long long)inv.no_adult, (long long)inv.parent_gap);
@@ -776,8 +781,10 @@ int main(int argc, char** argv) {
         Population again;
         auto t1 = Clock::now();
         generate(p, c, sm, again, true);
+        bool equal = population_hash(again) == hash;
+        broken = broken || !equal;
         std::printf("  \"determinism\": {\"hash\": \"%016llx\", \"reverse_order_equal\": %s, \"reverse_s\": %.3f},\n", (unsigned long long)hash,
-                    population_hash(again) == hash ? "true" : "false", seconds_since(t1));
+                    equal ? "true" : "false", seconds_since(t1));
     }
 
     report_population(p, c, pop, sm);
@@ -786,5 +793,7 @@ int main(int argc, char** argv) {
     // Прирост footprint после назначения не печатается: macOS возвращает освобождённую память лениво,
     // и разность искажается освобождением копии из проверки порядка. Пик — по /usr/bin/time -l в run.sh.
     std::printf("  \"memory\": {\"total_footprint_mb\": %.1f}\n}\n", phys_footprint() / 1048576.0);
-    return 0;
+    // Нарушение инвариантов — ошибка прогона, а не только строка отчёта: run.sh (set -e) должен упасть.
+    if (broken) std::fprintf(stderr, "нарушены инварианты населения или независимость от порядка\n");
+    return broken ? 1 : 0;
 }
