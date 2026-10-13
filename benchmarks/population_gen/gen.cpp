@@ -611,7 +611,9 @@ AssignResult assign_places(const Params& p, const City& c, Population& pop) {
         if (kind == kJob && r.uniform() < p.outside_job_share) continue;  // внешнее место — модель #35
         int r0 = 0;
         if (kind == kJob || kind == kProfessional) {
-            double z = (r.uniform() + r.uniform() + r.uniform() + r.uniform() - 2) * std::sqrt(3.0);
+            // Бокс — Мюллер: настоящая N(0, 1) для логнормального расстояния (libm, как exp ниже).
+            double u1 = 1.0 - r.uniform(), u2 = r.uniform();
+            double z = std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * M_PI * u2);
             r0 = std::min(p.max_ring, int(std::lround(std::exp(mu + p.work_sigma * z))));
         }
         pop.place[id] = assign_one(g, c, pools[kind], c.zone[pop.home[id]], r0, p.max_ring, r, pop.flags[id], res.st[kind]);
@@ -622,7 +624,7 @@ AssignResult assign_places(const Params& p, const City& c, Population& pop) {
 
 // ---------- Проверки и отчёт ----------
 
-uint64_t fnv(const void* data, size_t bytes, uint64_t h = 1469598103934665603ull) {
+uint64_t fnv(const void* data, size_t bytes, uint64_t h = 14695981039346656037ull) {
     const uint8_t* p = static_cast<const uint8_t*>(data);
     for (size_t i = 0; i < bytes; ++i) { h ^= p[i]; h *= 1099511628211ull; }
     return h;

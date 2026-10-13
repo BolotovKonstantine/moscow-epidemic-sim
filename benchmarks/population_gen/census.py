@@ -109,7 +109,8 @@ def household_children(rows, region):
     columns = [3, 4, 5, 6, 7]
     total = [number(pick("Все домохозяйства")[c]) for c in columns]
     with_children = {label: [number(pick(label)[c]) for c in columns] for label in ("с 1 ребенком", "с 2 детьми", "с 3 и более детьми")}
-    children_3_plus = [number(pick("в них детей")[c]) for c in columns]
+    # У 6+ число детей стоит в подстолбце «в них лиц» (8), а не в «число домохозяйств» (7).
+    children_3_plus = [number(pick("в них детей")[c]) for c in columns[:-1] + [8]]
     return {"sizes": ["2", "3", "4", "5", "6+"], "households": total, "with_1_child": with_children["с 1 ребенком"],
             "with_2_children": with_children["с 2 детьми"], "with_3_plus_children": with_children["с 3 и более детьми"],
             "children_in_3_plus": children_3_plus}
