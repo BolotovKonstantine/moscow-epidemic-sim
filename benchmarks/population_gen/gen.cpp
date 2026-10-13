@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -114,6 +115,25 @@ std::map<std::string, std::vector<double>> read_lines(const std::string& path) {
     return out;
 }
 
+// seed — целое u64: через double младшие биты значений больше 2^53 потерялись бы.
+uint64_t read_seed(const std::string& path) {
+    std::ifstream in(path);
+    std::string line;
+    while (std::getline(in, line)) {
+        std::istringstream s(line);
+        std::string name, value;
+        if (s >> name >> value && name == "seed") {
+            char* end = nullptr;
+            errno = 0;
+            unsigned long long seed = std::strtoull(value.c_str(), &end, 10);
+            if (errno || *end || value[0] == '-') { std::fprintf(stderr, "seed должен быть целым u64: %s\n", value.c_str()); std::exit(1); }
+            return seed;
+        }
+    }
+    std::fprintf(stderr, "нет параметра seed\n");
+    std::exit(1);
+}
+
 template <size_t N> void copy_to(std::array<double, N>& dst, const std::vector<double>& src, const char* name) {
     if (src.size() != N) { std::fprintf(stderr, "%s: ожидалось %zu значений, получено %zu\n", name, N, src.size()); std::exit(1); }
     std::copy(src.begin(), src.end(), dst.begin());
@@ -127,7 +147,8 @@ Params load_params(const std::string& dir) {
         return it->second;
     };
     Params p;
-    p.seed = uint64_t(get("seed")[0]);
+    get("seed");
+    p.seed = read_seed(dir + "/params.txt");
     for (int t = 0; t < kTerritories; ++t) {
         std::string s = "." + std::to_string(t);
         copy_to(p.t[t].age_target, get("age_w" + s), "age_w");
@@ -322,8 +343,9 @@ uint8_t pick_role(const TerritoryParams& tp, int age, Rng& r) {
         return kNotWorking;
     }
     if (u < tp.p_prof[age]) return kStudent;
-    // Занятость среди не студентов: доля переписи / (1 − доля студентов), чтобы сохранить итог работающих.
-    double p_emp = std::min(1.0, tp.p_emp[age] / std::max(1e-9, 1 - tp.p_prof[age]));
+    if (u < tp.p_prof[age] + tp.p_gen[age]) return kPupil;  // общее образование взрослых (вечерние школы)
+    // Занятость среди не учащихся: доля переписи / (1 − доля учащихся), чтобы сохранить итог работающих.
+    double p_emp = std::min(1.0, tp.p_emp[age] / std::max(1e-9, 1 - tp.p_prof[age] - tp.p_gen[age]));
     if (v < p_emp) return kWorker;
     return age >= 60 ? kPensioner : kNotWorking;
 }
