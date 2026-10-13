@@ -550,7 +550,7 @@ uint32_t assign_one(const ZoneGrid& g, const City& c, PlacePool& pool, uint32_t 
     if (home_zone == kNone || pool.places.empty()) { flags |= kNoPlace; st.none++; return kNone; }
     std::vector<uint32_t> found;
     for (int k = 0; k <= 2 * max_ring + 1; ++k) {
-        int ring = (k % 2 == 0) ? r0 + k / 2 : r0 - (k + 1) / 2;
+        int ring = (k % 2 == 0) ? r0 - k / 2 : r0 + (k + 1) / 2;  // r0, r0+1, r0−1, r0+2, …
         if (ring < 0 || ring > max_ring) continue;
         double sum = 0;
         found.clear();
