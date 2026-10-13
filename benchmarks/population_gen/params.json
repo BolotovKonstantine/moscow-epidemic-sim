@@ -1,0 +1,36 @@
+{
+  "note": "Параметры прототипа генерации жителей (#34). Наблюдаемые числа берутся из census.json; здесь только оценки (estimated, метод в комментарии) и игровые настройки (game_setting). Численные значения — предложение исполнителя, а не статистика.",
+  "seed": 20261013,
+  "household": {
+    "size_6_plus_max": {"value": 12, "kind": "game_setting", "comment": "размер 6+ — 6 + геометрическое число до среднего переписи, не больше этого"},
+    "couple_share": {"value": 0.7, "kind": "game_setting", "comment": "доля домохозяйств из 2+ взрослых, где второй взрослый — партнёр близкого возраста"},
+    "partner_age_gap_sd": {"value": 4.0, "kind": "game_setting", "comment": "стандартное отклонение разницы возраста партнёров, лет"},
+    "parent_age_gap": {"value": [18, 45], "kind": "game_setting", "comment": "главный взрослый старше старшего ребёнка на столько лет"},
+    "calibration_rounds": {"value": 8, "kind": "game_setting", "comment": "раунды калибровки возраста по выборке зданий"},
+    "calibration_sample_every": {"value": 20, "kind": "game_setting", "comment": "в выборку калибровки берётся каждое такое здание"}
+  },
+  "places": {
+    "jobs_per_m2": {
+      "kind": "estimated",
+      "method": "Вместимость рабочих мест здания = площадь этажей × Σ доля функции × вес функции; веса нормируются так, что сумма мест = число работающих × slack. Абсолютная плотность не нужна, важны только отношения.",
+      "uncertainty": "Отношения весов функций не проверены источником; ошибка в 2 раза между функциями возможна",
+      "value": {"work": 1.0, "retail": 0.6, "education": 0.4, "medical": 0.6, "control": 0.6, "transport": 0.3, "other": 0.3, "residential": 0.0}
+    },
+    "slack": {"kind": "game_setting", "comment": "запас мест сверх спроса региона", "value": {"job": 1.05, "kindergarten": 1.05, "school": 1.1, "professional": 1.1}},
+    "facility_kinds": {"kindergarten": "kindergarten", "school": "school", "college": "professional", "university": "professional"},
+    "outside_job_share": {"value": 0.0, "kind": "game_setting", "comment": "доля работающих с местом за границей региона; выбирается в #35"},
+    "max_ring_zones": {"value": 60, "kind": "game_setting", "comment": "дальше этого числа колец зон (1 км) место не ищется; иначе — сверх вместимости в ближайшем"},
+    "work_distance_km": {"value": {"median": 9.0, "sigma": 0.8}, "kind": "game_setting", "comment": "логнормальное желаемое расстояние до работы и вуза; модель спроса уточняется в #41"}
+  },
+  "profiles": {
+    "kind": "game_setting",
+    "comment": "Коды профилей — вымышленные уровни сценария, не статистика. Распределения одинаковы для всех территорий, кроме доступа к автомобилю.",
+    "age_bands": [0, 7, 18, 30, 45, 60, 75],
+    "socio_household": {"levels": ["low", "middle", "upper_middle", "high"], "p": [0.2, 0.45, 0.25, 0.1]},
+    "car_household": {"moscow": 0.45, "buffer": 0.6},
+    "car_mode_if_available": 0.6,
+    "contact": {"levels": ["low", "medium", "high"], "p_by_band": [[0.2, 0.5, 0.3], [0.1, 0.4, 0.5], [0.15, 0.45, 0.4], [0.25, 0.5, 0.25], [0.3, 0.5, 0.2], [0.4, 0.45, 0.15], [0.55, 0.4, 0.05]]},
+    "health": {"levels": ["robust", "typical", "chronic", "fragile"], "p_by_band": [[0.3, 0.6, 0.08, 0.02], [0.35, 0.6, 0.04, 0.01], [0.3, 0.6, 0.08, 0.02], [0.2, 0.6, 0.17, 0.03], [0.1, 0.55, 0.3, 0.05], [0.05, 0.45, 0.4, 0.1], [0.02, 0.3, 0.45, 0.23]]},
+    "behavior": {"levels": ["careless", "average", "careful", "strict"], "p": [0.2, 0.4, 0.3, 0.1]}
+  }
+}

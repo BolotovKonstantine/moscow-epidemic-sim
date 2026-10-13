@@ -118,8 +118,11 @@ class RegistryTests(unittest.TestCase):
                     with self.assertRaises(ManifestError):
                         load_registry(path)
             real = Path(__file__).resolve().parents[2] / "data" / "manifests" / "sources.json"
-            self.assertEqual(len(load_registry(real)), 2)
             registry = json.loads(real.read_text(encoding="utf-8"))
+            loaded = load_registry(real)
+            self.assertEqual(len(loaded), len(registry["sources"]))
+            self.assertIn("osm-geofabrik-cfd-20210101", loaded)
+            self.assertIn("ghs-pop-e2020-r2023a-r4c22", loaded)
             # Два источника с одним файлом: fetch перезаписывал бы один другим.
             twin = dict(registry["sources"][0], source_id="osm-copy", file=registry["sources"][0]["file"].upper())   # другой регистр
             path.write_text(json.dumps({"registry_version": 1, "sources": registry["sources"] + [twin]}, ensure_ascii=False))
