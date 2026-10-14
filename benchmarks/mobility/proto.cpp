@@ -909,7 +909,10 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                             if (in.gw_transit[gi] || in.gw_node[gi] == kNone) continue;
                             uint32_t ds = c.ch.query(cq, a, in.gw_node[gi]);
                             if (ds == kInf) continue;
-                            uint32_t tm = ds / 10 + uint32_t(p.car_park_s) + walk_s(p, d0);
+                            // Остаток ребра от внутреннего узла до точки пересечения границы — по прямой со скоростью tertiary.
+                            float edge = dist(&in.node_xy[2 * in.gw_node[gi]], &in.gw_xy[2 * gi]);
+                            uint32_t tail = uint32_t(std::lround(edge / (p.car_speed[3] / 3.6)));
+                            uint32_t tm = ds / 10 + tail + uint32_t(p.car_park_s) + walk_s(p, d0);
                             if (tm < best) { best = tm; g = gi; }
                         }
                         (void)d1;
@@ -1074,11 +1077,12 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
         for (uint32_t r = 0; r + 1 < t.r_first.size(); ++r) {
             uint8_t mode = t.r_mode[r];
             Rng rng{tkey, r, 0xFFFFFFFFu};
-            uint32_t h0 = p.headway_s[mode][period_at(p, from)];
-            uint32_t tm = from + (h0 ? rng.below(h0) : 0);
+            uint32_t tm = from;
+            bool phased = false;  // сдвиг фазы — при первом периоде с движением, свой у каждого маршрута
             while (tm < until) {
                 uint32_t h = p.headway_s[mode][period_at(p, tm)];
-                if (h == 0) { tm += 600; continue; }
+                if (h == 0) { tm += 60; phased = false; continue; }
+                if (!phased) { tm += rng.below(h); phased = true; if (tm >= until) break; }
                 if (out) out->push_back({r, tm});
                 ++count; tm += h;
             }
@@ -1129,16 +1133,20 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
 
     uint32_t next_check = cfg.start;
     int64_t waiting_total = 0, wait_sum = 0, late_n = 0; double late_sum = 0;
+    // Счётчики состояний и пиков ведутся на каждом переходе; проверка раз в 15 минут сверяет их полным проходом.
+    int64_t cnt[kStates]{}; cnt[kHome] = int64_t(n);
+    int64_t active_runs = 0;
+    std::vector<uint32_t> active_wait(t.n_rs, 0);  // ждущие в очереди позиции без отменивших
+    auto set_state = [&](uint32_t id, uint8_t st) {
+        cnt[state[id]]--; cnt[st]++; state[id] = st;
+        if (st == kRiding) res.peak_onboard = std::max(res.peak_onboard, cnt[kRiding]);
+        if (st == kWaiting) res.peak_waiting = std::max(res.peak_waiting, cnt[kWaiting]);
+    };
     auto check = [&](uint32_t now) {
-        int64_t cnt[kStates]{};
-        for (size_t i = 0; i < n; ++i) cnt[state[i]]++;
-        int64_t total = 0; for (int s = 0; s < kStates; ++s) total += cnt[s];
+        int64_t full[kStates]{};
+        for (size_t i = 0; i < n; ++i) full[state[i]]++;
+        int64_t total = 0; for (int s = 0; s < kStates; ++s) { total += full[s]; if (full[s] != cnt[s]) res.conservation_failures++; }
         if (total != int64_t(n)) res.conservation_failures++;
-        res.peak_onboard = std::max(res.peak_onboard, cnt[kRiding]);
-        res.peak_waiting = std::max(res.peak_waiting, cnt[kWaiting]);
-        int64_t active = 0;
-        for (size_t k = 0; k < runs.size(); ++k) if (run_pos[k] > 0 && run_pos[k] < 255) active++;
-        res.peak_active_runs = std::max(res.peak_active_runs, active);
         res.peak_mb = std::max(res.peak_mb, mb(phys_footprint() - base));
         (void)now;
     };
@@ -1152,6 +1160,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
             uint32_t k = id - kRunBase, r = runs[k].route;
             uint32_t pos = run_pos[k], rs = t.r_first[r] + pos;
             res.run_stop_events++;
+            if (pos == 0) res.peak_active_runs = std::max(res.peak_active_runs, ++active_runs);
             std::vector<Onboard>& ob = onboard[k];
             // Высадка
             size_t keep = 0;
@@ -1166,9 +1175,9 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 ride_ix[pid]++;
                 run_of[pid] = kNone;
                 if (ride_ix[pid] < rides_of(pid)) {  // пересадка: пешком к следующей посадке
-                    state[pid] = kWalking; schedule(pid, now + std::max<uint32_t>(1, walk_after));
+                    set_state(pid, kWalking); schedule(pid, now + std::max<uint32_t>(1, walk_after));
                 } else {
-                    state[pid] = kWalking; schedule(pid, now + std::max<uint32_t>(1, walk_after + pl.egress_walk_s[pid]));
+                    set_state(pid, kWalking); schedule(pid, now + std::max<uint32_t>(1, walk_after + pl.egress_walk_s[pid]));
                 }
             }
             ob.resize(keep);
@@ -1189,7 +1198,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 uint8_t wagon = uint8_t(wr.below(p.wagons[mode]));
                 ob.push_back({pid, uint8_t(alight), wagon, now});
                 res.max_group = std::max<int64_t>(res.max_group, ++wagon_load[k][wagon]);
-                state[pid] = kRiding; run_of[pid] = k; next[pid] = kNone;
+                set_state(pid, kRiding); run_of[pid] = k; next[pid] = kNone; active_wait[rs]--;
                 wait_sum += now - wait_since[pid]; res.boardings++; res.boardings_by[mode]++;
                 group_seen.push_back(uint64_t(k) << 8 | wagon);
                 res.board_order.push_back(pid);
@@ -1199,13 +1208,13 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
             // Остались ждать: рейс полон, оставшиеся ждут следующего. Предел ожидания — отдельное событие жителя.
             if (!last) {
                 while (head < qq.size() && state[qq[head]] != kWaiting) ++head;  // отменившие раньше
-                if (ob.size() >= cap) { res.left_behind += int64_t(qq.size() - head); res.left_by[mode] += int64_t(qq.size() - head); }
-                res.max_queue = std::max<int64_t>(res.max_queue, int64_t(qq.size() - head));
+                if (ob.size() >= cap) { res.left_behind += active_wait[rs]; res.left_by[mode] += active_wait[rs]; }
+                res.max_queue = std::max<int64_t>(res.max_queue, active_wait[rs]);
             }
             if (head > 1024 && head * 2 > qq.size()) { qq.erase(qq.begin(), qq.begin() + head); head = 0; }
             if (!last) { run_pos[k] = uint8_t(pos + 1); q.push(Key(now + t.rs_ride_s[rs]) << 32 | id); }
             else {
-                run_pos[k] = 255;
+                run_pos[k] = 255; --active_runs;
                 if (!ob.empty()) res.capacity_violations++;
                 for (uint16_t w : wagon_load[k]) if (w) res.capacity_violations++;  // учёт вагонов сходится с высадкой
                 std::vector<Onboard>().swap(ob);
@@ -1217,24 +1226,24 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
         uint8_t m = pl.mode[id];
         switch (state[id]) {
             case kHome:
-                if (m == kModeWalk) { state[id] = kWalking; schedule(id, now + pl.travel_s[id]); }
-                else if (m == kModeCar) { state[id] = kDriving; schedule(id, now + pl.travel_s[id]); }
-                else if (m == kModeOutside) { state[id] = kDriving; schedule(id, now + pl.travel_s[id]); }
-                else if (m == kModeTransit) { state[id] = kWalking; ride_ix[id] = 0; schedule(id, now + std::max<uint32_t>(1, pl.origin_walk_s[id])); }
+                if (m == kModeWalk) { set_state(id, kWalking); schedule(id, now + pl.travel_s[id]); }
+                else if (m == kModeCar) { set_state(id, kDriving); schedule(id, now + pl.travel_s[id]); }
+                else if (m == kModeOutside) { set_state(id, kDriving); schedule(id, now + pl.travel_s[id]); }
+                else if (m == kModeTransit) { set_state(id, kWalking); ride_ix[id] = 0; schedule(id, now + std::max<uint32_t>(1, pl.origin_walk_s[id])); }
                 break;
             case kWalking:
             case kDriving:
                 if (m == kModeOutside) {
-                    state[id] = kOutside;
+                    set_state(id, kOutside);
                     if (cfg.return_time > now) schedule(id, cfg.return_time);
                 } else if (m == kModeTransit && ride_ix[id] < rides_of(id)) {
                     uint32_t route, board, alight, walk_after;
                     ride_of(id, ride_ix[id], route, board, alight, walk_after);
                     uint32_t rs = t.r_first[route] + board;
-                    state[id] = kWaiting; wait_since[id] = now; queue[rs].push_back(id);
+                    set_state(id, kWaiting); wait_since[id] = now; queue[rs].push_back(id); active_wait[rs]++;
                     schedule(id, now + uint32_t(p.max_wait));  // предел ожидания; посадка делает этот ключ устаревшим
                 } else {
-                    state[id] = kAtPlace;
+                    set_state(id, kAtPlace);
                     late_sum += double(now) - arrive_target[id]; late_n++;
                     h = fnv(&id, 4, h); h = fnv(&now, 4, h);
                 }
@@ -1242,15 +1251,16 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
             case kWaiting: {  // ждал max_wait и не сел: отмена поездки (другой путь — #44); из очереди удаляется лениво
                 uint32_t route, board, alight, walk_after;
                 ride_of(id, ride_ix[id], route, board, alight, walk_after);
-                state[id] = kReturning; res.cancelled++; res.cancelled_by[t.r_mode[route]]++;
+                set_state(id, kReturning); res.cancelled++; res.cancelled_by[t.r_mode[route]]++;
+                active_wait[t.r_first[route] + board]--;
                 schedule(id, now + (now - depart[id]));  // обратно тем же временем; дома он снова в учёте «дома»
                 break;
             }
             case kOutside:
-                state[id] = kReturning; schedule(id, now + pl.travel_s[id]);
+                set_state(id, kReturning); schedule(id, now + pl.travel_s[id]);
                 break;
             case kReturning:
-                state[id] = kHome;
+                set_state(id, kHome);
                 if (m == kModeOutside) res.outside_returned++;
                 h = fnv(&id, 4, h); h = fnv(&now, 4, h);
                 break;
