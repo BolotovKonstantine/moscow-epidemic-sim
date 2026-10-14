@@ -355,23 +355,29 @@ class BuildTests(unittest.TestCase):
 
     def test_population_is_integer_and_conserved(self):
         population = self.report["population"]
-        self.assertEqual(population["allocated"], 1671)
-        self.assertAlmostEqual(population["unallocated"], 7.0)
+        self.assertEqual(population["allocated"], 1678)   # округлённый итог сетки 1677.7
+        self.assertAlmostEqual(population["unallocated"], 0.0)
         self.assertAlmostEqual(population["grid_total_in_region"], 1677.7)
         self.assertAlmostEqual(population["by_method"]["cell_unknown_building"], 20.0)
         # Дом 2235.8 м² × 0.1 = 223.58 жителя; избыток 376.42 попадает в соседнюю зону без зданий
         # и через блок зон делится между жилыми зданиями по оставшейся вместимости.
         self.assertAlmostEqual(population["by_method"]["block_residential"], 376.4, places=1)
         self.assertEqual(population["by_method"]["block_over_capacity"], 0.0)
+        # Ячейка далеко от зданий: её блок без зданий отдаёт 7 жителей ближайшему блоку с ними.
+        self.assertAlmostEqual(population["by_method"]["nearest_block"], 7.0)
+        self.assertEqual(population["nearest_block"]["blocks"], 1)
+        self.assertEqual([(t["residents"], t["distance_m"]) for t in population["nearest_block"]["transfers"]], [(7.0, 25000)])
+        self.assertEqual(population["nearest_zone_cells"]["cells"], 0)
         rows = read_csv(self.out / "population.csv.gz")
-        self.assertEqual(sum(int(row["residents"]) for row in rows), 1671)
+        self.assertEqual(sum(int(row["residents"]) for row in rows), 1678)
         self.assertEqual(sorted((int(row["residents"]), row["method"]) for row in rows),
-                         [(20, "cell_unknown_building"), (150, "block_residential"), (224, "cell_residential"), (1277, "cell_residential")])
+                         [(7, "nearest_block"), (20, "cell_unknown_building"), (150, "block_residential"), (224, "cell_residential"), (1277, "cell_residential")])
         zones = [json.loads(line)["properties"] for line in gzip.open(self.out / "zones.geojsonl.gz", "rt", encoding="utf-8")]
-        self.assertEqual(sum(zone["residents"] for zone in zones), 1671)
+        self.assertEqual(sum(zone["residents"] for zone in zones), 1678)
         checks = {check["check"]: check["status"] for check in self.report["checks"]}
         self.assertEqual(checks["population_conserved"], "pass")
         self.assertEqual(checks["population_matches_grid"], "pass")
+        self.assertEqual(checks["population_fully_allocated"], "pass")
         self.assertEqual(checks["raster_covers_region"], "pass")
         self.assertEqual(checks["residential_density_plausible"], "pass")
         # Ячейка далеко от зданий — без жилья; ячейка дома с избытком — переполнение вместимости.

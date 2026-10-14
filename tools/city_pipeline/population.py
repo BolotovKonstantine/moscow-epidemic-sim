@@ -10,8 +10,11 @@
    затем здания без функции.
 4. Остаток зон собирается в блок block_zones × block_zones зон и делится так же;
    если вместимости не хватило — сверх потолка (метод block_over_capacity).
-   Блок без подходящих зданий оставляет население нераспределённым (в отчёте).
-5. Целые числа — метод наибольших остатков по всему региону, ничьи по ID здания.
+   Ячейка, центр которой не попал ни в одну зону, отдаёт остаток ближайшей зоне.
+5. Остаток блока без подходящих зданий переходит ближайшему блоку с ними
+   (центры блоков — центры их территории в метрической проекции, ничьи — по ключу
+   блока) и делится там по весу без потолка (метод nearest_block). Переносы — в отчёте.
+6. Целые числа — метод наибольших остатков по всему региону, ничьи по ID здания.
    Метод здания — этап, давший ему больше всего жителей.
 """
 
@@ -27,7 +30,7 @@ from .buildings import FUNCTIONS
 
 METHODS = (
     "cell_residential", "cell_unknown_building", "zone_residential", "zone_unknown_building",
-    "block_residential", "block_unknown_building", "block_over_capacity",
+    "block_residential", "block_unknown_building", "block_over_capacity", "nearest_block",
 )
 
 
@@ -44,6 +47,8 @@ class PopulationResult:
     cells_in_region: int
     populated_cells_without_housing: int       # нет ни жилых зданий, ни зданий без функции
     populated_cells_over_capacity: int         # здания есть, но их вместимости не хватило
+    nearest_zone: dict = None    # ячейки вне зон, отданные ближайшей зоне: число, остаток, переносы
+    nearest_block: dict = None   # остаток блоков без зданий, отданный ближайшему блоку: итог, переносы
 
 
 def outward_window(window, width, height):
@@ -95,8 +100,14 @@ def read_cells(raster_path, region_wgs84, region_metric=None, projector=None):
     }
 
 
-def allocate(buildings, building_zone, cells, cell_zone, zone_ix, zone_iy, config, building_ids):
-    """Распределить население ячеек по зданиям. building_zone/cell_zone — индексы зон, zone_ix/iy — их сетка."""
+def allocate(buildings, building_zone, cells, cell_zone, zone_ix, zone_iy, config, building_ids,
+             zone_x=None, zone_y=None, zone_area=None, zone_ids=None, cell_nearest_zone=None):
+    """Распределить население ячеек по зданиям. building_zone/cell_zone — индексы зон, zone_ix/iy — их сетка.
+
+    zone_x/zone_y/zone_area — центры (метры) и площади зон для центров блоков; без них остаток блоков
+    без зданий не переносится. cell_nearest_zone — маска ячеек, присоединённых к ближайшей зоне,
+    а не содержащих её центр (только для отчёта).
+    """
     count = len(building_ids)
     residential_share = buildings.shares[:, FUNCTIONS.index("residential")]
     weight = buildings.floor_area_m2 * residential_share
@@ -163,6 +174,17 @@ def allocate(buildings, building_zone, cells, cell_zone, zone_ix, zone_iy, confi
     in_zone = cell_zone >= 0
     np.add.at(pool, cell_zone[in_zone], remaining[in_zone])
     unallocated = float(remaining[~in_zone].sum())
+    nearest_zone = {"cells": 0, "residents": 0.0, "transfers": []}
+    if cell_nearest_zone is not None and cell_nearest_zone.any():
+        attached = np.nonzero(cell_nearest_zone & in_zone)[0]
+        names = zone_ids if zone_ids is not None else [str(index) for index in range(zone_count)]
+        nearest_zone = {
+            "cells": int(attached.size), "residents": round(float(remaining[attached].sum()), 1),
+            "transfers": [{"lon": round(float(cells["lon"][row]), 6), "lat": round(float(cells["lat"][row]), 6),
+                           "zone_id": names[cell_zone[row]], "residents": round(float(remaining[row]), 1)}
+                          for row in attached if remaining[row] > 0.05],
+        }
+    nearest_block = {"residents": 0.0, "blocks": 0, "transfers": []}
     if config["population"]["zone_pool_fallback"]:
         pool = spread(2, building_zone, zone_count, weight, pool)
         pool = spread(3, building_zone, zone_count, unknown_weight, pool)
@@ -177,6 +199,39 @@ def allocate(buildings, building_zone, cells, cell_zone, zone_ix, zone_iy, confi
         block_pool = spread(4, building_block, block_count, weight, block_pool)
         block_pool = spread(5, building_block, block_count, unknown_weight, block_pool)
         block_pool = spread(6, building_block, block_count, weight + unknown_weight, block_pool, capped=False)
+        # 8. Остаток блоков без подходящих зданий — ближайшему блоку с ними, без потолка.
+        if zone_x is not None and (block_pool > 1e-6).any():
+            area = np.zeros(block_count)
+            sum_x = np.zeros(block_count)
+            sum_y = np.zeros(block_count)
+            np.add.at(area, zone_block, zone_area)
+            np.add.at(sum_x, zone_block, zone_area * zone_x)
+            np.add.at(sum_y, zone_block, zone_area * zone_y)
+            center_x = sum_x / np.maximum(area, 1e-9)
+            center_y = sum_y / np.maximum(area, 1e-9)
+            capacity = np.zeros(block_count)
+            usable = building_block >= 0
+            np.add.at(capacity, building_block[usable], (weight + unknown_weight)[usable])
+            targets = np.nonzero(capacity > 0)[0]
+            sources = np.nonzero(block_pool > 1e-6)[0]   # без следов округления плавающей точки
+            if targets.size:
+                unique_keys = np.unique(block_keys)
+                block_ix = np.floor_divide(unique_keys, 1_000_000)
+                block_iy = unique_keys - block_ix * 1_000_000
+                moved = np.zeros(block_count)
+                for source in sources:
+                    distance = np.hypot(center_x[targets] - center_x[source], center_y[targets] - center_y[source])
+                    # Индекс блока упорядочен по его ключу: при равном расстоянии — меньший ключ.
+                    best = np.lexsort((targets, distance))[0]
+                    moved[targets[best]] += block_pool[source]
+                    nearest_block["transfers"].append({
+                        "from_block": f"b{block_ix[source]}_{block_iy[source]}", "to_block": f"b{block_ix[targets[best]]}_{block_iy[targets[best]]}",
+                        "residents": round(float(block_pool[source]), 1), "distance_m": round(float(distance[best])),
+                    })
+                nearest_block["residents"] = round(float(block_pool[sources].sum()), 1)
+                nearest_block["blocks"] = int(sources.size)
+                block_pool[sources] = 0.0
+                block_pool += spread(7, building_block, block_count, weight + unknown_weight, moved, capped=False)
         unallocated += float(block_pool.sum())
     else:
         unallocated += float(pool.sum())
@@ -199,6 +254,7 @@ def allocate(buildings, building_zone, cells, cell_zone, zone_ix, zone_iy, confi
         unallocated=unallocated, by_method=by_method,
         raster_covers_region=bool(cells["covers"]), cells_in_region=cells["cells_in_region"], missing_cells=cells["missing_cells"],
         populated_cells_without_housing=cells_without_housing, populated_cells_over_capacity=cells_over_capacity,
+        nearest_zone=nearest_zone, nearest_block=nearest_block,
     )
 
 

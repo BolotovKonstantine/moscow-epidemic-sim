@@ -383,7 +383,13 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
     cells = read_cells(raster, region_wgs, region_metric, projector)
     cx, cy = cell_points(cells, projector)
     cell_zone = zones.index_of(cx, cy)
-    population = allocate(buildings, building_zone, cells, cell_zone, zones.ix, zones.iy, config, building_ids)
+    # Центр ячейки в регионе, но вне зон (обрезка зон границей) — ячейка присоединяется к ближайшей зоне.
+    cell_nearest_zone = cell_zone < 0
+    cell_zone[cell_nearest_zone] = zones.nearest(cx[cell_nearest_zone], cy[cell_nearest_zone])
+    zone_center = shapely.centroid(zones.geometry_metric)
+    population = allocate(buildings, building_zone, cells, cell_zone, zones.ix, zones.iy, config, building_ids,
+                          zone_x=shapely.get_x(zone_center), zone_y=shapely.get_y(zone_center), zone_area=zones.area_m2,
+                          zone_ids=zones.ids, cell_nearest_zone=cell_nearest_zone)
 
     log("Дороги…")
     graph = build_graph(data.roads, region_wgs, projector, region_metric)
@@ -439,7 +445,7 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
               ([buildings.ids[row], zone_name[building_zone[row]], int(population.residents[row]), population.method[row]]
                for row in np.nonzero(population.residents)[0]))
     add("population", "population", "population.csv.gz", "csv+gzip", "estimated", ["osm", "population", "config"], {
-        "method": "Население ячеек GHS-POP внутри региона распределено по жилой площади (площадь × этажность × доля жилья); ячейки без жилья — через пул зоны и блок зон; округление методом наибольших остатков сохраняет распределённую сумму. Население блоков без подходящих зданий не распределяется и показано в quality_report (population.unallocated), поэтому сумма файла может быть меньше итога сетки.",
+        "method": "Население ячеек GHS-POP внутри региона распределено по жилой площади (площадь × этажность × доля жилья); ячейки без жилья — через пул зоны и блок зон; остаток блоков без подходящих зданий — ближайшему блоку с ними (метод nearest_block), ячейки вне зон — ближайшей зоне; округление методом наибольших остатков сохраняет итог сетки. Переносы — в quality_report (population.nearest_block, population.nearest_zone_cells).",
         "uncertainty": "Сетка сама является моделью (JRC). Точность на уровне отдельного дома низкая; итоги зон и региона надёжнее. Возраст и домохозяйства не определены.",
     })
 
