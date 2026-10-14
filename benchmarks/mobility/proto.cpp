@@ -1400,9 +1400,12 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
             h = fnv(&o.person, 4, h); h = fnv(&o.alight, 1, h); h = fnv(&o.wagon, 1, h); h = fnv(&o.board_t, 4, h);
         }
     }
-    for (uint32_t rs = 0; rs < t.n_rs; ++rs)
+    for (uint32_t rs = 0; rs < t.n_rs; ++rs) {  // очередь: номер позиции маршрута, число ждущих и ждущие по порядку
+        if (active_wait[rs] == 0) continue;
+        h = fnv(&rs, 4, h); h = fnv(&active_wait[rs], 4, h);
         for (uint32_t i = queue_head[rs]; i < queue[rs].size(); ++i)
             if (state[queue[rs][i]] == kWaiting) h = fnv(&queue[rs][i], 4, h);
+    }
     res.hash = h;
     res.seconds = seconds_since(t0);
     return res;
