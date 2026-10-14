@@ -109,13 +109,14 @@ def main(package: Path, params_path: Path, mobility_path: Path, out: Path):
         segments.setdefault(sg["route_id"], []).append((int(sg["sequence"]), stop_index[sg["from_stop"]], stop_index[sg["to_stop"]]))
     first, members, mode = [0], [], []
     for r in routes:
-        chain = []
-        for _, a, b in sorted(segments.get(r["route_id"], [])):
-            if chain and chain[-1] != a:  # разрыв: закрыть кусок
+        chain, prev = [], None
+        for seq, a, b in sorted(segments.get(r["route_id"], [])):
+            if chain and (chain[-1] != a or seq != prev + 1):  # разрыв (пропуск номера или другой конец): закрыть кусок
                 members.extend(chain); first.append(len(members)); mode.append(route_mode[r["route_id"]]); chain = []
             if not chain:
                 chain.append(a)
             chain.append(b)
+            prev = seq
         if chain:
             members.extend(chain); first.append(len(members)); mode.append(route_mode[r["route_id"]])
     np.array(first, "<u4").tofile(out / "route_first.u32")
@@ -134,15 +135,18 @@ def main(package: Path, params_path: Path, mobility_path: Path, out: Path):
     np.array([g["kind"] == "transit" for g in gw], "<u1").tofile(out / "gateway_transit.u8")
     # Дорожный вход — конкретное ребро пакета (ref = edge_id) и точка пересечения границы на нём: прототип
     # учитывает направление, класс и долю ребра от конца до этой точки. Выезд — только от внутреннего конца
-    # (inside_ref): от него первое пересечение ребра выводит из региона. Ребро с обоими концами снаружи —
+    # (inside_ref): от него первое пересечение ребра выводит из региона. Если внутри оба конца (ребро выходит
+    # и возвращается), пересечение — первый выход от ближайшего к нему конца. Ребро с обоими концами снаружи —
     # хорда границы, выездом не считается (NONE), как и ребро, которого нет в графе.
-    def gateway_start(g):
+    def gateway_start(i, g):
         if g["kind"] != "road" or not g["inside_ref"] or g["ref"] not in edge_index:
             return NONE
-        node = int(g["inside_ref"].split(";")[0])
-        return node_index.get(node, NONE)
+        ends = [node_index[int(v)] for v in g["inside_ref"].split(";") if v and int(v) in node_index]
+        if not ends:
+            return NONE
+        return min(ends, key=lambda v: ((nx[v] - gx[i]) ** 2 + (ny[v] - gy[i]) ** 2, v))
     np.array([edge_index.get(g["ref"], NONE) if g["kind"] == "road" else NONE for g in gw], "<u4").tofile(out / "gateway_edge.u32")
-    np.array([gateway_start(g) for g in gw], "<u4").tofile(out / "gateway_start.u32")
+    np.array([gateway_start(i, g) for i, g in enumerate(gw)], "<u4").tofile(out / "gateway_start.u32")
     np.array([stop_index.get(g["inside_ref"], NONE) if g["kind"] == "transit" else NONE for g in gw], "<u4").tofile(out / "gateway_stop.u32")
 
     service = json.loads((package / "transit_service.json").read_text(encoding="utf-8"))

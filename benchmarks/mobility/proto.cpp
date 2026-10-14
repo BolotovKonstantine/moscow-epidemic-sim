@@ -1277,7 +1277,8 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                     uint32_t route, board, alight, walk_after;
                     ride_of(id, ride_ix[id], route, board, alight, walk_after);
                     uint32_t rs = t.r_first[route] + board;
-                    set_state(id, kWaiting); wait_since[id] = now; queue[rs].push_back(id); active_wait[rs]++;
+                    set_state(id, kWaiting); wait_since[id] = now; queue[rs].push_back(id);
+                    res.max_queue = std::max<int64_t>(res.max_queue, ++active_wait[rs]);
                     schedule(id, now + uint32_t(p.max_wait));  // предел ожидания; посадка делает этот ключ устаревшим
                 } else {
                     set_state(id, kAtPlace);
@@ -1290,7 +1291,8 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 ride_of(id, ride_ix[id], route, board, alight, walk_after);
                 set_state(id, kReturning); res.cancelled++; res.cancelled_by[t.r_mode[route]]++;
                 active_wait[t.r_first[route] + board]--;
-                schedule(id, now + (now - depart[id]));  // обратно тем же временем; дома он снова в учёте «дома»
+                // Обратно без ожидания: с первой остановки — пешком, после пересадки — пройденным путём до очереди.
+                schedule(id, now + std::max<uint32_t>(1, ride_ix[id] == 0 ? pl.origin_walk_s[id] : wait_since[id] - depart[id]));
                 break;
             }
             case kOutside:
