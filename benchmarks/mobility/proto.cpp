@@ -368,6 +368,7 @@ Csr build_car(const Input& in, const Params& p) {
 Csr build_walk(const Input& in, const Params& p) {
     std::vector<std::array<uint32_t, 3>> arcs;
     for (size_t e = 0; e < in.e_from.size(); ++e) {
+        if (in.e_cls[e] >= 6) continue;  // trunk и motorway пешеходам закрыты (приближение: тротуаров в пакете нет)
         uint32_t w = std::max<uint32_t>(1, uint32_t(std::lround(in.e_len[e] / p.walk_speed * 10)));
         arcs.push_back({in.e_from[e], in.e_to[e], w});
         arcs.push_back({in.e_to[e], in.e_from[e], w});
@@ -1065,12 +1066,13 @@ Crowding update_crowding(City& c, const Plans& pl, const ItineraryCache& cache, 
         uint8_t mode = t.r_mode[t.rs_route[rs]];
         uint32_t h = p.headway_s[mode][period];
         double cap = h ? double(p.capacity[mode]) * window / h : 0;
-        double x = cap > 0 ? load[rs] / cap : 0;
+        // Спрос при нулевой провозной способности — бесконечная перегрузка, а не нулевая.
+        double x = cap > 0 ? load[rs] / cap : (load[rs] > 0 ? 1e6 : 0);
         total += load[rs];
         if (x > 1) { over += load[rs] - cap; res.segments_over++; }
         res.max_ratio = std::max(res.max_ratio, x);
         if (apply) {
-            float target = float(p.crowding_penalty * std::max(0.0, x - 1.0));
+            float target = float(std::min(1000.0, p.crowding_penalty * std::max(0.0, x - 1.0)));  // предел: стоимость в u32
             c.tr.crowd[rs] = (c.tr.crowd[rs] * float(iteration) + target) / float(iteration + 1);
         }
     }
@@ -1101,7 +1103,9 @@ struct SimResult {
     std::vector<uint32_t> board_order;  // для малых сцен: ID в порядке посадки
 };
 
-struct Run { uint32_t route, depart, day_index; };  // day_index — номер в суточном расписании: ID события и ключ RNG
+// day_index — номер в суточном расписании (рейсы прошлых суток — после всех текущих): ID события и ключ RNG.
+// depart — время первого события в окне, start_pos — позиция первого события (у рейса прошлых суток не 0).
+struct Run { uint32_t route, depart, day_index; uint8_t start_pos = 0; };
 struct Onboard { uint32_t person; uint8_t alight, wagon; uint32_t board_t; };
 
 SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache& cache, const SimConfig& cfg) {
@@ -1151,9 +1155,22 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
         uint32_t dur = t.rs_offset_s[t.r_first[run.route + 1] - 1];
         if (run.depart < cfg.end && run.depart + dur >= warm_start) runs.push_back(run);
     }
+    // Рейсы прошлых суток, ещё идущие после полуночи: то же расписание на 24 ч раньше. Начинаются с первой
+    // остановки, до которой доходят после полуночи; пассажиров прошлых суток модель утра не ведёт.
+    for (const Run& run : day) {
+        uint32_t r = run.route, first = t.r_first[r], last = t.r_first[r + 1] - 1;
+        if (run.depart + t.rs_offset_s[last] < 86400) continue;
+        uint32_t pos = 0;
+        while (run.depart + t.rs_offset_s[first + pos] < 86400) ++pos;
+        uint32_t at = run.depart + t.rs_offset_s[first + pos] - 86400;
+        if (at < cfg.end && at + (t.rs_offset_s[last] - t.rs_offset_s[first + pos]) >= warm_start)
+            runs.push_back({r, at, uint32_t(day.size()) + run.day_index, uint8_t(pos)});
+    }
     res.runs = int64_t(runs.size());
     (void)longest;
     std::vector<uint8_t> run_pos(runs.size(), 0);
+    std::vector<char> started(runs.size(), 0);
+    for (size_t k = 0; k < runs.size(); ++k) run_pos[k] = runs[k].start_pos;
     std::vector<std::vector<Onboard>> onboard(runs.size());
     std::vector<uint32_t> run_load(runs.size(), 0);
     std::vector<std::array<uint16_t, 16>> wagon_load(runs.size());  // группа контактов — (рейс, вагон)
@@ -1180,7 +1197,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
         schedule(id, depart[id]);
     }
     // ID события рейса — 2^31 + номер в суточном расписании; локальный номер k хранится отдельно.
-    std::vector<uint32_t> local(day.size(), kNone);
+    std::vector<uint32_t> local(2 * day.size(), kNone);
     for (uint32_t k = 0; k < runs.size(); ++k) { local[runs[k].day_index] = k; q.push(Key(runs[k].depart) << 32 | (kRunBase + runs[k].day_index)); }
 
     auto ride_of = [&](uint32_t id, uint32_t i, uint32_t& route, uint32_t& board, uint32_t& alight, uint32_t& walk_after) {
@@ -1196,6 +1213,12 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     int64_t cnt[kStates]{}; cnt[kHome] = int64_t(n);
     int64_t active_runs = 0;
     std::vector<uint32_t> active_wait(t.n_rs, 0);  // ждущие в очереди позиции без отменивших
+    // Память очередей по ёмкости векторов: учитывается на каждом изменении, пик — сразу.
+    size_t queue_bytes = 0;
+    auto queue_resized = [&](size_t before, size_t after) {
+        queue_bytes = queue_bytes - before * sizeof(uint32_t) + after * sizeof(uint32_t);
+        res.peak_queue_mb = std::max(res.peak_queue_mb, mb(queue_bytes));
+    };
     auto set_state = [&](uint32_t id, uint8_t st) {
         cnt[state[id]]--; cnt[st]++; state[id] = st;
         if (st == kRiding) res.peak_onboard = std::max(res.peak_onboard, cnt[kRiding]);
@@ -1207,9 +1230,9 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
         int64_t total = 0; for (int s = 0; s < kStates; ++s) { total += full[s]; if (full[s] != cnt[s]) res.conservation_failures++; }
         if (total != int64_t(n)) res.conservation_failures++;
         res.peak_mb = std::max(res.peak_mb, mb(phys_footprint() - base));
-        size_t qcap = 0;  // память очередей — по ёмкости векторов
-        for (const auto& qv : queue) qcap += qv.capacity() * sizeof(uint32_t);
-        res.peak_queue_mb = std::max(res.peak_queue_mb, mb(qcap));
+        size_t full_cap = 0;  // сверка учёта ёмкости очередей полным проходом
+        for (const auto& qv : queue) full_cap += qv.capacity() * sizeof(uint32_t);
+        if (full_cap != queue_bytes) res.conservation_failures++;
         (void)now;
     };
     uint64_t h = 14695981039346656037ull;
@@ -1222,7 +1245,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
             uint32_t k = local[id - kRunBase], r = runs[k].route;
             uint32_t pos = run_pos[k], rs = t.r_first[r] + pos;
             res.run_stop_events++;
-            if (pos == 0) res.peak_active_runs = std::max(res.peak_active_runs, ++active_runs);
+            if (!started[k]) { started[k] = 1; res.peak_active_runs = std::max(res.peak_active_runs, ++active_runs); }
             std::vector<Onboard>& ob = onboard[k];
             // Высадка
             size_t keep = 0;
@@ -1276,8 +1299,12 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 res.max_queue = std::max<int64_t>(res.max_queue, active_wait[rs]);
             }
             // Сжатие очереди: обслуженная голова удаляется, а ёмкость освобождается, если вектор пуст или заполнен мало.
-            if (head == qq.size()) { if (qq.capacity() > 64) std::vector<uint32_t>().swap(qq); else qq.clear(); head = 0; }
-            else if (head > 1024 && head * 2 > qq.size()) { qq.erase(qq.begin(), qq.begin() + head); head = 0; qq.shrink_to_fit(); }
+            {
+                size_t c0 = qq.capacity();
+                if (head == qq.size()) { if (qq.capacity() > 64) std::vector<uint32_t>().swap(qq); else qq.clear(); head = 0; }
+                else if (head > 1024 && head * 2 > qq.size()) { qq.erase(qq.begin(), qq.begin() + head); head = 0; qq.shrink_to_fit(); }
+                queue_resized(c0, qq.capacity());
+            }
             if (!last) { run_pos[k] = uint8_t(pos + 1); q.push(Key(now + t.rs_ride_s[rs]) << 32 | id); }
             else {
                 run_pos[k] = 255; --active_runs;
@@ -1306,7 +1333,8 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                     uint32_t route, board, alight, walk_after;
                     ride_of(id, ride_ix[id], route, board, alight, walk_after);
                     uint32_t rs = t.r_first[route] + board;
-                    set_state(id, kWaiting); wait_since[id] = now; queue[rs].push_back(id);
+                    set_state(id, kWaiting); wait_since[id] = now;
+                    { size_t c0 = queue[rs].capacity(); queue[rs].push_back(id); queue_resized(c0, queue[rs].capacity()); }
                     res.max_queue = std::max<int64_t>(res.max_queue, ++active_wait[rs]);
                     schedule(id, now + uint32_t(p.max_wait));  // предел ожидания; посадка делает этот ключ устаревшим
                 } else {
@@ -1350,7 +1378,9 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     }
     for (size_t k = 0; k < runs.size(); ++k) {
         h = fnv(&runs[k].day_index, 4, h); h = fnv(&run_pos[k], 1, h);
-        for (const Onboard& o : onboard[k]) { h = fnv(&o.person, 4, h); h = fnv(&o.alight, 1, h); h = fnv(&o.wagon, 1, h); }
+        for (const Onboard& o : onboard[k]) {
+            h = fnv(&o.person, 4, h); h = fnv(&o.alight, 1, h); h = fnv(&o.wagon, 1, h); h = fnv(&o.board_t, 4, h);
+        }
     }
     for (uint32_t rs = 0; rs < t.n_rs; ++rs)
         for (uint32_t i = queue_head[rs]; i < queue[rs].size(); ++i)
@@ -1398,7 +1428,10 @@ int full(const std::string& dir, const std::string& pop_dir, double dep_sd, doub
     Params p = load_params(dir);
     if (origin_cell > 0) p.origin_cell = origin_cell;
     if (dep_sd > 0) p.dep_sd = dep_sd;
-    for (int m = 0; m < kModes; ++m) p.capacity[m] = uint32_t(std::lround(p.capacity[m] * capacity_scale));
+    for (int m = 0; m < kModes; ++m) {
+        p.capacity[m] = uint32_t(std::lround(p.capacity[m] * capacity_scale));
+        if (p.capacity[m] == 0) { std::fprintf(stderr, "вместимость %s после --capacity-scale равна 0\n", kModeNames[m]); return 2; }
+    }
     auto t0 = Clock::now();
     Input in = load_input(dir, pop_dir);
     std::printf("{\n  \"scenario\": {\"seed\": %llu, \"departure_sd_s\": %.0f, \"capacity_scale\": %.2f, \"origin_cell_m\": %.0f},\n", (unsigned long long)p.seed, p.dep_sd, capacity_scale, p.origin_cell);
