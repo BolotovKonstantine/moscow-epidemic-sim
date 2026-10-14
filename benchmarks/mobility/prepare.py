@@ -158,6 +158,9 @@ def main(package: Path, params_path: Path, mobility_path: Path, out: Path):
     for name, (a, b) in service["periods"].items():
         h, m = (int(v) for v in a.split(":"))
         lines.append(f"period_start_{name} {h * 3600 + m * 60}")
+    # Пешая пересадка между близкими остановками — с теми же скоростью и накладными расходами, что stop_area пакета.
+    lines.append(f"transfer_walk_speed_mps {service['transfer_walk_speed_mps']}")
+    lines.append(f"transfer_overhead_s {service['transfer_overhead_s']}")
     (out / "service.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     m = json.loads(mobility_path.read_text(encoding="utf-8"))

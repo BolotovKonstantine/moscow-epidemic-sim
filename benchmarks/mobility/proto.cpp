@@ -127,6 +127,7 @@ struct Params {
     double origin_cell = 1000;
     double crowding_penalty = 1;
     uint32_t headway_s[kModes][kPeriods]{};  // 0 — нет движения в период
+    double transfer_speed = 1.2, transfer_overhead = 60;  // из transit_service.json пакета
     uint32_t period_start[kPeriods]{};
 };
 
@@ -172,6 +173,8 @@ Params load_params(const std::string& dir) {
     }
     const char* periods[kPeriods] = {"morning_peak", "day", "evening_peak", "evening", "night", "early"};
     for (int q = 0; q < kPeriods; ++q) p.period_start[q] = uint32_t(get(sv, std::string("period_start_") + periods[q], 1)[0]);
+    p.transfer_speed = get(sv, "transfer_walk_speed_mps", 1)[0];
+    p.transfer_overhead = get(sv, "transfer_overhead_s", 1)[0];
     p.dep_mean = get(m, "departure", 2)[0]; p.dep_sd = get(m, "departure", 2)[1];
     p.car_park_s = get(m, "car_park_s", 1)[0];
     p.walk_speed = get(m, "walk_speed_mps", 1)[0];
@@ -662,7 +665,7 @@ Transit build_transit(const Input& in, const Params& p) {
     for (uint32_t s = 0; s < t.n_stops; ++s) {
         g.within(in.stop_xy[2 * s], in.stop_xy[2 * s + 1], float(p.transfer_radius), near);
         for (auto& [d, o] : near)
-            if (o != s) arcs.push_back({s, o, uint32_t(std::lround(d * p.walk_detour / p.walk_speed)) + 60});
+            if (o != s) arcs.push_back({s, o, uint32_t(std::lround(d * p.walk_detour / p.transfer_speed + p.transfer_overhead))});
     }
     std::sort(arcs.begin(), arcs.end(), [](const auto& a, const auto& b) { return a[0] != b[0] ? a[0] < b[0] : a[1] != b[1] ? a[1] < b[1] : a[2] < b[2]; });
     t.tf_first.assign(t.n_stops + 1, 0);
@@ -688,7 +691,9 @@ void transit_tree(const Transit& t, const Params& p, int period, const std::vect
     tr.reset();
     MinHeap q;
     auto relax = [&](uint32_t v, uint32_t c, uint32_t tm, uint32_t par) {
-        if (c < tr.cost[v] || (c == tr.cost[v] && par < tr.parent[v])) {
+        // Порядок меток — (стоимость, время, родитель) лексикографически; обновлённая метка снова ставится в очередь,
+        // поэтому при равной стоимости более раннее время доходит и до потомков, и время в дереве согласовано с родителями.
+        if (c < tr.cost[v] || (c == tr.cost[v] && (tm < tr.time[v] || (tm == tr.time[v] && par < tr.parent[v])))) {
             if (tr.cost[v] == kInf) tr.touched.push_back(v);
             tr.cost[v] = c; tr.time[v] = tm; tr.parent[v] = par; q.push({c, v});
         }
@@ -739,7 +744,7 @@ Itinerary extract(const Transit& t, const TransitTree& tr, uint32_t dest_stop) {
     if (it.rides.empty()) { it.origin_stop = dest_stop; return it; }
     uint32_t r0 = it.rides[0].route;
     it.origin_stop = t.rs_stop[t.r_first[r0] + it.rides[0].board];
-    it.core_s = tr.time[dest_stop] - tr.time[it.origin_stop];
+    it.core_s = tr.time[dest_stop] >= tr.time[it.origin_stop] ? tr.time[dest_stop] - tr.time[it.origin_stop] : 0;
     return it;
 }
 
@@ -1097,7 +1102,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     size_t n = in.home.size();
     std::vector<uint8_t> state(n, kHome), ride_ix(n, 0);
     std::vector<uint32_t> next(n, kNone), wait_since(n, 0), depart(n, 0), arrive_target(n, 0);
-    std::vector<uint32_t> run_of(n, kNone);
+    std::vector<uint32_t> run_of(n, kNone), waited(n, 0);  // waited — сумма завершённых ожиданий посадки
     // Рейсы: от первой остановки с интервалом периода, сдвиг фазы — розыгрыш по маршруту.
     std::vector<Run> runs;
     uint64_t tkey = stream_key(p.seed, kStreamTransit);
@@ -1236,7 +1241,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 ob.push_back({pid, uint8_t(alight), wagon, now});
                 res.max_group = std::max<int64_t>(res.max_group, ++wagon_load[k][wagon]);
                 set_state(pid, kRiding); run_of[pid] = k; next[pid] = kNone; active_wait[rs]--;
-                wait_sum += now - wait_since[pid]; res.boardings++; res.boardings_by[mode]++;
+                wait_sum += now - wait_since[pid]; waited[pid] += now - wait_since[pid]; res.boardings++; res.boardings_by[mode]++;
                 group_seen.push_back(uint64_t(k) << 8 | wagon);
                 res.board_order.push_back(pid);
             }
@@ -1282,7 +1287,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                     schedule(id, now + uint32_t(p.max_wait));  // предел ожидания; посадка делает этот ключ устаревшим
                 } else {
                     set_state(id, kAtPlace);
-                    late_sum += double(now) - arrive_target[id]; late_n++;
+                    late_sum += std::max(0.0, double(now) - arrive_target[id]); late_n++;  // опоздание, досрочные — 0
                     h = fnv(&id, 4, h); h = fnv(&now, 4, h);
                 }
                 break;
@@ -1292,7 +1297,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 set_state(id, kReturning); res.cancelled++; res.cancelled_by[t.r_mode[route]]++;
                 active_wait[t.r_first[route] + board]--;
                 // Обратно без ожидания: с первой остановки — пешком, после пересадки — пройденным путём до очереди.
-                schedule(id, now + std::max<uint32_t>(1, ride_ix[id] == 0 ? pl.origin_walk_s[id] : wait_since[id] - depart[id]));
+                schedule(id, now + std::max<uint32_t>(1, ride_ix[id] == 0 ? pl.origin_walk_s[id] : wait_since[id] - depart[id] - waited[id]));
                 break;
             }
             case kOutside:
