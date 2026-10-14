@@ -1388,11 +1388,13 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     res.groups = int64_t(std::unique(group_seen.begin(), group_seen.end()) - group_seen.begin());
     res.mean_wait_s = res.boardings ? double(wait_sum) / res.boardings : 0;
     res.mean_late_s = late_n ? late_sum / late_n : 0;
-    // Хеш полного состояния продолжения: у жителя — состояние, позиция в пути, следующее событие и рейс;
+    // Хеш полного состояния продолжения: у жителя — состояние, позиция в пути, следующее событие, рейс и времена;
     // у рейса — позиция и пассажиры с вагонами по порядку; у очереди — ждущие по порядку.
     for (size_t i = 0; i < n; ++i) {
         uint32_t rd = run_of[i] == kNone ? kNone : runs[run_of[i]].day_index;
         h = fnv(&state[i], 1, h); h = fnv(&ride_ix[i], 1, h); h = fnv(&next[i], 4, h); h = fnv(&rd, 4, h);
+        // Изменяемые времена, от которых зависят будущие события: накопленное ожидание, начало текущего, выезд, цель.
+        h = fnv(&waited[i], 4, h); h = fnv(&wait_since[i], 4, h); h = fnv(&depart[i], 4, h); h = fnv(&arrive_target[i], 4, h);
     }
     for (size_t k = 0; k < runs.size(); ++k) {
         h = fnv(&runs[k].day_index, 4, h); h = fnv(&run_pos[k], 1, h);
