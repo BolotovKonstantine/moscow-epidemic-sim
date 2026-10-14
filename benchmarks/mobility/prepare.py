@@ -146,7 +146,7 @@ def main(package: Path, params_path: Path, mobility_path: Path, out: Path):
         f"departure {m['departure']['value']['mean_s']} {m['departure']['value']['sd_s']}",
     ]
     for key in ["car_park_s", "walk_speed_mps", "walk_detour", "access_radius_m", "access_stops_max", "transfer_radius_m",
-                "board_penalty_s", "max_wait_s", "walk_only_max_s", "crowding_penalty", "crowding_iterations"]:
+                "board_penalty_s", "max_wait_s", "walk_only_max_s", "crowding_penalty", "crowding_iterations", "origin_cell_m"]:
         lines.append(f"{key} {m[key]['value']}")
     (out / "params.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
