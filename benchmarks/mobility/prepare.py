@@ -22,6 +22,7 @@ csv.field_size_limit(1 << 30)
 # Классы как в паспорте пакета: связки *_link — класс основной дороги, unclassified/living_street/road — residential.
 ROAD_CLASSES = ["service", "pedestrian", "residential", "tertiary", "secondary", "primary", "trunk", "motorway"]
 ROAD_ALIAS = {"unclassified": "residential", "living_street": "residential", "road": "residential"}
+PERIODS = ["morning_peak", "day", "evening_peak", "evening", "night", "early"]
 MODES = ["bus", "share_taxi", "trolleybus", "tram", "light_rail", "monorail", "train", "subway"]
 NONE = 0xFFFFFFFF
 
@@ -120,16 +121,25 @@ def main(package: Path, params_path: Path, mobility_path: Path, out: Path):
     gx, gy = project([float(g["lon"]) for g in gw], [float(g["lat"]) for g in gw])
     plane(gx, gy).tofile(out / "gateway_xy.f32")
     np.array([g["kind"] == "transit" for g in gw], "<u1").tofile(out / "gateway_transit.u8")
-    np.array([node_index.get(int(g["inside_ref"].split(";")[0]), NONE) if g["kind"] == "road" and g["inside_ref"] else NONE for g in gw],
-             "<u4").tofile(out / "gateway_node.u32")
+    # Дорожный вход привязывается к внутреннему концу ребра; если его нет (оба конца снаружи), — к внешнему.
+    # Если нет ни того, ни другого в графе, прототип привязывает вход к ближайшему узлу по координате пересечения.
+    def gateway_node(g):
+        if g["kind"] != "road":
+            return NONE
+        for ref in (g["inside_ref"], g["outside_ref"]):
+            for node in ref.split(";"):
+                if node and int(node) in node_index:
+                    return node_index[int(node)]
+        return NONE
+    np.array([gateway_node(g) for g in gw], "<u4").tofile(out / "gateway_node.u32")
     np.array([stop_index.get(g["inside_ref"], NONE) if g["kind"] == "transit" else NONE for g in gw], "<u4").tofile(out / "gateway_stop.u32")
 
     service = json.loads((package / "transit_service.json").read_text(encoding="utf-8"))
     lines = []
     for m in MODES:
         by_period = service["headway_minutes_by_mode"].get(m, {})
-        lines.append(f"headway_{m} " + " ".join(str(by_period.get(p) or 0) for p in service["periods"]))
-    lines.append("periods " + " ".join(service["periods"]))
+        # Порядок периодов — как в load_params прототипа, а не как в JSON.
+        lines.append(f"headway_{m} " + " ".join(str(by_period.get(p) or 0) for p in PERIODS))
     for name, (a, b) in service["periods"].items():
         h, m = (int(v) for v in a.split(":"))
         lines.append(f"period_start_{name} {h * 3600 + m * 60}")

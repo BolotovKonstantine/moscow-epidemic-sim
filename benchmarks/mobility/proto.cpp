@@ -151,7 +151,11 @@ Params load_params(const std::string& dir) {
         return it->second;
     };
     Params p;
-    p.seed = uint64_t(get(m, "seed", 1)[0]);
+    {  // seed — u64 целиком: через double теряются биты старше 2^53
+        std::ifstream in(dir + "/params.txt");
+        std::string key, value;
+        while (in >> key) { std::getline(in, value); if (key == "seed") p.seed = std::stoull(value); }
+    }
     for (int i = 0; i < kRoadClasses; ++i) p.car_speed[i] = get(m, "car_speed_kmh", kRoadClasses)[i];
     for (int i = 0; i < kModes; ++i) {
         p.transit_speed[i] = get(m, "transit_speed_kmh", kModes)[i];
@@ -906,11 +910,15 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                     if (transport_of(in.profile[id]) == kCar) {
                         float d0, d1; uint32_t a = snap_car(c, home, d0);
                         for (uint32_t gi = 0; gi < in.gw_transit.size(); ++gi) {
-                            if (in.gw_transit[gi] || in.gw_node[gi] == kNone) continue;
-                            uint32_t ds = c.ch.query(cq, a, in.gw_node[gi]);
+                            if (in.gw_transit[gi]) continue;
+                            // Узел входа — конец ребра из пакета; без него — ближайший узел к точке пересечения границы.
+                            uint32_t gn = in.gw_node[gi];
+                            if (gn == kNone) { float dg; gn = snap_car(c, &in.gw_xy[2 * gi], dg); }
+                            if (gn == kNone) continue;
+                            uint32_t ds = c.ch.query(cq, a, gn);
                             if (ds == kInf) continue;
-                            // Остаток ребра от внутреннего узла до точки пересечения границы — по прямой со скоростью tertiary.
-                            float edge = dist(&in.node_xy[2 * in.gw_node[gi]], &in.gw_xy[2 * gi]);
+                            // Остаток ребра от узла до точки пересечения границы — по прямой со скоростью tertiary.
+                            float edge = dist(&in.node_xy[2 * gn], &in.gw_xy[2 * gi]);
                             uint32_t tail = uint32_t(std::lround(edge / (p.car_speed[3] / 3.6)));
                             uint32_t tm = ds / 10 + tail + uint32_t(p.car_park_s) + walk_s(p, d0);
                             if (tm < best) { best = tm; g = gi; }
@@ -1057,7 +1065,7 @@ struct SimResult {
     std::vector<uint32_t> board_order;  // для малых сцен: ID в порядке посадки
 };
 
-struct Run { uint32_t route, depart; };
+struct Run { uint32_t route, depart, day_index; };  // day_index — номер в суточном расписании: ID события и ключ RNG
 struct Onboard { uint32_t person; uint8_t alight, wagon; uint32_t board_t; };
 
 SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache& cache, const SimConfig& cfg) {
@@ -1083,7 +1091,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 uint32_t h = p.headway_s[mode][period_at(p, tm)];
                 if (h == 0) { tm += 60; phased = false; continue; }
                 if (!phased) { tm += rng.below(h); phased = true; if (tm >= until) break; }
-                if (out) out->push_back({r, tm});
+                if (out) out->push_back({r, tm, uint32_t(out->size())});
                 ++count; tm += h;
             }
         }
@@ -1093,9 +1101,15 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     // (рейс, вышедший до start, уже в пути) и идут до end.
     uint32_t longest = 0;
     for (uint32_t r = 0; r + 1 < t.r_first.size(); ++r) longest = std::max(longest, t.rs_offset_s[t.r_first[r + 1] - 1]);
-    make_runs(cfg.start > longest ? cfg.start - longest : 0, cfg.end, &runs);
+    // Одно суточное расписание от полуночи; в окно попадают рейсы, которые идут хотя бы часть [start, end).
+    std::vector<Run> day;
+    res.runs_day = make_runs(0, 86400, &day);
+    for (const Run& run : day) {
+        uint32_t dur = t.rs_offset_s[t.r_first[run.route + 1] - 1];
+        if (run.depart < cfg.end && run.depart + dur >= cfg.start) runs.push_back(run);
+    }
     res.runs = int64_t(runs.size());
-    res.runs_day = make_runs(0, 86400, nullptr);
+    (void)longest;
     std::vector<uint8_t> run_pos(runs.size(), 0);
     std::vector<std::vector<Onboard>> onboard(runs.size());
     std::vector<uint32_t> run_load(runs.size(), 0);
@@ -1122,7 +1136,9 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
         depart[id] = uint32_t(std::max<double>(cfg.start, arrive - pl.travel_s[id]));
         schedule(id, depart[id]);
     }
-    for (uint32_t k = 0; k < runs.size(); ++k) q.push(Key(runs[k].depart) << 32 | (kRunBase + k));
+    // ID события рейса — 2^31 + номер в суточном расписании; локальный номер k хранится отдельно.
+    std::vector<uint32_t> local(day.size(), kNone);
+    for (uint32_t k = 0; k < runs.size(); ++k) { local[runs[k].day_index] = k; q.push(Key(runs[k].depart) << 32 | (kRunBase + runs[k].day_index)); }
 
     auto ride_of = [&](uint32_t id, uint32_t i, uint32_t& route, uint32_t& board, uint32_t& alight, uint32_t& walk_after) {
         uint32_t e = pl.itinerary[id];
@@ -1157,7 +1173,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
         if (now >= cfg.end) break;
         while (now >= next_check) { check(next_check); next_check += 900; }
         if (id >= kRunBase) {
-            uint32_t k = id - kRunBase, r = runs[k].route;
+            uint32_t k = local[id - kRunBase], r = runs[k].route;
             uint32_t pos = run_pos[k], rs = t.r_first[r] + pos;
             res.run_stop_events++;
             if (pos == 0) res.peak_active_runs = std::max(res.peak_active_runs, ++active_runs);
@@ -1194,7 +1210,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 if (run_of[pid] != kNone) res.double_group++;
                 uint32_t route, board, alight, walk_after;
                 ride_of(pid, ride_ix[pid], route, board, alight, walk_after);
-                Rng wr{tkey, pid, k};
+                Rng wr{tkey, pid, runs[k].day_index};
                 uint8_t wagon = uint8_t(wr.below(p.wagons[mode]));
                 ob.push_back({pid, uint8_t(alight), wagon, now});
                 res.max_group = std::max<int64_t>(res.max_group, ++wagon_load[k][wagon]);
