@@ -67,7 +67,9 @@ uint64_t mix64(uint64_t z) {
     z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
     return z ^ (z >> 31);
 }
-uint64_t stream_key(uint64_t seed, uint32_t stream) { return mix64(seed ^ (uint64_t(stream) << 56 | 0x5EED)); }
+// Соль потока целиком (номер и константа) смешивается с seed: (stream << 56 | 0x5EED) в скобках, иначе младшие
+// биты seed под маской 0x5EED затирались бы. Прототипы #33 и #34 вычисляли ключ без скобок; их числа это не меняет.
+uint64_t stream_key(uint64_t seed, uint32_t stream) { return mix64(seed ^ ((uint64_t(stream) << 56) | 0x5EED)); }
 
 // Потоки поездок; номера продолжают таблицу прототипа #34 (16 — население, 17 — места).
 constexpr uint32_t kStreamSchedule = 18;  // id — ID жителя: желаемое время прибытия
@@ -169,6 +171,10 @@ Params load_params(const std::string& dir) {
         p.transit_speed[i] = get(m, "transit_speed_kmh", kModes)[i];
         p.capacity[i] = uint32_t(get(m, "capacity", kModes)[i]);
         p.wagons[i] = uint32_t(get(m, "wagons", kModes)[i]);
+        if (p.wagons[i] < 1 || p.wagons[i] > 16) {  // загрузка вагонов рейса — массив из 16
+            std::fprintf(stderr, "число вагонов %s = %u вне [1, 16]\n", kModeNames[i], p.wagons[i]);
+            std::exit(1);
+        }
         for (int q = 0; q < kPeriods; ++q) p.headway_s[i][q] = uint32_t(get(sv, std::string("headway_") + kModeNames[i], kPeriods)[q] * 60);
     }
     const char* periods[kPeriods] = {"morning_peak", "day", "evening_peak", "evening", "night", "early"};
@@ -1089,7 +1095,8 @@ struct SimResult {
     int64_t double_group = 0, groups = 0, intervals = 0, capacity_violations = 0, max_group = 0, max_run_load = 0, max_queue = 0;
     int64_t peak_onboard = 0, peak_waiting = 0, peak_active_runs = 0, outside_returned = 0;
     int64_t boardings_by[kModes]{}, cancelled_by[kModes]{}, left_by[kModes]{};
-    double mean_wait_s = 0, mean_late_s = 0, seconds = 0, peak_mb = 0;
+    double mean_wait_s = 0, mean_late_s = 0, seconds = 0, peak_mb = 0, peak_queue_mb = 0;
+    uint32_t warm_start = 0;
     uint64_t hash = 0;
     std::vector<uint32_t> board_order;  // для малых сцен: ID в порядке посадки
 };
@@ -1130,12 +1137,19 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     // (рейс, вышедший до start, уже в пути) и идут до end.
     uint32_t longest = 0;
     for (uint32_t r = 0; r + 1 < t.r_first.size(); ++r) longest = std::max(longest, t.rs_offset_s[t.r_first[r + 1] - 1]);
-    // Одно суточное расписание от полуночи; в окно попадают рейсы, которые идут хотя бы часть [start, end).
+    // Прогрев: жители с долгим путём выезжают раньше start, чтобы прибыть к цели; окно рейсов начинается
+    // с самого раннего возможного выезда (самая ранняя цель минус самая долгая поездка).
+    uint32_t longest_trip = 0;
+    for (size_t id = 0; id < n; ++id) if (pl.mode[id] != kModeNone) longest_trip = std::max(longest_trip, pl.travel_s[id]);
+    uint32_t earliest_target = cfg.start + 3600;
+    uint32_t warm_start = earliest_target > longest_trip ? earliest_target - longest_trip : 0;
+    res.warm_start = warm_start;
+    // Одно суточное расписание от полуночи; в окно попадают рейсы, которые идут хотя бы часть [warm_start, end).
     std::vector<Run> day;
     res.runs_day = make_runs(0, 86400, &day);
     for (const Run& run : day) {
         uint32_t dur = t.rs_offset_s[t.r_first[run.route + 1] - 1];
-        if (run.depart < cfg.end && run.depart + dur >= cfg.start) runs.push_back(run);
+        if (run.depart < cfg.end && run.depart + dur >= warm_start) runs.push_back(run);
     }
     res.runs = int64_t(runs.size());
     (void)longest;
@@ -1162,7 +1176,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
         Rng r{skey, id, 0};
         double arrive = std::clamp(p.dep_mean + p.dep_sd * r.normal(), double(cfg.start) + 3600, double(cfg.latest_arrival));
         arrive_target[id] = uint32_t(arrive);
-        depart[id] = uint32_t(std::max<double>(cfg.start, arrive - pl.travel_s[id]));
+        depart[id] = uint32_t(std::max<double>(0, arrive - pl.travel_s[id]));  // без сдвига к start: прогрев
         schedule(id, depart[id]);
     }
     // ID события рейса — 2^31 + номер в суточном расписании; локальный номер k хранится отдельно.
@@ -1176,7 +1190,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     };
     auto rides_of = [&](uint32_t id) { return cache.pool[pl.itinerary[id] + 2]; };
 
-    uint32_t next_check = cfg.start;
+    uint32_t next_check = warm_start;  // проверки и во время прогрева
     int64_t waiting_total = 0, wait_sum = 0, late_n = 0; double late_sum = 0;
     // Счётчики состояний и пиков ведутся на каждом переходе; проверка раз в 15 минут сверяет их полным проходом.
     int64_t cnt[kStates]{}; cnt[kHome] = int64_t(n);
@@ -1193,6 +1207,9 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
         int64_t total = 0; for (int s = 0; s < kStates; ++s) { total += full[s]; if (full[s] != cnt[s]) res.conservation_failures++; }
         if (total != int64_t(n)) res.conservation_failures++;
         res.peak_mb = std::max(res.peak_mb, mb(phys_footprint() - base));
+        size_t qcap = 0;  // память очередей — по ёмкости векторов
+        for (const auto& qv : queue) qcap += qv.capacity() * sizeof(uint32_t);
+        res.peak_queue_mb = std::max(res.peak_queue_mb, mb(qcap));
         (void)now;
     };
     uint64_t h = 14695981039346656037ull;
@@ -1258,7 +1275,9 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 if (ob.size() >= cap) { res.left_behind += active_wait[rs]; res.left_by[mode] += active_wait[rs]; }
                 res.max_queue = std::max<int64_t>(res.max_queue, active_wait[rs]);
             }
-            if (head > 1024 && head * 2 > qq.size()) { qq.erase(qq.begin(), qq.begin() + head); head = 0; }
+            // Сжатие очереди: обслуженная голова удаляется, а ёмкость освобождается, если вектор пуст или заполнен мало.
+            if (head == qq.size()) { if (qq.capacity() > 64) std::vector<uint32_t>().swap(qq); else qq.clear(); head = 0; }
+            else if (head > 1024 && head * 2 > qq.size()) { qq.erase(qq.begin(), qq.begin() + head); head = 0; qq.shrink_to_fit(); }
             if (!last) { run_pos[k] = uint8_t(pos + 1); q.push(Key(now + t.rs_ride_s[rs]) << 32 | id); }
             else {
                 run_pos[k] = 255; --active_runs;
@@ -1363,8 +1382,8 @@ void report_sim(const char* name, const SimResult& r) {
                 name, r.seconds, (long long)r.runs, (long long)r.runs_day, (long long)r.run_stop_events, (long long)r.boardings, (long long)r.groups, (long long)r.intervals);
     std::printf("    \"max_group\": %lld, \"max_run_load\": %lld, \"max_queue\": %lld, \"left_behind\": %lld, \"cancelled\": %lld, \"mean_wait_min\": %.1f, \"mean_late_min\": %.1f,\n",
                 (long long)r.max_group, (long long)r.max_run_load, (long long)r.max_queue, (long long)r.left_behind, (long long)r.cancelled, r.mean_wait_s / 60, r.mean_late_s / 60);
-    std::printf("    \"peak_riding\": %lld, \"peak_waiting\": %lld, \"peak_active_runs\": %lld, \"peak_mb\": %.1f,\n",
-                (long long)r.peak_onboard, (long long)r.peak_waiting, (long long)r.peak_active_runs, r.peak_mb);
+    std::printf("    \"peak_riding\": %lld, \"peak_waiting\": %lld, \"peak_active_runs\": %lld, \"peak_mb\": %.1f, \"peak_queue_mb\": %.1f, \"warm_start_s\": %u,\n",
+                (long long)r.peak_onboard, (long long)r.peak_waiting, (long long)r.peak_active_runs, r.peak_mb, r.peak_queue_mb, r.warm_start);
     std::printf("    \"by_route_mode\": {");
     for (int m = 0; m < kModes; ++m)
         std::printf("%s\"%s\": {\"boardings\": %lld, \"left_behind\": %lld, \"cancelled\": %lld}", m ? ", " : "", kModeNames[m],
