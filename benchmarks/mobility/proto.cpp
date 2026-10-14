@@ -614,6 +614,7 @@ struct Transit {
     std::vector<uint32_t> tf_first, tf_to, tf_s;   // пересадки остановка → остановка
     std::vector<char> useful;                      // на остановке можно сесть хотя бы на один маршрут
     std::vector<char> served;                      // остановка есть хотя бы в одном маршруте (в том числе конечная)
+    std::vector<char> inside;                      // остановка внутри региона: только там посадка, высадка и пересадка
     std::vector<float> crowd;                      // штраф загрузки перегона: стоимость выбора = время × (1 + crowd)
 
     uint32_t len(uint32_t r) const { return r_first[r + 1] - r_first[r]; }
@@ -644,6 +645,7 @@ Transit build_transit(const Input& in, const Params& p) {
     t.n_rs = uint32_t(t.rs_stop.size());
     t.crowd.assign(t.n_rs, 0.f);
     t.useful.assign(t.n_stops, 0); t.served.assign(t.n_stops, 0);
+    t.inside.assign(in.stop_inside.begin(), in.stop_inside.end());
     for (uint32_t k = 0; k < t.n_rs; ++k) t.served[t.rs_stop[k]] = 1;
     std::vector<std::vector<uint32_t>> by_stop(t.n_stops);
     for (uint32_t r = 0; r + 1 < t.r_first.size(); ++r)
@@ -704,7 +706,8 @@ void transit_tree(const Transit& t, const Params& p, int period, const std::vect
         if (c > tr.cost[v]) continue;
         uint32_t tm = tr.time[v];
         if (v < t.n_stops) {
-            for (uint32_t k = t.tf_first[v]; k < t.tf_first[v + 1]; ++k) relax(t.tf_to[k], c + t.tf_s[k], tm + t.tf_s[k], v);
+            for (uint32_t k = t.tf_first[v]; k < t.tf_first[v + 1]; ++k)
+                if (t.inside[t.tf_to[k]]) relax(t.tf_to[k], c + t.tf_s[k], tm + t.tf_s[k], v);
             for (uint32_t k = t.stop_rs_first[v]; k < t.stop_rs_first[v + 1]; ++k) {
                 uint32_t rs = t.stop_rs[k];
                 uint32_t h = p.headway_s[t.r_mode[t.rs_route[rs]]][period];
@@ -713,7 +716,7 @@ void transit_tree(const Transit& t, const Params& p, int period, const std::vect
             }
         } else {
             uint32_t rs = v - t.n_stops, r = t.rs_route[rs];
-            relax(t.rs_stop[rs], c, tm, v);
+            if (t.inside[t.rs_stop[rs]]) relax(t.rs_stop[rs], c, tm, v);  // снаружи — только проезд в рейсе
             if (rs + 1 < t.r_first[r + 1])
                 relax(v + 1, c + uint32_t(std::lround(t.rs_ride_s[rs] * (1.0 + t.crowd[rs]))), tm + t.rs_ride_s[rs], v);
         }
@@ -1211,7 +1214,9 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 uint32_t pid = ob[i].person;
                 wagon_load[k][ob[i].wagon]--;
                 res.intervals++;
-                h = fnv(&pid, 4, h); h = fnv(&now, 4, h); h = fnv(&k, 4, h);
+                // Завершённый интервал присутствия: житель, рейс (номер в расписании), вагон, посадка и высадка.
+                h = fnv(&pid, 4, h); h = fnv(&now, 4, h); h = fnv(&runs[k].day_index, 4, h);
+                h = fnv(&ob[i].wagon, 1, h); h = fnv(&ob[i].board_t, 4, h);
                 uint32_t route, board, alight, walk_after;
                 ride_of(pid, ride_ix[pid], route, board, alight, walk_after);
                 ride_ix[pid]++;
