@@ -209,6 +209,16 @@ int period_at(const Params& p, uint32_t t) {
     return best;
 }
 
+// Начало следующего периода после t (время от начала сценария, периоды повторяются каждые сутки).
+uint32_t next_boundary(const Params& p, uint32_t t) {
+    uint32_t day = t / 86400 * 86400, sec = t % 86400, best = kNone, first = kNone;
+    for (int q = 0; q < kPeriods; ++q) {
+        first = std::min(first, p.period_start[q]);
+        if (p.period_start[q] > sec) best = std::min(best, p.period_start[q]);
+    }
+    return best != kNone ? day + best : day + 86400 + first;
+}
+
 struct Input {
     std::vector<float> node_xy, zone_xy, building_xy, facility_xy, stop_xy, gw_xy;
     std::vector<uint8_t> node_inside, stop_inside, gw_transit;
@@ -1132,7 +1142,15 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 if (h == 0) { tm += 60; phased = false; continue; }
                 if (!phased) { tm += rng.below(h); phased = true; if (tm >= until) break; }
                 if (out) out->push_back({r, tm, uint32_t(out->size())});
-                ++count; tm += h;
+                ++count;
+                // Новый интервал действует с границы периода: если следующий период чаще, его первый рейс —
+                // не позже границы плюс новый интервал, а не через прежний (длинный) интервал.
+                uint32_t next = tm + h, b = next_boundary(p, tm);
+                if (next > b) {
+                    uint32_t h2 = p.headway_s[mode][period_at(p, b)];
+                    if (h2 > 0 && h2 < h) next = std::max(b, tm + h2);
+                }
+                tm = next;
             }
         }
         return count;
