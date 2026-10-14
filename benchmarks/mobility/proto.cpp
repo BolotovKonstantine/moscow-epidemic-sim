@@ -1,0 +1,1554 @@
+// Прототип модели поездок (#35). Не код ядра: проверяет, во что обходится маршрутизация поездок
+// всего населения по уличному графу и графу остановок, общий кеш маршрутов, модельные рейсы
+// с вместимостью и конкретными группами присутствия. Меряет время и память, проверяет инварианты.
+// Сборка и запуск — run.sh, протокол и итоги — README.md, правила — docs/mobility.md.
+//
+//   proto <каталог входа> <колонки населения> [--departure-sd с] [--capacity-scale x]
+//                                      — полный прогон; необязательные ключи — чувствительность утреннего пика
+//   proto <каталог входа> --selftest   — малые сцены: пересадка, перегрузка, односторонняя улица,
+//                                        изолированное здание, выход за границу и возвращение
+
+#include <mach/mach.h>
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <functional>
+#include <map>
+#include <queue>
+#include <sstream>
+#include <string>
+#include <vector>
+
+namespace {
+
+using Clock = std::chrono::steady_clock;
+double seconds_since(Clock::time_point start) { return std::chrono::duration<double>(Clock::now() - start).count(); }
+
+uint64_t phys_footprint() {
+    task_vm_info_data_t info{};
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS) return 0;
+    return info.phys_footprint;
+}
+double mb(uint64_t bytes) { return bytes / 1048576.0; }
+
+constexpr uint32_t kNone = 0xFFFFFFFFu;
+constexpr uint32_t kInf = 0xFFFFFFFFu;
+
+// ---------- RNG: Philox4x32-10, как в контракте ядра (docs/sim-core.md) ----------
+
+struct Philox {
+    static void round(uint32_t c[4], const uint32_t k[2]) {
+        uint64_t p0 = uint64_t(0xD2511F53) * c[0], p1 = uint64_t(0xCD9E8D57) * c[2];
+        uint32_t hi0 = uint32_t(p0 >> 32), lo0 = uint32_t(p0), hi1 = uint32_t(p1 >> 32), lo1 = uint32_t(p1);
+        uint32_t n0 = hi1 ^ c[1] ^ k[0], n2 = hi0 ^ c[3] ^ k[1];
+        c[0] = n0; c[1] = lo1; c[2] = n2; c[3] = lo0;
+    }
+    static uint64_t draw(uint64_t key, uint32_t id, uint32_t sub, uint32_t n) {
+        uint32_t c[4] = {id, n, sub, 0};
+        uint32_t k[2] = {uint32_t(key), uint32_t(key >> 32)};
+        for (int i = 0; i < 10; ++i) {
+            round(c, k);
+            k[0] += 0x9E3779B9; k[1] += 0xBB67AE85;
+        }
+        return uint64_t(c[0]) << 32 | c[1];
+    }
+};
+
+uint64_t mix64(uint64_t z) {
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return z ^ (z >> 31);
+}
+uint64_t stream_key(uint64_t seed, uint32_t stream) { return mix64(seed ^ (uint64_t(stream) << 56 | 0x5EED)); }
+
+// Потоки поездок; номера продолжают таблицу прототипа #34 (16 — население, 17 — места).
+constexpr uint32_t kStreamSchedule = 18;  // id — ID жителя: желаемое время прибытия
+constexpr uint32_t kStreamTransit = 19;   // id — ID жителя, sub — номер рейса: вагон; id — маршрут: сдвиг рейсов
+
+struct Rng {
+    uint64_t key; uint32_t id, sub, n = 0;
+    double uniform() { return double(Philox::draw(key, id, sub, n++) >> 11) * 0x1.0p-53; }
+    double normal() {  // Бокс — Мюллер
+        double u1 = 1.0 - uniform(), u2 = uniform();
+        return std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * M_PI * u2);
+    }
+    uint32_t below(uint32_t n) { return uint32_t((Philox::draw(key, id, sub, this->n++) >> 32) * n >> 32); }
+};
+
+uint64_t fnv(const void* data, size_t bytes, uint64_t h = 14695981039346656037ull) {
+    const uint8_t* p = static_cast<const uint8_t*>(data);
+    for (size_t i = 0; i < bytes; ++i) { h ^= p[i]; h *= 1099511628211ull; }
+    return h;
+}
+
+// ---------- Вход ----------
+
+template <typename T> std::vector<T> read_array(const std::string& path, bool required = true) {
+    std::ifstream in(path, std::ios::binary | std::ios::ate);
+    if (!in) {
+        if (!required) return {};
+        std::fprintf(stderr, "нет файла %s\n", path.c_str());
+        std::exit(1);
+    }
+    size_t bytes = size_t(in.tellg());
+    std::vector<T> out(bytes / sizeof(T));
+    in.seekg(0);
+    in.read(reinterpret_cast<char*>(out.data()), std::streamsize(bytes));
+    return out;
+}
+
+constexpr int kRoadClasses = 8;  // service, pedestrian, residential, tertiary, secondary, primary, trunk, motorway
+constexpr int kModes = 8;        // bus, share_taxi, trolleybus, tram, light_rail, monorail, train, subway
+const char* kModeNames[kModes] = {"bus", "share_taxi", "trolleybus", "tram", "light_rail", "monorail", "train", "subway"};
+constexpr int kPeriods = 6;      // morning_peak, day, evening_peak, evening, night, early
+
+struct Params {
+    uint64_t seed = 1;
+    double car_speed[kRoadClasses]{}, transit_speed[kModes]{};
+    uint32_t capacity[kModes]{}, wagons[kModes]{};
+    double dep_mean = 28800, dep_sd = 2700, car_park_s = 180, walk_speed = 1.2, walk_detour = 1.3;
+    double access_radius = 1000, transfer_radius = 250, board_penalty = 180, max_wait = 1800, walk_only_max = 2400;
+    uint32_t access_stops_max = 8, crowding_iterations = 0;
+    double crowding_penalty = 1;
+    uint32_t headway_s[kModes][kPeriods]{};  // 0 — нет движения в период
+    uint32_t period_start[kPeriods]{};
+};
+
+std::map<std::string, std::vector<double>> read_lines(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) { std::fprintf(stderr, "нет файла %s\n", path.c_str()); std::exit(1); }
+    std::map<std::string, std::vector<double>> out;
+    std::string line;
+    while (std::getline(in, line)) {
+        std::istringstream s(line);
+        std::string key; s >> key;
+        std::string tok; std::vector<double> v;
+        while (s >> tok) {
+            char* end = nullptr;
+            double x = std::strtod(tok.c_str(), &end);
+            if (end != tok.c_str()) v.push_back(x);
+        }
+        out[key] = v;
+    }
+    return out;
+}
+
+Params load_params(const std::string& dir) {
+    auto m = read_lines(dir + "/params.txt");
+    auto sv = read_lines(dir + "/service.txt");
+    auto get = [&](std::map<std::string, std::vector<double>>& src, const std::string& k, size_t n) -> const std::vector<double>& {
+        auto it = src.find(k);
+        if (it == src.end() || it->second.size() < n) { std::fprintf(stderr, "нет параметра %s\n", k.c_str()); std::exit(1); }
+        return it->second;
+    };
+    Params p;
+    p.seed = uint64_t(get(m, "seed", 1)[0]);
+    for (int i = 0; i < kRoadClasses; ++i) p.car_speed[i] = get(m, "car_speed_kmh", kRoadClasses)[i];
+    for (int i = 0; i < kModes; ++i) {
+        p.transit_speed[i] = get(m, "transit_speed_kmh", kModes)[i];
+        p.capacity[i] = uint32_t(get(m, "capacity", kModes)[i]);
+        p.wagons[i] = uint32_t(get(m, "wagons", kModes)[i]);
+        for (int q = 0; q < kPeriods; ++q) p.headway_s[i][q] = uint32_t(get(sv, std::string("headway_") + kModeNames[i], kPeriods)[q] * 60);
+    }
+    const char* periods[kPeriods] = {"morning_peak", "day", "evening_peak", "evening", "night", "early"};
+    for (int q = 0; q < kPeriods; ++q) p.period_start[q] = uint32_t(get(sv, std::string("period_start_") + periods[q], 1)[0]);
+    p.dep_mean = get(m, "departure", 2)[0]; p.dep_sd = get(m, "departure", 2)[1];
+    p.car_park_s = get(m, "car_park_s", 1)[0];
+    p.walk_speed = get(m, "walk_speed_mps", 1)[0];
+    p.walk_detour = get(m, "walk_detour", 1)[0];
+    p.access_radius = get(m, "access_radius_m", 1)[0];
+    p.access_stops_max = uint32_t(get(m, "access_stops_max", 1)[0]);
+    p.transfer_radius = get(m, "transfer_radius_m", 1)[0];
+    p.board_penalty = get(m, "board_penalty_s", 1)[0];
+    p.max_wait = get(m, "max_wait_s", 1)[0];
+    p.walk_only_max = get(m, "walk_only_max_s", 1)[0];
+    p.crowding_penalty = get(m, "crowding_penalty", 1)[0];
+    p.crowding_iterations = uint32_t(get(m, "crowding_iterations", 1)[0]);
+    return p;
+}
+
+// Период суток: последний начавшийся (night начинается в 01:00, до него идёт evening).
+int period_at(const Params& p, uint32_t t) {
+    uint32_t s = t % 86400;
+    int best = -1; uint32_t best_start = 0;
+    for (int q = 0; q < kPeriods; ++q)
+        if (p.period_start[q] <= s && (best < 0 || p.period_start[q] >= best_start)) { best = q; best_start = p.period_start[q]; }
+    if (best >= 0) return best;
+    for (int q = 0; q < kPeriods; ++q)  // до самого раннего начала — период, начавшийся позже всех
+        if (best < 0 || p.period_start[q] > best_start) { best = q; best_start = p.period_start[q]; }
+    return best;
+}
+
+struct Input {
+    std::vector<float> node_xy, zone_xy, building_xy, facility_xy, stop_xy, gw_xy;
+    std::vector<uint8_t> node_inside, stop_inside, gw_transit;
+    std::vector<uint32_t> e_from, e_to, building_zone, route_first, route_stops, tr_from, tr_to, tr_walk, gw_node, gw_stop;
+    std::vector<float> e_len;
+    std::vector<uint8_t> e_cls, route_mode;
+    std::vector<int8_t> e_oneway;
+    // Население (benchmarks/population_gen/gen --dump); место работы — здание, учёбы — учреждение.
+    std::vector<uint32_t> home, place;
+    std::vector<uint8_t> role, flags;
+    std::vector<uint16_t> profile;
+};
+
+Input load_input(const std::string& dir, const std::string& pop_dir) {
+    Input in;
+    in.node_xy = read_array<float>(dir + "/node_xy.f32");
+    in.node_inside = read_array<uint8_t>(dir + "/node_inside.u8");
+    in.e_from = read_array<uint32_t>(dir + "/edge_from.u32");
+    in.e_to = read_array<uint32_t>(dir + "/edge_to.u32");
+    in.e_len = read_array<float>(dir + "/edge_len.f32");
+    in.e_cls = read_array<uint8_t>(dir + "/edge_class.u8");
+    in.e_oneway = read_array<int8_t>(dir + "/edge_oneway.i8");
+    in.zone_xy = read_array<float>(dir + "/zone_xy.f32");
+    in.building_xy = read_array<float>(dir + "/building_xy.f32");
+    in.building_zone = read_array<uint32_t>(dir + "/building_zone.u32");
+    in.facility_xy = read_array<float>(dir + "/facility_xy.f32");
+    in.stop_xy = read_array<float>(dir + "/stop_xy.f32");
+    in.stop_inside = read_array<uint8_t>(dir + "/stop_inside.u8");
+    in.route_first = read_array<uint32_t>(dir + "/route_first.u32");
+    in.route_stops = read_array<uint32_t>(dir + "/route_stops.u32");
+    in.route_mode = read_array<uint8_t>(dir + "/route_mode.u8");
+    in.tr_from = read_array<uint32_t>(dir + "/transfer_from.u32");
+    in.tr_to = read_array<uint32_t>(dir + "/transfer_to.u32");
+    in.tr_walk = read_array<uint32_t>(dir + "/transfer_walk_s.u32");
+    in.gw_xy = read_array<float>(dir + "/gateway_xy.f32");
+    in.gw_transit = read_array<uint8_t>(dir + "/gateway_transit.u8");
+    in.gw_node = read_array<uint32_t>(dir + "/gateway_node.u32");
+    in.gw_stop = read_array<uint32_t>(dir + "/gateway_stop.u32");
+    in.home = read_array<uint32_t>(pop_dir + "/p_home.u32");
+    in.place = read_array<uint32_t>(pop_dir + "/p_place.u32");
+    in.role = read_array<uint8_t>(pop_dir + "/p_role.u8");
+    in.flags = read_array<uint8_t>(pop_dir + "/p_flags.u8");
+    in.profile = read_array<uint16_t>(pop_dir + "/p_profile.u16");
+    return in;
+}
+
+// Роли и транспортный профиль — как в benchmarks/population_gen/gen.cpp.
+enum Role : uint8_t { kHomeChild, kKindergartenChild, kPupil, kStudent, kWorker, kNotWorking, kPensioner };
+enum Transport : uint8_t { kAccompanied = 0, kPublic = 1, kCar = 2 };
+uint8_t transport_of(uint16_t profile) { return uint8_t(profile / 48 % 3); }  // ((socio·3 + transport)·3 + contact)·4·4 + …
+// Флаги мест (1 — сверх вместимости, 2 — нет места): у работающего без места и без флага место за границей региона.
+
+float dist(const float* a, const float* b) { return std::hypot(a[0] - b[0], a[1] - b[1]); }
+
+// ---------- Пространственная сетка ----------
+
+struct Grid {
+    float x0 = 0, y0 = 0, cell = 250; int nx = 1, ny = 1;
+    std::vector<uint32_t> first, items;
+    const std::vector<float>* xy = nullptr;
+
+    void build(const std::vector<float>& pts, const std::function<bool(uint32_t)>& keep, float cell_m) {
+        xy = &pts; cell = cell_m;
+        size_t n = pts.size() / 2;
+        float x1 = 0, y1 = 0; x0 = 1e30f; y0 = 1e30f; x1 = -1e30f; y1 = -1e30f;
+        for (size_t i = 0; i < n; ++i) {
+            x0 = std::min(x0, pts[2 * i]); y0 = std::min(y0, pts[2 * i + 1]);
+            x1 = std::max(x1, pts[2 * i]); y1 = std::max(y1, pts[2 * i + 1]);
+        }
+        if (n == 0) { x0 = y0 = 0; x1 = y1 = 1; }
+        nx = int((x1 - x0) / cell) + 1; ny = int((y1 - y0) / cell) + 1;
+        first.assign(size_t(nx) * ny + 1, 0);
+        std::vector<uint32_t> c(n, kNone);
+        for (uint32_t i = 0; i < n; ++i) if (keep(i)) { c[i] = cell_of(pts[2 * i], pts[2 * i + 1]); first[c[i] + 1]++; }
+        for (size_t i = 1; i < first.size(); ++i) first[i] += first[i - 1];
+        items.assign(first.back(), 0);
+        std::vector<uint32_t> fill(first.begin(), first.end() - 1);
+        for (uint32_t i = 0; i < n; ++i) if (c[i] != kNone) items[fill[c[i]]++] = i;  // в ячейке — по возрастанию индекса
+    }
+    uint32_t cell_of(float x, float y) const {
+        int ix = std::clamp(int((x - x0) / cell), 0, nx - 1), iy = std::clamp(int((y - y0) / cell), 0, ny - 1);
+        return uint32_t(iy) * nx + ix;
+    }
+    // Все точки в радиусе r, по возрастанию (расстояние, индекс) — стабильно.
+    void within(float x, float y, float r, std::vector<std::pair<float, uint32_t>>& out) const {
+        out.clear();
+        int ix0 = std::max(0, int((x - r - x0) / cell)), ix1 = std::min(nx - 1, int((x + r - x0) / cell));
+        int iy0 = std::max(0, int((y - r - y0) / cell)), iy1 = std::min(ny - 1, int((y + r - y0) / cell));
+        float p[2] = {x, y};
+        for (int iy = iy0; iy <= iy1; ++iy)
+            for (int ix = ix0; ix <= ix1; ++ix) {
+                uint32_t c = uint32_t(iy) * nx + ix;
+                for (uint32_t k = first[c]; k < first[c + 1]; ++k) {
+                    float d = dist(p, &(*xy)[2 * items[k]]);
+                    if (d <= r) out.push_back({d, items[k]});
+                }
+            }
+        std::sort(out.begin(), out.end());
+    }
+    // Ближайшая точка: кольца ячеек расширяются, пока кольцо не дальше найденного.
+    uint32_t nearest(float x, float y, float* out_d = nullptr) const {
+        if (items.empty()) return kNone;
+        int cx = std::clamp(int((x - x0) / cell), 0, nx - 1), cy = std::clamp(int((y - y0) / cell), 0, ny - 1);
+        float p[2] = {x, y}; float best = 1e30f; uint32_t bi = kNone;
+        for (int r = 0; r < std::max(nx, ny); ++r) {
+            if (bi != kNone && (r - 1) * cell > best) break;
+            for (int iy = cy - r; iy <= cy + r; ++iy) {
+                if (iy < 0 || iy >= ny) continue;
+                for (int ix = cx - r; ix <= cx + r; ++ix) {
+                    if (ix < 0 || ix >= nx || (std::abs(ix - cx) != r && std::abs(iy - cy) != r)) continue;
+                    uint32_t c = uint32_t(iy) * nx + ix;
+                    for (uint32_t k = first[c]; k < first[c + 1]; ++k) {
+                        float d = dist(p, &(*xy)[2 * items[k]]);
+                        if (d < best || (d == best && items[k] < bi)) { best = d; bi = items[k]; }
+                    }
+                }
+            }
+        }
+        if (out_d) *out_d = best;
+        return bi;
+    }
+};
+
+// ---------- Графы ----------
+
+struct Csr {
+    uint32_t n = 0;
+    std::vector<uint32_t> first, head, w;  // w — децисекунды
+};
+
+Csr make_csr(uint32_t n, std::vector<std::array<uint32_t, 3>>& arcs) {
+    std::sort(arcs.begin(), arcs.end());
+    Csr g; g.n = n; g.first.assign(n + 1, 0);
+    uint32_t prev_from = kNone, prev_to = kNone;
+    for (auto& a : arcs) {
+        if (a[0] == a[1] || (a[0] == prev_from && a[1] == prev_to)) continue;  // петли и параллельные дуги (оставлена кратчайшая)
+        prev_from = a[0]; prev_to = a[1];
+        g.head.push_back(a[1]); g.w.push_back(a[2]); g.first[a[0] + 1]++;
+    }
+    for (uint32_t i = 0; i < n; ++i) g.first[i + 1] += g.first[i];
+    return g;
+}
+
+Csr build_car(const Input& in, const Params& p) {
+    std::vector<std::array<uint32_t, 3>> arcs;
+    for (size_t e = 0; e < in.e_from.size(); ++e) {
+        double v = p.car_speed[in.e_cls[e]];
+        if (v <= 0) continue;
+        uint32_t w = std::max<uint32_t>(1, uint32_t(std::lround(in.e_len[e] / (v / 3.6) * 10)));
+        if (in.e_oneway[e] >= 0) arcs.push_back({in.e_from[e], in.e_to[e], w});
+        if (in.e_oneway[e] <= 0) arcs.push_back({in.e_to[e], in.e_from[e], w});
+    }
+    return make_csr(uint32_t(in.node_xy.size() / 2), arcs);
+}
+
+Csr build_walk(const Input& in, const Params& p) {
+    std::vector<std::array<uint32_t, 3>> arcs;
+    for (size_t e = 0; e < in.e_from.size(); ++e) {
+        uint32_t w = std::max<uint32_t>(1, uint32_t(std::lround(in.e_len[e] / p.walk_speed * 10)));
+        arcs.push_back({in.e_from[e], in.e_to[e], w});
+        arcs.push_back({in.e_to[e], in.e_from[e], w});
+    }
+    return make_csr(uint32_t(in.node_xy.size() / 2), arcs);
+}
+
+// Компоненты сильной связности (итеративный Тарьян); возвращает номер компоненты узла.
+std::vector<uint32_t> scc(const Csr& g, uint32_t& count) {
+    std::vector<uint32_t> index(g.n, kNone), low(g.n, 0), comp(g.n, kNone), stack, call;
+    std::vector<uint32_t> edge_pos(g.n, 0);
+    std::vector<char> on(g.n, 0);
+    uint32_t next = 0; count = 0;
+    for (uint32_t s = 0; s < g.n; ++s) {
+        if (index[s] != kNone) continue;
+        call.push_back(s); index[s] = low[s] = next++; stack.push_back(s); on[s] = 1; edge_pos[s] = g.first[s];
+        while (!call.empty()) {
+            uint32_t v = call.back();
+            if (edge_pos[v] < g.first[v + 1]) {
+                uint32_t w = g.head[edge_pos[v]++];
+                if (index[w] == kNone) {
+                    index[w] = low[w] = next++; stack.push_back(w); on[w] = 1; edge_pos[w] = g.first[w]; call.push_back(w);
+                } else if (on[w]) low[v] = std::min(low[v], index[w]);
+            } else {
+                call.pop_back();
+                if (!call.empty()) low[call.back()] = std::min(low[call.back()], low[v]);
+                if (low[v] == index[v]) {
+                    uint32_t w;
+                    do { w = stack.back(); stack.pop_back(); on[w] = 0; comp[w] = count; } while (w != v);
+                    ++count;
+                }
+            }
+        }
+    }
+    return comp;
+}
+
+uint32_t largest(const std::vector<uint32_t>& comp, uint32_t count) {
+    std::vector<uint32_t> size(count, 0);
+    for (uint32_t c : comp) size[c]++;
+    return uint32_t(std::max_element(size.begin(), size.end()) - size.begin());
+}
+
+using HeapItem = std::pair<uint32_t, uint32_t>;  // (расстояние, узел): равные расстояния — по номеру узла
+using MinHeap = std::priority_queue<HeapItem, std::vector<HeapItem>, std::greater<HeapItem>>;
+
+struct Dijkstra {
+    std::vector<uint32_t> d; std::vector<uint32_t> touched; MinHeap q;
+    explicit Dijkstra(uint32_t n) : d(n, kInf) {}
+    void reset() { for (uint32_t v : touched) d[v] = kInf; touched.clear(); q = MinHeap(); }
+    void seed(uint32_t v, uint32_t dv) { if (dv < d[v]) { if (d[v] == kInf) touched.push_back(v); d[v] = dv; q.push({dv, v}); } }
+    // До исчерпания или до целевого узла; возвращает число просмотренных узлов.
+    size_t run(const Csr& g, uint32_t target = kNone) {
+        size_t settled = 0;
+        while (!q.empty()) {
+            auto [dv, v] = q.top(); q.pop();
+            if (dv > d[v]) continue;
+            ++settled;
+            if (v == target) break;
+            for (uint32_t k = g.first[v]; k < g.first[v + 1]; ++k) seed(g.head[k], dv + g.w[k]);
+        }
+        return settled;
+    }
+};
+
+// ---------- Иерархия сокращений (contraction hierarchies) для автомобиля ----------
+
+struct CH {
+    struct Arc { uint32_t to, w, mid; };
+    uint32_t n = 0;
+    std::vector<uint32_t> rank;
+    std::vector<uint32_t> up_first, dn_first;
+    std::vector<Arc> up, dn;  // up[v]: v→w, rank w > v; dn[v]: u→v, rank u > v (хранится как (u, w, mid))
+    size_t shortcuts = 0;
+
+    void build(const Csr& g) {
+        n = g.n;
+        std::vector<std::vector<Arc>> out(n), in(n);
+        for (uint32_t u = 0; u < n; ++u)
+            for (uint32_t k = g.first[u]; k < g.first[u + 1]; ++k) {
+                out[u].push_back({g.head[k], g.w[k], kNone});
+                in[g.head[k]].push_back({u, g.w[k], kNone});
+            }
+        std::vector<char> done(n, 0);
+        std::vector<uint32_t> deleted(n, 0), dist(n, kInf), touched;
+        std::vector<std::vector<Arc>> up_l(n), dn_l(n);
+        rank.assign(n, kNone);
+
+        auto compact = [&](std::vector<Arc>& l) {
+            l.erase(std::remove_if(l.begin(), l.end(), [&](const Arc& a) { return done[a.to]; }), l.end());
+        };
+        // Поиск свидетеля: кратчайший путь u→… без v, не длиннее limit, с пределом просмотренных узлов.
+        auto witness = [&](uint32_t u, uint32_t v, uint32_t limit, int settle_limit) {
+            for (uint32_t x : touched) dist[x] = kInf;
+            touched.clear();
+            MinHeap q; dist[u] = 0; touched.push_back(u); q.push({0, u});
+            int settled = 0;
+            while (!q.empty()) {
+                auto [d, x] = q.top(); q.pop();
+                if (d > dist[x]) continue;
+                if (d > limit || ++settled > settle_limit) break;
+                for (const Arc& a : out[x]) {
+                    if (done[a.to] || a.to == v) continue;
+                    uint32_t nd = d + a.w;
+                    if (nd < dist[a.to]) { if (dist[a.to] == kInf) touched.push_back(a.to); dist[a.to] = nd; q.push({nd, a.to}); }
+                }
+            }
+        };
+        struct Shortcut { uint32_t from, to, w; };
+        std::vector<Shortcut> found;
+        auto simulate = [&](uint32_t v, int settle_limit) {
+            found.clear();
+            compact(out[v]); compact(in[v]);
+            for (const Arc& a : in[v]) {
+                uint32_t limit = 0;
+                for (const Arc& b : out[v]) if (b.to != a.to) limit = std::max(limit, a.w + b.w);
+                if (limit == 0) continue;
+                witness(a.to, v, limit, settle_limit);
+                for (const Arc& b : out[v]) {
+                    if (b.to == a.to) continue;
+                    if (dist[b.to] > a.w + b.w) found.push_back({a.to, b.to, a.w + b.w});
+                }
+            }
+            return int(found.size());
+        };
+        auto priority = [&](uint32_t v) {
+            int sc = simulate(v, 60);
+            return int64_t(sc) * 2 - int64_t(in[v].size() + out[v].size()) + deleted[v];
+        };
+        auto add_arc = [&](uint32_t u, uint32_t w, uint32_t c, uint32_t mid) {
+            for (Arc& a : out[u])
+                if (a.to == w) {
+                    if (a.w <= c) return;
+                    a.w = c; a.mid = mid;
+                    for (Arc& b : in[w]) if (b.to == u) { b.w = c; b.mid = mid; }
+                    return;
+                }
+            out[u].push_back({w, c, mid}); in[w].push_back({u, c, mid});
+            ++shortcuts;
+        };
+
+        std::priority_queue<std::pair<int64_t, uint32_t>, std::vector<std::pair<int64_t, uint32_t>>, std::greater<>> pq;
+        for (uint32_t v = 0; v < n; ++v) pq.push({priority(v), v});
+        uint32_t next_rank = 0;
+        while (!pq.empty()) {
+            auto [pr, v] = pq.top(); pq.pop();
+            if (done[v]) continue;
+            int64_t now = priority(v);
+            if (!pq.empty() && now > pq.top().first) { pq.push({now, v}); continue; }
+            simulate(v, 500);
+            up_l[v] = out[v]; dn_l[v] = in[v];
+            std::vector<Shortcut> add = found;
+            done[v] = 1; rank[v] = next_rank++;
+            for (const Shortcut& s : add) add_arc(s.from, s.to, s.w, v);
+            for (const Arc& a : out[v]) deleted[a.to]++;
+            for (const Arc& a : in[v]) deleted[a.to]++;
+            std::vector<Arc>().swap(out[v]); std::vector<Arc>().swap(in[v]);
+        }
+        auto flatten = [&](std::vector<std::vector<Arc>>& l, std::vector<uint32_t>& first, std::vector<Arc>& arcs) {
+            first.assign(n + 1, 0);
+            for (uint32_t v = 0; v < n; ++v) {
+                std::sort(l[v].begin(), l[v].end(), [](const Arc& a, const Arc& b) { return a.to != b.to ? a.to < b.to : a.w < b.w; });
+                first[v + 1] = first[v] + uint32_t(l[v].size());
+            }
+            arcs.reserve(first[n]);
+            for (uint32_t v = 0; v < n; ++v) { arcs.insert(arcs.end(), l[v].begin(), l[v].end()); std::vector<Arc>().swap(l[v]); }
+        };
+        flatten(up_l, up_first, up);
+        flatten(dn_l, dn_first, dn);
+    }
+
+    size_t bytes() const { return (up.size() + dn.size()) * sizeof(Arc) + (up_first.size() + dn_first.size() + rank.size()) * 4; }
+
+    // Двунаправленный запрос со stall-on-demand. Буферы — у вызывающего (по одному на поток).
+    struct Query {
+        std::vector<uint32_t> df, db, pf, pb, touched;
+        explicit Query(uint32_t n) : df(n, kInf), db(n, kInf), pf(n, kNone), pb(n, kNone) {}
+    };
+
+    uint32_t query(Query& qs, uint32_t s, uint32_t t, std::vector<uint32_t>* path = nullptr, size_t* settled_out = nullptr) const {
+        for (uint32_t v : qs.touched) { qs.df[v] = qs.db[v] = kInf; qs.pf[v] = qs.pb[v] = kNone; }
+        qs.touched.clear();
+        if (s == t) { if (path) *path = {s}; return 0; }
+        MinHeap fq, bq;
+        qs.df[s] = 0; qs.db[t] = 0; qs.touched.push_back(s); qs.touched.push_back(t);
+        fq.push({0, s}); bq.push({0, t});
+        uint32_t best = kInf, meet = kNone; size_t settled = 0;
+        while (!fq.empty() || !bq.empty()) {
+            uint32_t mf = fq.empty() ? kInf : fq.top().first, mb_ = bq.empty() ? kInf : bq.top().first;
+            if (std::min(mf, mb_) >= best) break;
+            bool forward = mf <= mb_;
+            MinHeap& q = forward ? fq : bq;
+            auto [d, x] = q.top(); q.pop();
+            std::vector<uint32_t>& mine = forward ? qs.df : qs.db;
+            std::vector<uint32_t>& other = forward ? qs.db : qs.df;
+            if (d > mine[x]) continue;
+            ++settled;
+            if (other[x] != kInf && d + other[x] < best) { best = d + other[x]; meet = x; }
+            // stall-on-demand: если более высокий узел достигает x короче, дальше от x не идём
+            const std::vector<uint32_t>& sf = forward ? dn_first : up_first;
+            const std::vector<Arc>& sa = forward ? dn : up;
+            bool stalled = false;
+            for (uint32_t k = sf[x]; k < sf[x + 1] && !stalled; ++k)
+                if (mine[sa[k].to] != kInf && mine[sa[k].to] + sa[k].w < d) stalled = true;
+            if (stalled) continue;
+            const std::vector<uint32_t>& f = forward ? up_first : dn_first;
+            const std::vector<Arc>& a = forward ? up : dn;
+            std::vector<uint32_t>& par = forward ? qs.pf : qs.pb;
+            for (uint32_t k = f[x]; k < f[x + 1]; ++k) {
+                uint32_t y = a[k].to, nd = d + a[k].w;
+                if (nd < mine[y]) {
+                    if (qs.df[y] == kInf && qs.db[y] == kInf) qs.touched.push_back(y);
+                    mine[y] = nd; par[y] = x; q.push({nd, y});
+                }
+            }
+        }
+        if (settled_out) *settled_out = settled;
+        if (path && best != kInf) {
+            std::vector<uint32_t> fwd, bwd;
+            for (uint32_t v = meet; v != kNone; v = qs.pf[v]) fwd.push_back(v);
+            std::reverse(fwd.begin(), fwd.end());
+            for (uint32_t v = qs.pb[meet]; v != kNone; v = qs.pb[v]) bwd.push_back(v);
+            fwd.insert(fwd.end(), bwd.begin(), bwd.end());
+            path->clear(); path->push_back(fwd[0]);
+            for (size_t i = 0; i + 1 < fwd.size(); ++i) unpack(fwd[i], fwd[i + 1], *path);
+        }
+        return best;
+    }
+
+    // Раскрытие дуги a→b (верхней или нижней) в исходные рёбра графа; добавляет узлы после a.
+    void unpack(uint32_t a, uint32_t b, std::vector<uint32_t>& path) const {
+        const Arc* arc = nullptr;
+        if (rank[a] < rank[b]) { for (uint32_t k = up_first[a]; k < up_first[a + 1]; ++k) if (up[k].to == b && (!arc || up[k].w < arc->w)) arc = &up[k]; }
+        else { for (uint32_t k = dn_first[b]; k < dn_first[b + 1]; ++k) if (dn[k].to == a && (!arc || dn[k].w < arc->w)) arc = &dn[k]; }
+        if (!arc || arc->mid == kNone) { path.push_back(b); return; }
+        unpack(a, arc->mid, path);
+        unpack(arc->mid, b, path);
+    }
+};
+
+// ---------- Транспорт: граф остановок с модельными интервалами ----------
+
+struct Transit {
+    uint32_t n_stops = 0, n_rs = 0;
+    std::vector<uint32_t> r_first;    // маршрут → позиции [r_first[r], r_first[r+1]) в rs_*
+    std::vector<uint8_t> r_mode;
+    std::vector<uint32_t> r_source;   // исходный индекс маршрута пакета
+    std::vector<uint32_t> rs_stop, rs_route, rs_ride_s, rs_offset_s;  // ride — до следующей позиции; offset — от первой
+    std::vector<uint32_t> stop_rs_first, stop_rs;  // остановка → позиции маршрутов (кроме последних)
+    std::vector<uint32_t> tf_first, tf_to, tf_s;   // пересадки остановка → остановка
+    std::vector<char> useful;                      // на остановке можно сесть хотя бы на один маршрут
+    std::vector<float> crowd;                      // штраф загрузки перегона: стоимость выбора = время × (1 + crowd)
+
+    uint32_t len(uint32_t r) const { return r_first[r + 1] - r_first[r]; }
+};
+
+Transit build_transit(const Input& in, const Params& p) {
+    Transit t;
+    t.n_stops = uint32_t(in.stop_xy.size() / 2);
+    t.r_first.push_back(0);
+    for (uint32_t r = 0; r + 1 < in.route_first.size(); ++r) {
+        std::vector<uint32_t> seq;
+        for (uint32_t k = in.route_first[r]; k < in.route_first[r + 1]; ++k)
+            if (seq.empty() || seq.back() != in.route_stops[k]) seq.push_back(in.route_stops[k]);
+        if (seq.size() < 2 || seq.size() > 255) continue;
+        uint8_t mode = in.route_mode[r];
+        double v = p.transit_speed[mode] / 3.6;
+        uint32_t offset = 0;
+        for (size_t i = 0; i < seq.size(); ++i) {
+            uint32_t ride = 0;
+            if (i + 1 < seq.size()) ride = std::max<uint32_t>(30, uint32_t(std::lround(dist(&in.stop_xy[2 * seq[i]], &in.stop_xy[2 * seq[i + 1]]) / v)));
+            t.rs_stop.push_back(seq[i]); t.rs_route.push_back(uint32_t(t.r_mode.size()));
+            t.rs_ride_s.push_back(ride); t.rs_offset_s.push_back(offset);
+            offset += ride;
+        }
+        t.r_mode.push_back(mode); t.r_source.push_back(r);
+        t.r_first.push_back(uint32_t(t.rs_stop.size()));
+    }
+    t.n_rs = uint32_t(t.rs_stop.size());
+    t.crowd.assign(t.n_rs, 0.f);
+    t.useful.assign(t.n_stops, 0);
+    std::vector<std::vector<uint32_t>> by_stop(t.n_stops);
+    for (uint32_t r = 0; r + 1 < t.r_first.size(); ++r)
+        for (uint32_t k = t.r_first[r]; k + 1 < t.r_first[r + 1]; ++k) { by_stop[t.rs_stop[k]].push_back(k); t.useful[t.rs_stop[k]] = 1; }
+    t.stop_rs_first.assign(t.n_stops + 1, 0);
+    for (uint32_t s = 0; s < t.n_stops; ++s) {
+        t.stop_rs_first[s + 1] = t.stop_rs_first[s] + uint32_t(by_stop[s].size());
+        t.stop_rs.insert(t.stop_rs.end(), by_stop[s].begin(), by_stop[s].end());
+    }
+    // Пересадки: stop_area пакета и пешком между остановками ближе transfer_radius (по прямой × detour).
+    std::vector<std::array<uint32_t, 3>> arcs;
+    for (size_t i = 0; i < in.tr_from.size(); ++i) arcs.push_back({in.tr_from[i], in.tr_to[i], in.tr_walk[i]});
+    Grid g; g.build(in.stop_xy, [&](uint32_t s) { return t.useful[s] != 0; }, 250);
+    std::vector<std::pair<float, uint32_t>> near;
+    for (uint32_t s = 0; s < t.n_stops; ++s) {
+        g.within(in.stop_xy[2 * s], in.stop_xy[2 * s + 1], float(p.transfer_radius), near);
+        for (auto& [d, o] : near)
+            if (o != s) arcs.push_back({s, o, uint32_t(std::lround(d * p.walk_detour / p.walk_speed)) + 60});
+    }
+    std::sort(arcs.begin(), arcs.end(), [](const auto& a, const auto& b) { return a[0] != b[0] ? a[0] < b[0] : a[1] != b[1] ? a[1] < b[1] : a[2] < b[2]; });
+    t.tf_first.assign(t.n_stops + 1, 0);
+    uint32_t pf = kNone, pt = kNone;
+    for (auto& a : arcs) {
+        if (a[0] == a[1] || (a[0] == pf && a[1] == pt)) continue;
+        pf = a[0]; pt = a[1];
+        t.tf_to.push_back(a[1]); t.tf_s.push_back(a[2]); t.tf_first[a[0] + 1]++;
+    }
+    for (uint32_t s = 0; s < t.n_stops; ++s) t.tf_first[s + 1] += t.tf_first[s];
+    return t;
+}
+
+// Дерево кратчайших путей по графу остановок для периода: узлы [0, n_stops) — остановки,
+// [n_stops, n_stops + n_rs) — позиции маршрутов. Стоимость — время + штраф посадки; время — без штрафа.
+struct TransitTree {
+    std::vector<uint32_t> cost, time, parent, touched;
+    explicit TransitTree(const Transit& t) : cost(t.n_stops + t.n_rs, kInf), time(cost.size(), kInf), parent(cost.size(), kNone) {}
+    void reset() { for (uint32_t v : touched) { cost[v] = time[v] = kInf; parent[v] = kNone; } touched.clear(); }
+};
+
+void transit_tree(const Transit& t, const Params& p, int period, const std::vector<std::pair<uint32_t, uint32_t>>& seeds, TransitTree& tr) {
+    tr.reset();
+    MinHeap q;
+    auto relax = [&](uint32_t v, uint32_t c, uint32_t tm, uint32_t par) {
+        if (c < tr.cost[v] || (c == tr.cost[v] && par < tr.parent[v])) {
+            if (tr.cost[v] == kInf) tr.touched.push_back(v);
+            tr.cost[v] = c; tr.time[v] = tm; tr.parent[v] = par; q.push({c, v});
+        }
+    };
+    for (auto [s, walk] : seeds) relax(s, walk, walk, kNone);
+    while (!q.empty()) {
+        auto [c, v] = q.top(); q.pop();
+        if (c > tr.cost[v]) continue;
+        uint32_t tm = tr.time[v];
+        if (v < t.n_stops) {
+            for (uint32_t k = t.tf_first[v]; k < t.tf_first[v + 1]; ++k) relax(t.tf_to[k], c + t.tf_s[k], tm + t.tf_s[k], v);
+            for (uint32_t k = t.stop_rs_first[v]; k < t.stop_rs_first[v + 1]; ++k) {
+                uint32_t rs = t.stop_rs[k];
+                uint32_t h = p.headway_s[t.r_mode[t.rs_route[rs]]][period];
+                if (h == 0) continue;
+                relax(t.n_stops + rs, c + h / 2 + uint32_t(p.board_penalty), tm + h / 2, v);
+            }
+        } else {
+            uint32_t rs = v - t.n_stops, r = t.rs_route[rs];
+            relax(t.rs_stop[rs], c, tm, v);
+            if (rs + 1 < t.r_first[r + 1])
+                relax(v + 1, c + uint32_t(std::lround(t.rs_ride_s[rs] * (1.0 + t.crowd[rs]))), tm + t.rs_ride_s[rs], v);
+        }
+    }
+}
+
+// Путь по транспорту в общем кеше: начальная остановка, время ядра пути и поездки
+// (маршрут, позиции посадки и высадки, пешая пересадка после высадки).
+struct Ride { uint32_t route; uint8_t board, alight; uint16_t walk_after_s; };
+struct Itinerary { uint32_t origin_stop = kNone, core_s = 0; std::vector<Ride> rides; };
+
+Itinerary extract(const Transit& t, const TransitTree& tr, uint32_t dest_stop) {
+    Itinerary it;
+    uint32_t cur = dest_stop, walk = 0;
+    std::vector<Ride> rev;
+    while (true) {
+        uint32_t par = tr.parent[cur];
+        if (par == kNone) break;
+        if (par < t.n_stops) { walk += tr.time[cur] - tr.time[par]; cur = par; continue; }  // пешая пересадка
+        uint32_t alight = par - t.n_stops, k = alight;
+        while (tr.parent[t.n_stops + k] >= t.n_stops) k = tr.parent[t.n_stops + k] - t.n_stops;
+        uint32_t r = t.rs_route[k];
+        rev.push_back({r, uint8_t(k - t.r_first[r]), uint8_t(alight - t.r_first[r]), uint16_t(std::min<uint32_t>(walk, 65535))});
+        walk = 0;
+        cur = tr.parent[t.n_stops + k];
+    }
+    it.rides.assign(rev.rbegin(), rev.rend());
+    if (it.rides.empty()) { it.origin_stop = dest_stop; return it; }
+    uint32_t r0 = it.rides[0].route;
+    it.origin_stop = t.rs_stop[t.r_first[r0] + it.rides[0].board];
+    it.core_s = tr.time[dest_stop] - tr.time[it.origin_stop];
+    return it;
+}
+
+// ---------- Маршруты жителей: выбор вида и общий кеш ----------
+
+enum TripMode : uint8_t { kModeNone = 0, kModeWalk, kModeCar, kModeTransit, kModeOutside };
+const char* kTripModeNames[] = {"no_route", "walk", "car", "transit", "outside"};
+
+struct City {
+    const Input* in = nullptr;
+    Params p;
+    Csr car;
+    CH ch;
+    std::vector<uint32_t> car_comp; uint32_t car_main = 0;
+    Grid car_nodes, all_nodes, stops;
+    Transit tr;
+};
+
+struct ItineraryCache {
+    // Ключ — (зона дома, конечная остановка, период); в прототипе — только утренний пик.
+    std::vector<uint32_t> zone_first;               // CSR по зонам: [zone_first[z], zone_first[z+1]) — записи зоны
+    std::vector<uint32_t> key_stop, entry;          // конечная остановка → смещение записи в pool
+    std::vector<uint32_t> pool;                     // [origin_stop, core_s, n, (route, board|alight<<8|walk<<16)…]
+    size_t bytes() const { return (zone_first.size() + key_stop.size() + entry.size() + pool.size()) * 4; }
+};
+
+struct Plans {
+    std::vector<uint8_t> mode;           // TripMode
+    std::vector<uint32_t> itinerary;     // смещение в pool кеша или kNone
+    std::vector<uint32_t> origin_walk_s, egress_walk_s, travel_s;  // ожидаемые
+    std::vector<uint32_t> gateway;       // для kModeOutside
+};
+
+struct PlanStats {
+    double car_s = 0, transit_s = 0, total_s = 0;
+    int64_t by_mode[5]{}, car_queries = 0, zone_trees = 0, rides_hist[6]{}, cache_entries = 0;
+    int64_t no_route_why[3]{};  // нет остановок у места; нет остановок у дома; остановки есть, пути нет
+    double snap_s = 0;
+    uint64_t car_settled = 0;
+    double mean_travel_min[5]{};
+    size_t cache_bytes = 0;
+};
+
+uint32_t walk_s(const Params& p, float d) { return uint32_t(std::lround(d * p.walk_detour / p.walk_speed)); }
+
+// Привязка точки к дорожному узлу: основная компонента сильной связности в пределах 500 м,
+// иначе ближайший узел любой компоненты (изолированное здание даёт явное «нет пути»).
+uint32_t snap_car(const City& c, const float* xy, float& d) {
+    uint32_t v = c.car_nodes.nearest(xy[0], xy[1], &d);
+    if (v != kNone && d <= 500) return v;
+    return c.all_nodes.nearest(xy[0], xy[1], &d);
+}
+
+void build_city(City& c, const Input& in, const Params& p, bool quiet) {
+    c.in = &in; c.p = p;
+    c.car = build_car(in, p);
+    uint32_t count = 0;
+    c.car_comp = scc(c.car, count);
+    c.car_main = largest(c.car_comp, count);
+    c.car_nodes.build(in.node_xy, [&](uint32_t v) { return c.car_comp[v] == c.car_main; }, 250);
+    c.all_nodes.build(in.node_xy, [](uint32_t) { return true; }, 250);
+    c.tr = build_transit(in, p);
+    c.stops.build(in.stop_xy, [&](uint32_t s) { return c.tr.useful[s] != 0; }, 250);
+    auto t0 = Clock::now();
+    uint64_t before = phys_footprint();
+    c.ch.build(c.car);
+    if (!quiet)
+        std::printf("  \"ch\": {\"nodes\": %u, \"arcs\": %zu, \"shortcuts\": %zu, \"build_s\": %.2f, \"bytes_mb\": %.1f, \"footprint_delta_mb\": %.1f},\n",
+                    c.car.n, c.car.head.size(), c.ch.shortcuts, seconds_since(t0), mb(c.ch.bytes()), mb(phys_footprint() - before));
+}
+
+// Пункт назначения жителя: здание работы или учреждение учёбы. false — нет места или место вне региона.
+bool destination(const Input& in, uint32_t id, const float*& xy) {
+    uint32_t pl = in.place[id];
+    if (pl == kNone) return false;
+    xy = in.role[id] == kWorker ? &in.building_xy[2 * pl] : &in.facility_xy[2 * pl];
+    return true;
+}
+
+bool travels(const Input& in, uint32_t id) {
+    uint8_t r = in.role[id];
+    return r == kWorker || r == kKindergartenChild || r == kPupil || r == kStudent;
+}
+
+// keep_car: повторный план после штрафа загрузки — поездки на машине не пересчитываются.
+void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int period, bool keep_car) {
+    const Input& in = *c.in; const Params& p = c.p;
+    size_t n = in.home.size();
+    if (!keep_car) {
+        pl.mode.assign(n, kModeNone); pl.itinerary.assign(n, kNone);
+        pl.origin_walk_s.assign(n, 0); pl.egress_walk_s.assign(n, 0); pl.travel_s.assign(n, 0); pl.gateway.assign(n, kNone);
+    }
+    st = PlanStats();
+    cache = ItineraryCache();
+    auto t_all = Clock::now();
+    size_t zones = in.zone_xy.size() / 2;
+    // Жители по зоне дома (подсчётом, внутри зоны — по ID).
+    std::vector<uint32_t> zf(zones + 2, 0), order;
+    for (uint32_t id = 0; id < n; ++id) if (travels(in, id)) zf[in.building_zone[in.home[id]] + 1]++;
+    for (size_t z = 0; z < zones + 1; ++z) zf[z + 1] += zf[z];
+    order.assign(zf[zones], 0);
+    { std::vector<uint32_t> fill(zf.begin(), zf.end() - 1);
+      for (uint32_t id = 0; id < n; ++id) if (travels(in, id)) order[fill[in.building_zone[in.home[id]]]++] = id; }
+
+    CH::Query cq(c.car.n);
+    TransitTree tree(c.tr);
+    std::vector<std::pair<float, uint32_t>> near;
+    std::vector<std::pair<uint32_t, uint32_t>> seeds;
+    cache.zone_first.assign(zones + 1, 0);
+    std::vector<uint32_t> zone_stops;  // конечные остановки, уже извлечённые для текущей зоны (по возрастанию)
+    std::vector<uint32_t> zone_entries;
+    double car_s = 0, tr_s = 0;
+    for (size_t z = 0; z < zones; ++z) {
+        cache.zone_first[z] = uint32_t(cache.key_stop.size());
+        if (zf[z] == zf[z + 1]) continue;
+        bool tree_ready = false;
+        seeds.clear();
+        zone_stops.clear(); zone_entries.clear();
+        std::map<uint32_t, uint32_t> zone_cache;  // конечная остановка → запись (в пределах зоны)
+        for (uint32_t k = zf[z]; k < zf[z + 1]; ++k) {
+            uint32_t id = order[k];
+            if (keep_car && pl.mode[id] == kModeCar) continue;
+            pl.mode[id] = kModeNone; pl.itinerary[id] = kNone; pl.origin_walk_s[id] = pl.egress_walk_s[id] = pl.travel_s[id] = 0;
+            pl.gateway[id] = kNone;
+            const float* home = &in.building_xy[2 * in.home[id]];
+            const float* dest = nullptr;
+            if (!destination(in, id, dest)) {
+                if (in.role[id] == kWorker && in.flags[id] == 0) {  // место за границей региона
+                    float gd; uint32_t g = kNone; float best = 1e30f;
+                    for (size_t gi = 0; gi < in.gw_xy.size() / 2; ++gi)
+                        if ((gd = dist(home, &in.gw_xy[2 * gi])) < best) { best = gd; g = uint32_t(gi); }
+                    if (g != kNone) { pl.mode[id] = kModeOutside; pl.gateway[id] = g; pl.travel_s[id] = uint32_t(best / 8.0); }
+                }
+                continue;
+            }
+            float straight = dist(home, dest);
+            uint32_t walk = walk_s(p, straight);
+            uint8_t transport = transport_of(in.profile[id]);
+            if (transport == kCar) {
+                auto t0 = Clock::now();
+                float d0, d1;
+                uint32_t a = snap_car(c, home, d0), b = snap_car(c, dest, d1);
+                st.snap_s += seconds_since(t0);
+                size_t settled = 0;
+                uint32_t ds = c.ch.query(cq, a, b, nullptr, &settled);
+                st.car_settled += settled; st.car_queries++;
+                car_s += seconds_since(t0);
+                if (ds != kInf) {
+                    pl.mode[id] = kModeCar;
+                    pl.origin_walk_s[id] = walk_s(p, d0); pl.egress_walk_s[id] = walk_s(p, d1);
+                    pl.travel_s[id] = ds / 10 + uint32_t(2 * p.car_park_s) + pl.origin_walk_s[id] + pl.egress_walk_s[id];
+                    continue;
+                }
+            }
+            auto t0 = Clock::now();
+            uint32_t best_cost = kInf, best_d = kNone, best_egress = 0;
+            c.stops.within(dest[0], dest[1], float(p.access_radius), near);
+            if (near.size() > p.access_stops_max) near.resize(p.access_stops_max);
+            if (!near.empty() && !tree_ready) {
+                seeds.clear();
+                const float* zc = &in.zone_xy[2 * z];
+                std::vector<std::pair<float, uint32_t>> zs;
+                c.stops.within(zc[0], zc[1], float(p.access_radius + 500), zs);
+                for (auto& [d, s] : zs) seeds.push_back({s, walk_s(p, d)});
+                transit_tree(c.tr, p, period, seeds, tree);
+                tree_ready = true; st.zone_trees++;
+            }
+            for (auto& [d, s] : near) {
+                if (tree.cost[s] == kInf) continue;
+                uint32_t eg = walk_s(p, d), cost = tree.cost[s] + eg;
+                if (cost < best_cost || (cost == best_cost && s < best_d)) { best_cost = cost; best_d = s; best_egress = eg; }
+            }
+            uint8_t why = near.empty() ? 0 : seeds.empty() ? 1 : 2;
+            uint32_t transit_time = kInf, entry = kNone, origin_walk = 0;
+            if (best_d != kNone) {
+                auto it = zone_cache.find(best_d);
+                if (it == zone_cache.end()) {
+                    Itinerary iti = extract(c.tr, tree, best_d);
+                    if (!iti.rides.empty()) {
+                        entry = uint32_t(cache.pool.size());
+                        cache.pool.push_back(iti.origin_stop); cache.pool.push_back(iti.core_s); cache.pool.push_back(uint32_t(iti.rides.size()));
+                        for (const Ride& r : iti.rides) {
+                            cache.pool.push_back(r.route);
+                            cache.pool.push_back(uint32_t(r.board) | uint32_t(r.alight) << 8 | uint32_t(r.walk_after_s) << 16);
+                        }
+                        st.rides_hist[std::min<size_t>(iti.rides.size(), 5)]++;
+                        st.cache_entries++;
+                    }
+                    zone_cache[best_d] = entry;
+                } else entry = it->second;
+                if (entry != kNone) {
+                    origin_walk = walk_s(p, dist(home, &in.stop_xy[2 * cache.pool[entry]]));
+                    transit_time = origin_walk + cache.pool[entry + 1] + best_egress;
+                }
+            }
+            tr_s += seconds_since(t0);
+            if (walk <= p.walk_only_max && walk <= transit_time) { pl.mode[id] = kModeWalk; pl.travel_s[id] = walk; }
+            else if (transit_time != kInf) {
+                pl.mode[id] = kModeTransit; pl.itinerary[id] = entry; pl.travel_s[id] = transit_time;
+                pl.origin_walk_s[id] = origin_walk; pl.egress_walk_s[id] = best_egress;
+            } else if (walk <= 2 * p.walk_only_max) { pl.mode[id] = kModeWalk; pl.travel_s[id] = walk; }  // далеко, но пешком
+            else st.no_route_why[why]++;  // kModeNone: пути нет, житель остаётся дома с флагом
+        }
+        for (auto& [s, e] : zone_cache) if (e != kNone) { cache.key_stop.push_back(s); cache.entry.push_back(e); }
+    }
+    cache.zone_first[zones] = uint32_t(cache.key_stop.size());
+    st.car_s = car_s; st.transit_s = tr_s; st.total_s = seconds_since(t_all);
+    double sum[5]{};
+    for (size_t id = 0; id < n; ++id) if (travels(in, uint32_t(id))) { st.by_mode[pl.mode[id]]++; sum[pl.mode[id]] += pl.travel_s[id]; }
+    for (int m = 0; m < 5; ++m) st.mean_travel_min[m] = st.by_mode[m] ? sum[m] / st.by_mode[m] / 60 : 0;
+    st.cache_bytes = cache.bytes();
+}
+
+// Ожидаемая загрузка перегонов за утренний пик по плану; новый штраф — методом последовательных средних.
+// Возвращает долю пассажиро-перегонов сверх провозной способности.
+struct Crowding { double over_share = 0, max_ratio = 0; int64_t segments_over = 0; };
+Crowding update_crowding(City& c, const Plans& pl, const ItineraryCache& cache, uint32_t iteration, int period, bool apply) {
+    const Transit& t = c.tr; const Params& p = c.p;
+    std::vector<double> load(t.n_rs, 0);
+    for (size_t id = 0; id < pl.mode.size(); ++id) {
+        if (pl.mode[id] != kModeTransit) continue;
+        uint32_t e = pl.itinerary[id], rides = cache.pool[e + 2];
+        for (uint32_t i = 0; i < rides; ++i) {
+            uint32_t r = cache.pool[e + 3 + 2 * i], w = cache.pool[e + 4 + 2 * i];
+            for (uint32_t pos = w & 0xFF; pos < ((w >> 8) & 0xFF); ++pos) load[t.r_first[r] + pos] += 1;
+        }
+    }
+    // Окно пика — длина периода (утренний пик 7:00–10:00).
+    uint32_t start = p.period_start[period], end = 86400;
+    for (int q = 0; q < kPeriods; ++q) if (p.period_start[q] > start) end = std::min(end, p.period_start[q]);
+    double window = end - start, total = 0, over = 0;
+    Crowding res;
+    for (uint32_t rs = 0; rs < t.n_rs; ++rs) {
+        uint8_t mode = t.r_mode[t.rs_route[rs]];
+        uint32_t h = p.headway_s[mode][period];
+        double cap = h ? double(p.capacity[mode]) * window / h : 0;
+        double x = cap > 0 ? load[rs] / cap : 0;
+        total += load[rs];
+        if (x > 1) { over += load[rs] - cap; res.segments_over++; }
+        res.max_ratio = std::max(res.max_ratio, x);
+        if (apply) {
+            float target = float(p.crowding_penalty * std::max(0.0, x - 1.0));
+            c.tr.crowd[rs] = (c.tr.crowd[rs] * float(iteration) + target) / float(iteration + 1);
+        }
+    }
+    res.over_share = total > 0 ? over / total : 0;
+    return res;
+}
+
+// ---------- Модельные рейсы, очереди и группы присутствия (утро) ----------
+
+enum State : uint8_t { kHome = 0, kWalking, kDriving, kWaiting, kRiding, kAtPlace, kOutside, kReturning, kStates };
+const char* kStateNames[kStates] = {"home", "walking", "driving", "waiting", "riding", "at_place", "outside", "returning"};
+
+struct SimConfig {
+    uint32_t start = 5 * 3600 + 1800, runs_until = 12 * 3600, end = 13 * 3600;
+    uint32_t return_time = 0;      // > 0: выехавшие за границу возвращаются в это время (малые сцены)
+    bool reverse_init = false;     // проверка независимости от порядка постановки событий
+};
+
+struct SimResult {
+    int64_t counts[kStates]{};
+    int64_t runs = 0, runs_day = 0, run_stop_events = 0, boardings = 0, left_behind = 0, cancelled = 0, conservation_failures = 0;
+    int64_t double_group = 0, groups = 0, intervals = 0, capacity_violations = 0, max_group = 0, max_queue = 0;
+    int64_t peak_onboard = 0, peak_waiting = 0, peak_active_runs = 0, outside_returned = 0;
+    int64_t boardings_by[kModes]{}, cancelled_by[kModes]{}, left_by[kModes]{};
+    double mean_wait_s = 0, mean_late_s = 0, seconds = 0, peak_mb = 0;
+    uint64_t hash = 0;
+    std::vector<uint32_t> board_order;  // для малых сцен: ID в порядке посадки
+};
+
+struct Run { uint32_t route, depart; };
+struct Onboard { uint32_t person; uint8_t alight, wagon; uint32_t board_t; };
+
+SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache& cache, const SimConfig& cfg) {
+    const Input& in = *c.in; const Params& p = c.p; const Transit& t = c.tr;
+    SimResult res;
+    auto t0 = Clock::now();
+    uint64_t base = phys_footprint();
+    size_t n = in.home.size();
+    std::vector<uint8_t> state(n, kHome), ride_ix(n, 0);
+    std::vector<uint32_t> next(n, kNone), wait_since(n, 0), depart(n, 0), arrive_target(n, 0);
+    std::vector<uint32_t> run_of(n, kNone);
+    // Рейсы: от первой остановки с интервалом периода, сдвиг фазы — розыгрыш по маршруту.
+    std::vector<Run> runs;
+    uint64_t tkey = stream_key(p.seed, kStreamTransit);
+    auto make_runs = [&](uint32_t from, uint32_t until, std::vector<Run>* out) {
+        int64_t count = 0;
+        for (uint32_t r = 0; r + 1 < t.r_first.size(); ++r) {
+            uint8_t mode = t.r_mode[r];
+            Rng rng{tkey, r, 0xFFFFFFFFu};
+            uint32_t h0 = p.headway_s[mode][period_at(p, from)];
+            uint32_t tm = from + (h0 ? rng.below(h0) : 0);
+            while (tm < until) {
+                uint32_t h = p.headway_s[mode][period_at(p, tm)];
+                if (h == 0) { tm += 600; continue; }
+                if (out) out->push_back({r, tm});
+                ++count; tm += h;
+            }
+        }
+        return count;
+    };
+    make_runs(cfg.start, cfg.runs_until, &runs);
+    res.runs = int64_t(runs.size());
+    res.runs_day = make_runs(0, 86400, nullptr);
+    std::vector<uint8_t> run_pos(runs.size(), 0);
+    std::vector<std::vector<Onboard>> onboard(runs.size());
+    std::vector<uint32_t> run_load(runs.size(), 0);
+    // Очереди ожидания по позиции маршрута: FIFO в порядке прихода (время, ID).
+    std::vector<std::vector<uint32_t>> queue(t.n_rs);
+    std::vector<uint32_t> queue_head(t.n_rs, 0);
+    std::vector<uint64_t> group_seen;  // (рейс, вагон) с пассажирами
+
+    using Key = uint64_t;  // (время << 32) | ID; ID жителя < 2^31, рейса — 2^31 + номер
+    std::priority_queue<Key, std::vector<Key>, std::greater<Key>> q;
+    auto schedule = [&](uint32_t id, uint32_t tm) { next[id] = tm; q.push(Key(tm) << 32 | id); };
+    constexpr uint32_t kRunBase = 0x80000000u;
+
+    uint64_t skey = stream_key(p.seed, kStreamSchedule);
+    std::vector<uint32_t> ids;
+    for (uint32_t id = 0; id < n; ++id) if (pl.mode[id] != kModeNone && travels(in, id)) ids.push_back(id);
+    if (cfg.reverse_init) std::reverse(ids.begin(), ids.end());
+    for (uint32_t id : ids) {
+        Rng r{skey, id, 0};
+        double arrive = std::clamp(p.dep_mean + p.dep_sd * r.normal(), double(cfg.start) + 3600, double(cfg.runs_until) - 1800);
+        arrive_target[id] = uint32_t(arrive);
+        depart[id] = uint32_t(std::max<double>(cfg.start, arrive - pl.travel_s[id]));
+        schedule(id, depart[id]);
+    }
+    for (uint32_t k = 0; k < runs.size(); ++k) q.push(Key(runs[k].depart) << 32 | (kRunBase + k));
+
+    auto ride_of = [&](uint32_t id, uint32_t i, uint32_t& route, uint32_t& board, uint32_t& alight, uint32_t& walk_after) {
+        uint32_t e = pl.itinerary[id];
+        uint32_t w = cache.pool[e + 4 + 2 * i];
+        route = cache.pool[e + 3 + 2 * i]; board = w & 0xFF; alight = (w >> 8) & 0xFF; walk_after = w >> 16;
+    };
+    auto rides_of = [&](uint32_t id) { return cache.pool[pl.itinerary[id] + 2]; };
+
+    uint32_t next_check = cfg.start;
+    int64_t waiting_total = 0, wait_sum = 0, late_n = 0; double late_sum = 0;
+    auto check = [&](uint32_t now) {
+        int64_t cnt[kStates]{};
+        for (size_t i = 0; i < n; ++i) cnt[state[i]]++;
+        int64_t total = 0; for (int s = 0; s < kStates; ++s) total += cnt[s];
+        if (total != int64_t(n)) res.conservation_failures++;
+        res.peak_onboard = std::max(res.peak_onboard, cnt[kRiding]);
+        res.peak_waiting = std::max(res.peak_waiting, cnt[kWaiting]);
+        int64_t active = 0;
+        for (size_t k = 0; k < runs.size(); ++k) if (run_pos[k] > 0 && run_pos[k] < 255) active++;
+        res.peak_active_runs = std::max(res.peak_active_runs, active);
+        res.peak_mb = std::max(res.peak_mb, mb(phys_footprint() - base));
+        (void)now;
+    };
+    uint64_t h = 14695981039346656037ull;
+    while (!q.empty()) {
+        Key key = q.top(); q.pop();
+        uint32_t now = uint32_t(key >> 32), id = uint32_t(key);
+        if (now >= cfg.end) break;
+        while (now >= next_check) { check(next_check); next_check += 900; }
+        if (id >= kRunBase) {
+            uint32_t k = id - kRunBase, r = runs[k].route;
+            uint32_t pos = run_pos[k], rs = t.r_first[r] + pos;
+            res.run_stop_events++;
+            std::vector<Onboard>& ob = onboard[k];
+            // Высадка
+            size_t keep = 0;
+            for (size_t i = 0; i < ob.size(); ++i) {
+                if (ob[i].alight != pos) { ob[keep++] = ob[i]; continue; }
+                uint32_t pid = ob[i].person;
+                res.intervals++;
+                h = fnv(&pid, 4, h); h = fnv(&now, 4, h); h = fnv(&k, 4, h);
+                uint32_t route, board, alight, walk_after;
+                ride_of(pid, ride_ix[pid], route, board, alight, walk_after);
+                ride_ix[pid]++;
+                run_of[pid] = kNone;
+                if (ride_ix[pid] < rides_of(pid)) {  // пересадка: пешком к следующей посадке
+                    state[pid] = kWalking; schedule(pid, now + std::max<uint32_t>(1, walk_after));
+                } else {
+                    state[pid] = kWalking; schedule(pid, now + std::max<uint32_t>(1, walk_after + pl.egress_walk_s[pid]));
+                }
+            }
+            ob.resize(keep);
+            run_load[k] = uint32_t(ob.size());
+            // Посадка из очереди по порядку прихода, пока есть места
+            uint8_t mode = t.r_mode[r];
+            uint32_t cap = p.capacity[mode];
+            std::vector<uint32_t>& qq = queue[rs];
+            uint32_t& head = queue_head[rs];
+            bool last = pos + 1 >= t.len(r);
+            while (!last && head < qq.size() && ob.size() < cap) {
+                uint32_t pid = qq[head++];
+                if (state[pid] != kWaiting) continue;  // отменил поездку раньше
+                if (run_of[pid] != kNone) res.double_group++;
+                uint32_t route, board, alight, walk_after;
+                ride_of(pid, ride_ix[pid], route, board, alight, walk_after);
+                Rng wr{tkey, pid, k};
+                uint8_t wagon = uint8_t(wr.below(p.wagons[mode]));
+                ob.push_back({pid, uint8_t(alight), wagon, now});
+                state[pid] = kRiding; run_of[pid] = k; next[pid] = kNone;
+                wait_sum += now - wait_since[pid]; res.boardings++; res.boardings_by[mode]++;
+                group_seen.push_back(uint64_t(k) << 8 | wagon);
+                res.board_order.push_back(pid);
+            }
+            if (ob.size() > cap) res.capacity_violations++;
+            res.max_group = std::max<int64_t>(res.max_group, int64_t(ob.size()));
+            // Остались ждать: оставленные переполненным рейсом; ждущие дольше max_wait отменяют поездку
+            if (!last) {
+                if (ob.size() >= cap) { res.left_behind += int64_t(qq.size() - head); res.left_by[mode] += int64_t(qq.size() - head); }  // рейс полон: оставшиеся ждут следующего
+                while (head < qq.size() && (state[qq[head]] != kWaiting || now - wait_since[qq[head]] > uint32_t(p.max_wait))) {
+                    uint32_t pid = qq[head++];
+                    if (state[pid] != kWaiting) continue;
+                    state[pid] = kReturning; res.cancelled++; res.cancelled_by[mode]++;
+                    schedule(pid, now + (now - depart[pid]));  // обратно тем же временем; дома он снова в учёте «дома»
+                }
+                res.max_queue = std::max<int64_t>(res.max_queue, int64_t(qq.size() - head));
+            }
+            if (head > 1024 && head * 2 > qq.size()) { qq.erase(qq.begin(), qq.begin() + head); head = 0; }
+            if (!last) { run_pos[k] = uint8_t(pos + 1); q.push(Key(now + t.rs_ride_s[rs]) << 32 | id); }
+            else { run_pos[k] = 255; if (!ob.empty()) res.capacity_violations++; std::vector<Onboard>().swap(ob); }
+            continue;
+        }
+        if (next[id] != now) continue;  // устаревший ключ
+        next[id] = kNone;
+        uint8_t m = pl.mode[id];
+        switch (state[id]) {
+            case kHome:
+                if (m == kModeWalk) { state[id] = kWalking; schedule(id, now + pl.travel_s[id]); }
+                else if (m == kModeCar) { state[id] = kDriving; schedule(id, now + pl.travel_s[id]); }
+                else if (m == kModeOutside) { state[id] = kDriving; schedule(id, now + pl.travel_s[id]); }
+                else if (m == kModeTransit) { state[id] = kWalking; ride_ix[id] = 0; schedule(id, now + std::max<uint32_t>(1, pl.origin_walk_s[id])); }
+                break;
+            case kWalking:
+            case kDriving:
+                if (m == kModeOutside) {
+                    state[id] = kOutside;
+                    if (cfg.return_time > now) schedule(id, cfg.return_time);
+                } else if (m == kModeTransit && ride_ix[id] < rides_of(id)) {
+                    uint32_t route, board, alight, walk_after;
+                    ride_of(id, ride_ix[id], route, board, alight, walk_after);
+                    uint32_t rs = t.r_first[route] + board;
+                    state[id] = kWaiting; wait_since[id] = now; queue[rs].push_back(id);
+                } else {
+                    state[id] = kAtPlace;
+                    late_sum += double(now) - arrive_target[id]; late_n++;
+                    h = fnv(&id, 4, h); h = fnv(&now, 4, h);
+                }
+                break;
+            case kOutside:
+                state[id] = kReturning; schedule(id, now + pl.travel_s[id]);
+                break;
+            case kReturning:
+                state[id] = kHome;
+                if (m == kModeOutside) res.outside_returned++;
+                h = fnv(&id, 4, h); h = fnv(&now, 4, h);
+                break;
+            default: break;
+        }
+        (void)waiting_total;
+    }
+    check(cfg.end);
+    for (size_t i = 0; i < n; ++i) res.counts[state[i]]++;
+    std::sort(group_seen.begin(), group_seen.end());
+    res.groups = int64_t(std::unique(group_seen.begin(), group_seen.end()) - group_seen.begin());
+    res.mean_wait_s = res.boardings ? double(wait_sum) / res.boardings : 0;
+    res.mean_late_s = late_n ? late_sum / late_n : 0;
+    res.hash = fnv(state.data(), n, h);
+    res.seconds = seconds_since(t0);
+    return res;
+}
+
+// ---------- Полный прогон ----------
+
+void report_plans(const PlanStats& st, const ItineraryCache& cache) {
+    std::printf("  \"plans\": {\"seconds\": %.2f, \"car_query_s\": %.2f, \"transit_s\": %.2f, \"car_queries\": %lld, \"car_settled_mean\": %.0f, \"zone_trees\": %lld,\n",
+                st.total_s, st.car_s, st.transit_s, (long long)st.car_queries, st.car_queries ? double(st.car_settled) / st.car_queries : 0,
+                (long long)st.zone_trees);
+    std::printf("    \"by_mode\": {");
+    for (int m = 0; m < 5; ++m) std::printf("%s\"%s\": [%lld, %.1f]", m ? ", " : "", kTripModeNames[m], (long long)st.by_mode[m], st.mean_travel_min[m]);
+    std::printf("},\n    \"no_route_why\": {\"no_stops_at_destination\": %lld, \"no_stops_at_home_zone\": %lld, \"stops_unconnected\": %lld}, \"car_snap_s\": %.2f,\n",
+                (long long)st.no_route_why[0], (long long)st.no_route_why[1], (long long)st.no_route_why[2], st.snap_s);
+    std::printf("    \"cache\": {\"entries\": %lld, \"bytes_mb\": %.1f, \"pool_words\": %zu, \"rides_hist\": [%lld, %lld, %lld, %lld, %lld, %lld]}},\n",
+                (long long)st.cache_entries, mb(cache.bytes()), cache.pool.size(), (long long)st.rides_hist[0], (long long)st.rides_hist[1],
+                (long long)st.rides_hist[2], (long long)st.rides_hist[3], (long long)st.rides_hist[4], (long long)st.rides_hist[5]);
+}
+
+void report_sim(const char* name, const SimResult& r) {
+    std::printf("  \"%s\": {\"seconds\": %.2f, \"runs\": %lld, \"runs_day\": %lld, \"run_stop_events\": %lld, \"boardings\": %lld, \"groups\": %lld, \"intervals\": %lld,\n",
+                name, r.seconds, (long long)r.runs, (long long)r.runs_day, (long long)r.run_stop_events, (long long)r.boardings, (long long)r.groups, (long long)r.intervals);
+    std::printf("    \"max_group\": %lld, \"max_queue\": %lld, \"left_behind\": %lld, \"cancelled\": %lld, \"mean_wait_min\": %.1f, \"mean_late_min\": %.1f,\n",
+                (long long)r.max_group, (long long)r.max_queue, (long long)r.left_behind, (long long)r.cancelled, r.mean_wait_s / 60, r.mean_late_s / 60);
+    std::printf("    \"peak_riding\": %lld, \"peak_waiting\": %lld, \"peak_active_runs\": %lld, \"peak_mb\": %.1f,\n",
+                (long long)r.peak_onboard, (long long)r.peak_waiting, (long long)r.peak_active_runs, r.peak_mb);
+    std::printf("    \"by_route_mode\": {");
+    for (int m = 0; m < kModes; ++m)
+        std::printf("%s\"%s\": {\"boardings\": %lld, \"left_behind\": %lld, \"cancelled\": %lld}", m ? ", " : "", kModeNames[m],
+                    (long long)r.boardings_by[m], (long long)r.left_by[m], (long long)r.cancelled_by[m]);
+    std::printf("},\n    \"end_states\": {");
+    for (int s = 0; s < kStates; ++s) std::printf("%s\"%s\": %lld", s ? ", " : "", kStateNames[s], (long long)r.counts[s]);
+    std::printf("},\n    \"conservation_failures\": %lld, \"capacity_violations\": %lld, \"double_group\": %lld, \"hash\": \"%016llx\"},\n",
+                (long long)r.conservation_failures, (long long)r.capacity_violations, (long long)r.double_group, (unsigned long long)r.hash);
+}
+
+int full(const std::string& dir, const std::string& pop_dir, double dep_sd, double capacity_scale) {
+    Params p = load_params(dir);
+    if (dep_sd > 0) p.dep_sd = dep_sd;
+    for (int m = 0; m < kModes; ++m) p.capacity[m] = uint32_t(std::lround(p.capacity[m] * capacity_scale));
+    auto t0 = Clock::now();
+    Input in = load_input(dir, pop_dir);
+    std::printf("{\n  \"scenario\": {\"seed\": %llu, \"departure_sd_s\": %.0f, \"capacity_scale\": %.2f},\n", (unsigned long long)p.seed, p.dep_sd, capacity_scale);
+    std::printf("  \"input\": {\"nodes\": %zu, \"edges\": %zu, \"persons\": %zu, \"routes\": %zu, \"stops\": %zu, \"load_s\": %.2f},\n",
+                in.node_xy.size() / 2, in.e_from.size(), in.home.size(), in.route_mode.size(), in.stop_xy.size() / 2, seconds_since(t0));
+    City c;
+    t0 = Clock::now();
+    build_city(c, in, p, false);
+    {
+        uint32_t main_n = 0; for (uint32_t x : c.car_comp) main_n += x == c.car_main;
+        size_t routes = c.tr.r_first.size() - 1, useful = 0; for (char u : c.tr.useful) useful += u;
+        std::printf("  \"graphs\": {\"car_arcs\": %zu, \"car_main_scc_pct\": %.2f, \"transit_routes\": %zu, \"route_positions\": %u, \"useful_stops\": %zu, \"transfers\": %zu, \"build_s\": %.2f},\n",
+                    c.car.head.size(), 100.0 * main_n / c.car.n, routes, c.tr.n_rs, useful, c.tr.tf_to.size(), seconds_since(t0));
+    }
+    // Один ко всем по автомобильному графу (основа матриц времени для спроса #41).
+    {
+        Dijkstra dj(c.car.n);
+        Rng r{stream_key(p.seed, 99), 0, 0};
+        double s = 0; size_t settled = 0; int k = 0;
+        while (k < 10) {
+            uint32_t v = r.below(c.car.n);
+            if (c.car_comp[v] != c.car_main) continue;
+            auto t1 = Clock::now(); dj.reset(); dj.seed(v, 0); settled += dj.run(c.car); s += seconds_since(t1); ++k;
+        }
+        std::printf("  \"car_one_to_all\": {\"mean_ms\": %.1f, \"settled\": %zu},\n", s / k * 1000, settled / k);
+        // Проверка CH против Дейкстры на случайных парах и длина раскрытого пути.
+        CH::Query cq(c.car.n);
+        int mismatches = 0; double ch_s = 0; size_t path_nodes = 0; std::vector<uint32_t> path;
+        Csr walk = build_walk(in, p);
+        for (int i = 0; i < 300; ) {
+            uint32_t a = r.below(c.car.n), b = r.below(c.car.n);
+            if (c.car_comp[a] != c.car_main || c.car_comp[b] != c.car_main) continue;
+            dj.reset(); dj.seed(a, 0); dj.run(c.car, b);
+            auto t1 = Clock::now();
+            uint32_t d = c.ch.query(cq, a, b, &path);
+            ch_s += seconds_since(t1);
+            if (d != dj.d[b]) mismatches++;
+            uint32_t sum = 0;  // путь из исходных дуг с тем же временем
+            for (size_t j = 0; j + 1 < path.size(); ++j) {
+                uint32_t best = kInf;
+                for (uint32_t e = c.car.first[path[j]]; e < c.car.first[path[j] + 1]; ++e) if (c.car.head[e] == path[j + 1]) best = std::min(best, c.car.w[e]);
+                if (best == kInf) { mismatches++; break; }
+                sum += best;
+            }
+            if (sum != d) mismatches++;
+            path_nodes += path.size();
+            ++i;
+        }
+        std::printf("  \"ch_check\": {\"pairs\": 300, \"mismatches\": %d, \"query_with_path_us\": %.1f, \"mean_path_nodes\": %.0f},\n",
+                    mismatches, ch_s / 300 * 1e6, double(path_nodes) / 300);
+        // Отношение пешего пути по улицам к прямой для пар зданий 300–2000 м (проверка walk_detour).
+        std::vector<double> ratio;
+        Dijkstra dw(walk.n);
+        Grid wn; wn.build(in.node_xy, [](uint32_t) { return true; }, 250);
+        Grid bg; bg.build(in.building_xy, [](uint32_t) { return true; }, 250);
+        std::vector<std::pair<float, uint32_t>> nb;
+        while (ratio.size() < 400) {
+            uint32_t a = r.below(uint32_t(in.building_xy.size() / 2));
+            bg.within(in.building_xy[2 * a], in.building_xy[2 * a + 1], 2000, nb);
+            nb.erase(std::remove_if(nb.begin(), nb.end(), [](const auto& x) { return x.first < 300; }), nb.end());
+            if (nb.empty()) continue;
+            uint32_t b = nb[r.below(uint32_t(nb.size()))].second;
+            float d = dist(&in.building_xy[2 * a], &in.building_xy[2 * b]);
+            float d0, d1;
+            uint32_t na = wn.nearest(in.building_xy[2 * a], in.building_xy[2 * a + 1], &d0), nb_ = wn.nearest(in.building_xy[2 * b], in.building_xy[2 * b + 1], &d1);
+            dw.reset(); dw.seed(na, 0); dw.run(walk, nb_);
+            if (dw.d[nb_] == kInf) continue;
+            ratio.push_back((dw.d[nb_] / 10.0 * p.walk_speed + d0 + d1) / d);
+        }
+        std::sort(ratio.begin(), ratio.end());
+        std::printf("  \"walk_detour_check\": {\"pairs\": %zu, \"median\": %.2f, \"p10\": %.2f, \"p90\": %.2f},\n", ratio.size(),
+                    ratio[ratio.size() / 2], ratio[ratio.size() / 10], ratio[ratio.size() * 9 / 10]);
+    }
+    Plans pl; ItineraryCache cache; PlanStats st;
+    uint64_t before = phys_footprint();
+    plan_trips(c, pl, cache, st, 0, false);
+    PlanStats first = st;
+    // Итерации штрафа загрузки: регулярный спрос известен заранее, поэтому выбор пути учитывает
+    // ожидаемую загрузку перегонов; рейсы и очереди ниже отрабатывают остаток.
+    std::printf("  \"crowding\": [");
+    for (uint32_t k = 0; k <= p.crowding_iterations; ++k) {
+        bool apply = k < p.crowding_iterations;
+        Crowding cr = update_crowding(c, pl, cache, k, 0, apply);
+        std::printf("%s{\"iteration\": %u, \"transit\": %lld, \"walk\": %lld, \"no_route\": %lld, \"over_capacity_share\": %.3f, \"segments_over\": %lld, \"max_ratio\": %.1f, \"plan_s\": %.1f}",
+                    k ? ", " : "", k, (long long)st.by_mode[kModeTransit], (long long)st.by_mode[kModeWalk], (long long)st.by_mode[kModeNone],
+                    cr.over_share, (long long)cr.segments_over, cr.max_ratio, st.total_s);
+        if (apply) plan_trips(c, pl, cache, st, 0, true);
+    }
+    std::printf("],\n");
+    st.car_queries = first.car_queries; st.car_s = first.car_s; st.car_settled = first.car_settled; st.snap_s = first.snap_s;
+    report_plans(st, cache);
+    std::printf("  \"plans_footprint_delta_mb\": %.1f,\n", mb(phys_footprint() - before));
+    SimConfig cfg;
+    SimResult a = simulate_morning(c, pl, cache, cfg);
+    report_sim("morning", a);
+    cfg.reverse_init = true;
+    SimResult b = simulate_morning(c, pl, cache, cfg);
+    bool same = a.hash == b.hash;
+    std::printf("  \"determinism\": {\"reverse_init_equal\": %s},\n", same ? "true" : "false");
+    std::printf("  \"memory\": {\"total_footprint_mb\": %.1f}\n}\n", mb(phys_footprint()));
+    bool broken = !same || a.conservation_failures || a.capacity_violations || a.double_group;
+    if (broken) std::fprintf(stderr, "нарушены инварианты поездок или независимость от порядка\n");
+    return broken ? 1 : 0;
+}
+
+// ---------- Малые сцены ----------
+
+int failures = 0;
+void expect(bool ok, const char* what) {
+    std::printf("  %s %s\n", ok ? "ok  " : "FAIL", what);
+    if (!ok) ++failures;
+}
+
+// CH против Дейкстры на всех парах случайного графа с односторонними дугами.
+void selftest_ch() {
+    Rng r{stream_key(7, 1), 0, 0};
+    const uint32_t side = 14, n = side * side;
+    std::vector<std::array<uint32_t, 3>> arcs;
+    for (uint32_t y = 0; y < side; ++y)
+        for (uint32_t x = 0; x < side; ++x) {
+            uint32_t v = y * side + x;
+            auto link = [&](uint32_t u) {
+                uint32_t w = 10 + r.below(90);
+                uint32_t kind = r.below(4);  // 0 — обе стороны, 1 — вперёд, 2 — назад, 3 — нет дуги
+                if (kind == 0 || kind == 1) arcs.push_back({v, u, w});
+                if (kind == 0 || kind == 2) arcs.push_back({u, v, w});
+            };
+            if (x + 1 < side) link(v + 1);
+            if (y + 1 < side) link(v + side);
+            if (r.below(10) == 0) link(r.below(n));  // редкие дальние связи
+        }
+    Csr g = make_csr(n, arcs);
+    CH ch; ch.build(g);
+    CH::Query q(n); Dijkstra dj(n);
+    int bad = 0, reachable = 0; std::vector<uint32_t> path;
+    for (uint32_t a = 0; a < n; ++a) {
+        dj.reset(); dj.seed(a, 0); dj.run(g);
+        for (uint32_t b = 0; b < n; ++b) {
+            uint32_t d = ch.query(q, a, b, &path);
+            if (d != dj.d[b]) { ++bad; continue; }
+            if (d == kInf) continue;
+            ++reachable;
+            uint32_t sum = 0;
+            for (size_t i = 0; i + 1 < path.size(); ++i) {
+                uint32_t best = kInf;
+                for (uint32_t e = g.first[path[i]]; e < g.first[path[i] + 1]; ++e) if (g.head[e] == path[i + 1]) best = std::min(best, g.w[e]);
+                if (best == kInf) { ++bad; break; }
+                sum += best;
+            }
+            if (sum != d || path.front() != a || path.back() != b) ++bad;
+        }
+    }
+    std::printf("  CH: %u узлов, %zu дуг, %zu сокращений, достижимых пар %d\n", n, g.head.size(), ch.shortcuts, reachable);
+    expect(bad == 0, "CH совпадает с Дейкстрой на всех парах, раскрытый путь идёт по исходным дугам и даёт то же время");
+}
+
+// Сцена: сетка улиц 3 × 2 км, односторонний отрезок, две линии с пересадкой, переполненная маршрутка,
+// изолированное здание, внешний вход. Координаты — метры.
+struct Scene {
+    Input in;
+    Params p;
+    uint32_t transfer, overload[3], isolated, oneway, outside;
+};
+
+Scene make_scene() {
+    Scene s;
+    Input& in = s.in;
+    const int nx = 7, ny = 5;  // узлы через 500 м
+    auto node = [&](int x, int y) { return uint32_t(y * nx + x); };
+    for (int y = 0; y < ny; ++y)
+        for (int x = 0; x < nx; ++x) { in.node_xy.push_back(x * 500.f); in.node_xy.push_back(y * 500.f); in.node_inside.push_back(1); }
+    auto edge = [&](uint32_t a, uint32_t b, int8_t oneway) {
+        in.e_from.push_back(a); in.e_to.push_back(b); in.e_len.push_back(dist(&in.node_xy[2 * a], &in.node_xy[2 * b]));
+        in.e_cls.push_back(2); in.e_oneway.push_back(oneway);
+    };
+    for (int y = 0; y < ny; ++y)
+        for (int x = 0; x < nx; ++x) {
+            if (x + 1 < nx) {
+                if (x == 0 && y == 0) edge(node(1, 0), node(0, 0), 1);  // одностороннее: только (500,0) → (0,0)
+                else edge(node(x, y), node(x + 1, y), 0);
+            }
+            if (y + 1 < ny) edge(node(x, y), node(x, y + 1), 0);
+        }
+    // Изолированная пара узлов в 12 км
+    uint32_t iso = uint32_t(in.node_xy.size() / 2);
+    for (float x : {10000.f, 10100.f}) { in.node_xy.push_back(x); in.node_xy.push_back(10000.f); in.node_inside.push_back(1); }
+    edge(iso, iso + 1, 0);
+
+    // Зоны 1 км: 4 × 3 и одна для изолированного здания
+    for (int y = 0; y < 3; ++y) for (int x = 0; x < 4; ++x) { in.zone_xy.push_back(x * 1000 + 500.f); in.zone_xy.push_back(y * 1000 + 500.f); }
+    in.zone_xy.push_back(10500.f); in.zone_xy.push_back(10500.f);
+    auto building = [&](float x, float y) {
+        in.building_xy.push_back(x); in.building_xy.push_back(y);
+        uint32_t z = x >= 4000 ? 12 : uint32_t(std::floor(y / 1000)) * 4 + uint32_t(std::floor(x / 1000));
+        in.building_zone.push_back(z);
+        return uint32_t(in.building_xy.size() / 2 - 1);
+    };
+    // Остановки: H по y = 0 (0, 1000, 2000, 3000), V по x = 2000 (0, 1000, 2000), O по y = 2000 (0 и 3000)
+    float stops[][2] = {{0, 0}, {1000, 0}, {2000, 0}, {3000, 0}, {2000, 1000}, {2000, 2000}, {0, 2000}, {3000, 2000}};
+    for (auto& st : stops) { in.stop_xy.push_back(st[0]); in.stop_xy.push_back(st[1]); in.stop_inside.push_back(1); }
+    auto route = [&](std::vector<uint32_t> seq, uint8_t mode) {
+        if (in.route_first.empty()) in.route_first.push_back(0);
+        in.route_stops.insert(in.route_stops.end(), seq.begin(), seq.end());
+        in.route_first.push_back(uint32_t(in.route_stops.size()));
+        in.route_mode.push_back(mode);
+    };
+    route({0, 1, 2, 3}, 0); route({3, 2, 1, 0}, 0);  // автобус H
+    route({2, 4, 5}, 3); route({5, 4, 2}, 3);        // трамвай V
+    route({6, 7}, 1); route({7, 6}, 1);              // маршрутка O: вместимость 1 в этой сцене
+    // Внешний вход на правом краю
+    in.gw_xy = {3000.f, 1000.f}; in.gw_transit = {0}; in.gw_node = {node(6, 2)}; in.gw_stop = {kNone};
+
+    uint32_t b_home_t = building(0, 50), b_work_t = building(2000, 2050);
+    uint32_t b_home_o = building(0, 2050), b_work_o = building(3000, 1950);
+    uint32_t b_iso = building(10050, 10010), b_work_i = building(1000, 1000);
+    uint32_t b_home_w = building(0, -20), b_work_w = building(500, -20);
+    uint32_t b_home_x = building(2500, 1000);
+    auto person = [&](uint32_t home, uint32_t place, uint8_t transport) {
+        in.home.push_back(home); in.place.push_back(place); in.role.push_back(kWorker); in.flags.push_back(0);
+        in.profile.push_back(uint16_t(transport * 48));
+        return uint32_t(in.home.size() - 1);
+    };
+    s.transfer = person(b_home_t, b_work_t, kPublic);
+    for (int i = 0; i < 3; ++i) s.overload[i] = person(b_home_o, b_work_o, kPublic);
+    s.isolated = person(b_iso, b_work_i, kCar);
+    s.oneway = person(b_home_w, b_work_w, kCar);
+    s.outside = person(b_home_x, kNone, kPublic);
+    person(b_home_x, b_work_t, kPublic);  // не работает: остаётся дома весь день
+    in.role.back() = kNotWorking; in.place.back() = kNone;
+
+    Params& p = s.p;
+    p.seed = 20261014;
+    double car[kRoadClasses] = {12, 0, 20, 28, 33, 38, 50, 70};
+    std::copy(car, car + kRoadClasses, p.car_speed);
+    for (int m = 0; m < kModes; ++m) {
+        p.transit_speed[m] = 18; p.capacity[m] = 100; p.wagons[m] = 1;
+        for (int q = 0; q < kPeriods; ++q) p.headway_s[m][q] = 600;
+    }
+    p.capacity[1] = 1;  // маршрутка O
+    p.wagons[0] = 2;
+    uint32_t starts[kPeriods] = {25200, 36000, 61200, 72000, 3600, 19800};
+    std::copy(starts, starts + kPeriods, p.period_start);
+    p.dep_mean = 8 * 3600; p.dep_sd = 0;  // все хотят прибыть к 8:00 — одновременная посадка
+    p.max_wait = 3600;
+    p.crowding_penalty = 1; p.crowding_iterations = 0;
+    return s;
+}
+
+int selftest_run(const std::string&) {
+    std::printf("Малые сцены прототипа поездок (#35)\n");
+    selftest_ch();
+
+    Scene s = make_scene();
+    City c; build_city(c, s.in, s.p, true);
+    Plans pl; ItineraryCache cache; PlanStats st;
+    plan_trips(c, pl, cache, st, 0, false);
+    const Input& in = s.in;
+    auto rides = [&](uint32_t id) { return pl.itinerary[id] == kNone ? 0u : cache.pool[pl.itinerary[id] + 2]; };
+    expect(pl.mode[s.transfer] == kModeTransit && rides(s.transfer) == 2, "дом → работа через пересадку: две поездки (автобус, затем трамвай)");
+    if (pl.itinerary[s.transfer] != kNone) {
+        uint32_t e = pl.itinerary[s.transfer];
+        uint32_t r0 = cache.pool[e + 3], r1 = cache.pool[e + 5];
+        expect(c.tr.r_mode[r0] == 0 && c.tr.r_mode[r1] == 3, "  виды транспорта в пути: автобус, трамвай");
+    }
+    expect(pl.mode[s.isolated] == kModeNone, "изолированное здание: нет пути ни на машине, ни транспортом, ни пешком — явный флаг");
+    {
+        // Односторонний отрезок (500,0) → (0,0): из (0,0) в (500,0) машина объезжает через y = 500.
+        uint32_t direct = uint32_t(std::lround(500 / (20 / 3.6) * 10)), around = 3 * direct;
+        CH::Query q(c.car.n);
+        uint32_t ab = c.ch.query(q, 0, 1), ba = c.ch.query(q, 1, 0);
+        expect(ab == around && ba == direct, "односторонняя улица: туда — объезд 1,5 км, обратно — напрямую 500 м");
+        expect(pl.mode[s.oneway] == kModeCar && pl.travel_s[s.oneway] == around / 10 + uint32_t(2 * s.p.car_park_s) + pl.origin_walk_s[s.oneway] + pl.egress_walk_s[s.oneway],
+               "  время поездки на машине включает объезд и парковку");
+    }
+    expect(pl.mode[s.outside] == kModeOutside && pl.gateway[s.outside] == 0, "работа за границей: путь до внешнего входа");
+    for (int i = 0; i < 3; ++i) expect(pl.mode[s.overload[i]] == kModeTransit, "переполнение: житель едет маршруткой O");
+
+    SimConfig cfg; cfg.end = 21 * 3600; cfg.runs_until = 20 * 3600; cfg.return_time = 18 * 3600;
+    SimResult a = simulate_morning(c, pl, cache, cfg);
+    std::vector<uint32_t> order_o;
+    for (uint32_t id : a.board_order) if (id == s.overload[0] || id == s.overload[1] || id == s.overload[2]) order_o.push_back(id);
+    expect(order_o.size() == 3 && order_o[0] == s.overload[0] && order_o[1] == s.overload[1] && order_o[2] == s.overload[2],
+           "вместимость 1: трое садятся в три рейса подряд по порядку (время, ID)");
+    expect(a.left_behind >= 3 && a.capacity_violations == 0 && a.max_group <= 100, "  оставленные ждут следующего рейса, вместимость не превышена");
+    expect(a.conservation_failures == 0 && a.double_group == 0, "численность сохраняется каждые 15 минут, никто не в двух группах");
+    expect(a.counts[kAtPlace] == 5 && a.counts[kHome] == 3, "к 21:00: пятеро на месте; дома — изолированный, неработающий и вернувшийся из-за границы");
+    expect(a.outside_returned == 1, "выход через внешний вход и возвращение тем же жителем");
+
+    SimConfig noon = cfg; noon.end = 12 * 3600;
+    SimResult b = simulate_morning(c, pl, cache, noon);
+    expect(b.counts[kOutside] == 1, "в полдень работник за границей числится «вне региона», а не исчезает");
+
+    // Предел ожидания равен интервалу: первый рейс приходит меньше чем через 10 минут после прихода,
+    // поэтому до него никто не отменяет, а к следующему третий ждёт дольше предела.
+    Scene s2 = make_scene(); s2.p.max_wait = 600;
+    City c2; build_city(c2, s2.in, s2.p, true);
+    Plans pl2; ItineraryCache cache2; PlanStats st2;
+    plan_trips(c2, pl2, cache2, st2, 0, false);
+    SimResult d = simulate_morning(c2, pl2, cache2, cfg);
+    expect(d.cancelled == 1 && d.counts[kAtPlace] == 4 && d.counts[kHome] == 4,
+           "ожидание дольше 10 минут: третий отменяет поездку и возвращается домой, а не удаляется");
+
+    SimConfig rev = cfg; rev.reverse_init = true;
+    SimResult e = simulate_morning(c, pl, cache, rev);
+    expect(e.hash == a.hash, "обратный порядок постановки событий даёт тот же результат");
+    (void)in;
+    std::printf("%s\n", failures ? "ПРОВАЛ" : "все проверки прошли");
+    return failures ? 1 : 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        std::fprintf(stderr, "использование: proto <каталог входа> --selftest | <колонки населения> [--departure-sd с] [--capacity-scale x]\n");
+        return 2;
+    }
+    std::string dir = argv[1];
+    if (argc > 2 && std::strcmp(argv[2], "--selftest") == 0) return selftest_run(dir);
+    double dep_sd = 0, capacity_scale = 1;
+    for (int i = 3; i + 1 < argc; i += 2) {
+        if (std::strcmp(argv[i], "--departure-sd") == 0) dep_sd = std::atof(argv[i + 1]);
+        else if (std::strcmp(argv[i], "--capacity-scale") == 0) capacity_scale = std::atof(argv[i + 1]);
+    }
+    return full(dir, argc > 2 ? argv[2] : dir + "/population", dep_sd, capacity_scale);
+}

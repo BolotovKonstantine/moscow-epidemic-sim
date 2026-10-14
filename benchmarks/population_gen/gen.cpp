@@ -770,10 +770,12 @@ int selftest(Params p) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 2) { std::fprintf(stderr, "использование: gen <каталог входа> [--selftest]\n"); return 2; }
+    if (argc < 2) { std::fprintf(stderr, "использование: gen <каталог входа> [--selftest | --dump <каталог>]\n"); return 2; }
     std::string dir = argv[1];
     Params p = load_params(dir);
     if (argc > 2 && std::strcmp(argv[2], "--selftest") == 0) return selftest(p);
+    // --dump: колонки населения после назначения мест — вход прототипа поездок (#35, benchmarks/mobility).
+    std::string dump = argc > 3 && std::strcmp(argv[2], "--dump") == 0 ? argv[3] : "";
 
     City c = load_city(dir);
     uint64_t population = 0;
@@ -814,6 +816,20 @@ int main(int argc, char** argv) {
     report_population(p, c, pop, sm);
     AssignResult a = assign_places(p, c, pop);
     report_assign(a);
+    if (!dump.empty()) {
+        auto write = [&](const char* name, const void* data, size_t bytes) {
+            std::ofstream out(dump + "/" + name, std::ios::binary);
+            out.write(static_cast<const char*>(data), std::streamsize(bytes));
+            if (!out) { std::fprintf(stderr, "не записан %s/%s\n", dump.c_str(), name); std::exit(1); }
+        };
+        write("p_home.u32", pop.home.data(), pop.home.size() * 4);
+        write("p_household.u32", pop.household.data(), pop.household.size() * 4);
+        write("p_place.u32", pop.place.data(), pop.place.size() * 4);
+        write("p_age.u8", pop.age.data(), pop.age.size());
+        write("p_role.u8", pop.role.data(), pop.role.size());
+        write("p_flags.u8", pop.flags.data(), pop.flags.size());
+        write("p_profile.u16", pop.profile.data(), pop.profile.size() * 2);
+    }
     // Прирост footprint после назначения не печатается: macOS возвращает освобождённую память лениво,
     // и разность искажается освобождением копии из проверки порядка. Пик — по /usr/bin/time -l в run.sh.
     std::printf("  \"memory\": {\"total_footprint_mb\": %.1f}\n}\n", phys_footprint() / 1048576.0);
