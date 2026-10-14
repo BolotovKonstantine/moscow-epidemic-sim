@@ -203,7 +203,7 @@ int period_at(const Params& p, uint32_t t) {
 struct Input {
     std::vector<float> node_xy, zone_xy, building_xy, facility_xy, stop_xy, gw_xy;
     std::vector<uint8_t> node_inside, stop_inside, gw_transit;
-    std::vector<uint32_t> e_from, e_to, building_zone, route_first, route_stops, tr_from, tr_to, tr_walk, gw_edge, gw_stop;
+    std::vector<uint32_t> e_from, e_to, building_zone, route_first, route_stops, tr_from, tr_to, tr_walk, gw_edge, gw_start, gw_stop;
     std::vector<float> e_len;
     std::vector<uint8_t> e_cls, route_mode;
     std::vector<int8_t> e_oneway;
@@ -237,6 +237,7 @@ Input load_input(const std::string& dir, const std::string& pop_dir) {
     in.gw_xy = read_array<float>(dir + "/gateway_xy.f32");
     in.gw_transit = read_array<uint8_t>(dir + "/gateway_transit.u8");
     in.gw_edge = read_array<uint32_t>(dir + "/gateway_edge.u32");
+    in.gw_start = read_array<uint32_t>(dir + "/gateway_start.u32");
     in.gw_stop = read_array<uint32_t>(dir + "/gateway_stop.u32");
     in.home = read_array<uint32_t>(pop_dir + "/p_home.u32");
     in.place = read_array<uint32_t>(pop_dir + "/p_place.u32");
@@ -651,7 +652,11 @@ Transit build_transit(const Input& in, const Params& p) {
     }
     // Пересадки: stop_area пакета и пешком между остановками ближе transfer_radius (по прямой × detour).
     std::vector<std::array<uint32_t, 3>> arcs;
-    for (size_t i = 0; i < in.tr_from.size(); ++i) arcs.push_back({in.tr_from[i], in.tr_to[i], in.tr_walk[i]});
+    // stop_area пакета перечисляет пару один раз: пересадка — в обе стороны.
+    for (size_t i = 0; i < in.tr_from.size(); ++i) {
+        arcs.push_back({in.tr_from[i], in.tr_to[i], in.tr_walk[i]});
+        arcs.push_back({in.tr_to[i], in.tr_from[i], in.tr_walk[i]});
+    }
     Grid g; g.build(in.stop_xy, [&](uint32_t s) { return t.useful[s] != 0; }, 250);
     std::vector<std::pair<float, uint32_t>> near;
     for (uint32_t s = 0; s < t.n_stops; ++s) {
@@ -922,12 +927,13 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                             // Вход — своё ребро пакета: до точки пересечения едут от того конца, откуда
                             // разрешено направление, долей длины ребра со скоростью его класса.
                             uint32_t e = in.gw_edge[gi];
-                            if (e == kNone || p.car_speed[in.e_cls[e]] <= 0) continue;
+                            if (e == kNone || in.gw_start[gi] == kNone || p.car_speed[in.e_cls[e]] <= 0) continue;
                             const float* gx = &in.gw_xy[2 * gi];
                             float da = dist(&in.node_xy[2 * in.e_from[e]], gx), db = dist(&in.node_xy[2 * in.e_to[e]], gx);
                             float frac_from = da + db > 0 ? da / (da + db) : 0;  // доля ребра от from до точки
                             for (int side = 0; side < 2; ++side) {
                                 uint32_t v = side == 0 ? in.e_from[e] : in.e_to[e];
+                                if (v != in.gw_start[gi]) continue;  // выезд — только от внутреннего конца ребра
                                 if (side == 0 && in.e_oneway[e] < 0) continue;  // от from к to движения нет
                                 if (side == 1 && in.e_oneway[e] > 0) continue;  // от to к from движения нет
                                 uint32_t ds = c.ch.query(cq, a, v);
@@ -1464,7 +1470,8 @@ int full(const std::string& dir, const std::string& pop_dir, double dep_sd, doub
     bool same = a.hash == b.hash;
     std::printf("  \"determinism\": {\"reverse_init_equal\": %s},\n", same ? "true" : "false");
     std::printf("  \"memory\": {\"total_footprint_mb\": %.1f}\n}\n", mb(phys_footprint()));
-    bool broken = !same || ch_mismatches || a.conservation_failures || a.capacity_violations || a.double_group;
+    bool broken = !same || ch_mismatches || a.conservation_failures || a.capacity_violations || a.double_group ||
+                  b.conservation_failures || b.capacity_violations || b.double_group;
     if (broken) std::fprintf(stderr, "нарушены инварианты поездок или независимость от порядка\n");
     return broken ? 1 : 0;
 }
@@ -1574,7 +1581,7 @@ Scene make_scene() {
     route({2, 4, 5}, 3); route({5, 4, 2}, 3);        // трамвай V
     route({6, 7}, 1); route({7, 6}, 1);              // маршрутка O: вместимость 1 в этой сцене
     // Внешние входы на правом краю: дорожный (узел (3000, 1000)) и транспортный (остановка (3000, 0))
-    in.gw_xy = {3000.f, 1000.f, 3000.f, 0.f}; in.gw_transit = {0, 1}; in.gw_edge = {kNone, kNone}; in.gw_stop = {kNone, 3};
+    in.gw_xy = {3000.f, 1000.f, 3000.f, 0.f}; in.gw_transit = {0, 1}; in.gw_edge = {kNone, kNone}; in.gw_start = {node(6, 2), kNone}; in.gw_stop = {kNone, 3};
 
     for (uint32_t e = 0; e < in.e_from.size(); ++e)  // дорожный вход — на вертикальном ребре (3000, 500) – (3000, 1000)
         if (in.e_from[e] == node(6, 1) && in.e_to[e] == node(6, 2)) in.gw_edge[0] = e;

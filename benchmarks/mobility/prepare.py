@@ -100,18 +100,28 @@ def main(package: Path, params_path: Path, mobility_path: Path, out: Path):
     plane(sx, sy).tofile(out / "stop_xy.f32")
     np.array([int(s["inside"]) for s in stops], "<u1").tofile(out / "stop_inside.u8")
 
+    # Маршруты строятся из отрезков пакета, а не из списка остановок: там, где у маршрута ненайденный
+    # член, отрезка нет, и маршрут делится на непрерывные куски — прямой поездки через разрыв не возникает.
     routes = read_csv(package / "transit_routes.csv.gz")
+    route_mode = {r["route_id"]: MODES.index(r["mode"]) for r in routes}
+    segments = {}
+    for sg in read_csv(package / "transit_segments.csv.gz"):
+        segments.setdefault(sg["route_id"], []).append((int(sg["sequence"]), stop_index[sg["from_stop"]], stop_index[sg["to_stop"]]))
     first, members, mode = [0], [], []
     for r in routes:
-        seq = [stop_index[s] for s in r["stops"].split(";") if s]
-        members.extend(seq)
-        first.append(len(members))
-        mode.append(MODES.index(r["mode"]))
+        chain = []
+        for _, a, b in sorted(segments.get(r["route_id"], [])):
+            if chain and chain[-1] != a:  # разрыв: закрыть кусок
+                members.extend(chain); first.append(len(members)); mode.append(route_mode[r["route_id"]]); chain = []
+            if not chain:
+                chain.append(a)
+            chain.append(b)
+        if chain:
+            members.extend(chain); first.append(len(members)); mode.append(route_mode[r["route_id"]])
     np.array(first, "<u4").tofile(out / "route_first.u32")
     np.array(members, "<u4").tofile(out / "route_stops.u32")
     np.array(mode, "<u1").tofile(out / "route_mode.u8")
 
-    # Длина перегона прототип считает сам по прямой между остановками, как transit_segments.csv.gz пакета.
 
     tr = read_csv(package / "transit_transfers.csv.gz")
     np.array([stop_index[t["from_stop"]] for t in tr], "<u4").tofile(out / "transfer_from.u32")
@@ -123,8 +133,16 @@ def main(package: Path, params_path: Path, mobility_path: Path, out: Path):
     plane(gx, gy).tofile(out / "gateway_xy.f32")
     np.array([g["kind"] == "transit" for g in gw], "<u1").tofile(out / "gateway_transit.u8")
     # Дорожный вход — конкретное ребро пакета (ref = edge_id) и точка пересечения границы на нём: прототип
-    # учитывает направление, класс и долю ребра от конца до этой точки. Ребро не найдено — NONE.
+    # учитывает направление, класс и долю ребра от конца до этой точки. Выезд — только от внутреннего конца
+    # (inside_ref): от него первое пересечение ребра выводит из региона. Ребро с обоими концами снаружи —
+    # хорда границы, выездом не считается (NONE), как и ребро, которого нет в графе.
+    def gateway_start(g):
+        if g["kind"] != "road" or not g["inside_ref"] or g["ref"] not in edge_index:
+            return NONE
+        node = int(g["inside_ref"].split(";")[0])
+        return node_index.get(node, NONE)
     np.array([edge_index.get(g["ref"], NONE) if g["kind"] == "road" else NONE for g in gw], "<u4").tofile(out / "gateway_edge.u32")
+    np.array([gateway_start(g) for g in gw], "<u4").tofile(out / "gateway_start.u32")
     np.array([stop_index.get(g["inside_ref"], NONE) if g["kind"] == "transit" else NONE for g in gw], "<u4").tofile(out / "gateway_stop.u32")
 
     service = json.loads((package / "transit_service.json").read_text(encoding="utf-8"))
@@ -154,7 +172,7 @@ def main(package: Path, params_path: Path, mobility_path: Path, out: Path):
     (out / "params.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     print(json.dumps({"nodes": len(nodes), "edges": len(e_from), "zones": len(zones), "buildings": len(attrs),
-                      "facilities": len(rows), "stops": len(stops), "routes": len(routes), "route_stops": len(members),
+                      "facilities": len(rows), "stops": len(stops), "routes": len(routes), "route_pieces": len(mode), "route_stops": len(members),
                       "transfers": len(tr), "gateways": len(gw), "origin": [x0, y0]},
                      ensure_ascii=False))
 
