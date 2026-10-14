@@ -57,7 +57,7 @@ def main(package: Path, params_path: Path, mobility_path: Path, out: Path):
     plane(nx, ny).tofile(out / "node_xy.f32")
     np.array([int(n["inside"]) for n in nodes], "<u1").tofile(out / "node_inside.u8")
 
-    e_from, e_to, e_len, e_cls, e_oneway = [], [], [], [], []
+    e_from, e_to, e_len, e_cls, e_oneway, edge_index = [], [], [], [], [], {}
     with gzip.open(package / "roads.geojsonl.gz", "rt", encoding="utf-8") as stream:
         for line in stream:
             p = json.loads(line)["properties"]
@@ -66,6 +66,7 @@ def main(package: Path, params_path: Path, mobility_path: Path, out: Path):
             e_len.append(p["length_m"])
             e_cls.append(road_class(p["highway"]))
             e_oneway.append(p["oneway"])
+            edge_index[p["edge_id"]] = len(e_from) - 1
     np.array(e_from, "<u4").tofile(out / "edge_from.u32")
     np.array(e_to, "<u4").tofile(out / "edge_to.u32")
     np.array(e_len, "<f4").tofile(out / "edge_len.f32")
@@ -121,17 +122,9 @@ def main(package: Path, params_path: Path, mobility_path: Path, out: Path):
     gx, gy = project([float(g["lon"]) for g in gw], [float(g["lat"]) for g in gw])
     plane(gx, gy).tofile(out / "gateway_xy.f32")
     np.array([g["kind"] == "transit" for g in gw], "<u1").tofile(out / "gateway_transit.u8")
-    # Дорожный вход привязывается к внутреннему концу ребра; если его нет (оба конца снаружи), — к внешнему.
-    # Если нет ни того, ни другого в графе, прототип привязывает вход к ближайшему узлу по координате пересечения.
-    def gateway_node(g):
-        if g["kind"] != "road":
-            return NONE
-        for ref in (g["inside_ref"], g["outside_ref"]):
-            for node in ref.split(";"):
-                if node and int(node) in node_index:
-                    return node_index[int(node)]
-        return NONE
-    np.array([gateway_node(g) for g in gw], "<u4").tofile(out / "gateway_node.u32")
+    # Дорожный вход — конкретное ребро пакета (ref = edge_id) и точка пересечения границы на нём: прототип
+    # учитывает направление, класс и долю ребра от конца до этой точки. Ребро не найдено — NONE.
+    np.array([edge_index.get(g["ref"], NONE) if g["kind"] == "road" else NONE for g in gw], "<u4").tofile(out / "gateway_edge.u32")
     np.array([stop_index.get(g["inside_ref"], NONE) if g["kind"] == "transit" else NONE for g in gw], "<u4").tofile(out / "gateway_stop.u32")
 
     service = json.loads((package / "transit_service.json").read_text(encoding="utf-8"))

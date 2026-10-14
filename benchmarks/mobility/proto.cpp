@@ -80,7 +80,14 @@ struct Rng {
         double u1 = 1.0 - uniform(), u2 = uniform();
         return std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * M_PI * u2);
     }
-    uint32_t below(uint32_t n) { return uint32_t((Philox::draw(key, id, sub, this->n++) >> 32) * n >> 32); }
+    // Целое из [0, n) методом Лемира с отбраковкой, как в контракте ядра (docs/sim-core.md#случайность).
+    uint32_t below(uint32_t n) {
+        uint32_t threshold = uint32_t((0x100000000ull - n) % n);
+        while (true) {
+            uint64_t m = (Philox::draw(key, id, sub, this->n++) >> 32) * n;
+            if (uint32_t(m) >= threshold) return uint32_t(m >> 32);
+        }
+    }
 };
 
 uint64_t fnv(const void* data, size_t bytes, uint64_t h = 14695981039346656037ull) {
@@ -196,7 +203,7 @@ int period_at(const Params& p, uint32_t t) {
 struct Input {
     std::vector<float> node_xy, zone_xy, building_xy, facility_xy, stop_xy, gw_xy;
     std::vector<uint8_t> node_inside, stop_inside, gw_transit;
-    std::vector<uint32_t> e_from, e_to, building_zone, route_first, route_stops, tr_from, tr_to, tr_walk, gw_node, gw_stop;
+    std::vector<uint32_t> e_from, e_to, building_zone, route_first, route_stops, tr_from, tr_to, tr_walk, gw_edge, gw_stop;
     std::vector<float> e_len;
     std::vector<uint8_t> e_cls, route_mode;
     std::vector<int8_t> e_oneway;
@@ -229,7 +236,7 @@ Input load_input(const std::string& dir, const std::string& pop_dir) {
     in.tr_walk = read_array<uint32_t>(dir + "/transfer_walk_s.u32");
     in.gw_xy = read_array<float>(dir + "/gateway_xy.f32");
     in.gw_transit = read_array<uint8_t>(dir + "/gateway_transit.u8");
-    in.gw_node = read_array<uint32_t>(dir + "/gateway_node.u32");
+    in.gw_edge = read_array<uint32_t>(dir + "/gateway_edge.u32");
     in.gw_stop = read_array<uint32_t>(dir + "/gateway_stop.u32");
     in.home = read_array<uint32_t>(pop_dir + "/p_home.u32");
     in.place = read_array<uint32_t>(pop_dir + "/p_place.u32");
@@ -796,8 +803,9 @@ void build_city(City& c, const Input& in, const Params& p, bool quiet) {
     c.car_nodes.build(in.node_xy, [&](uint32_t v) { return c.car_comp[v] == c.car_main; }, 250);
     c.all_nodes.build(in.node_xy, [](uint32_t) { return true; }, 250);
     c.tr = build_transit(in, p);
-    c.stops.build(in.stop_xy, [&](uint32_t s) { return c.tr.useful[s] != 0; }, 250);
-    c.dest_stops.build(in.stop_xy, [&](uint32_t s) { return c.tr.served[s] != 0; }, 250);
+    // Подход и отход — только к остановкам внутри региона; снаружи житель бывает лишь в состоянии «вне региона».
+    c.stops.build(in.stop_xy, [&](uint32_t s) { return c.tr.useful[s] != 0 && in.stop_inside[s] != 0; }, 250);
+    c.dest_stops.build(in.stop_xy, [&](uint32_t s) { return c.tr.served[s] != 0 && in.stop_inside[s] != 0; }, 250);
     auto t0 = Clock::now();
     uint64_t before = phys_footprint();
     c.ch.build(c.car);
@@ -911,17 +919,24 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                         float d0, d1; uint32_t a = snap_car(c, home, d0);
                         for (uint32_t gi = 0; gi < in.gw_transit.size(); ++gi) {
                             if (in.gw_transit[gi]) continue;
-                            // Узел входа — конец ребра из пакета; без него — ближайший узел к точке пересечения границы.
-                            uint32_t gn = in.gw_node[gi];
-                            if (gn == kNone) { float dg; gn = snap_car(c, &in.gw_xy[2 * gi], dg); }
-                            if (gn == kNone) continue;
-                            uint32_t ds = c.ch.query(cq, a, gn);
-                            if (ds == kInf) continue;
-                            // Остаток ребра от узла до точки пересечения границы — по прямой со скоростью tertiary.
-                            float edge = dist(&in.node_xy[2 * gn], &in.gw_xy[2 * gi]);
-                            uint32_t tail = uint32_t(std::lround(edge / (p.car_speed[3] / 3.6)));
-                            uint32_t tm = ds / 10 + tail + uint32_t(p.car_park_s) + walk_s(p, d0);
-                            if (tm < best) { best = tm; g = gi; }
+                            // Вход — своё ребро пакета: до точки пересечения едут от того конца, откуда
+                            // разрешено направление, долей длины ребра со скоростью его класса.
+                            uint32_t e = in.gw_edge[gi];
+                            if (e == kNone || p.car_speed[in.e_cls[e]] <= 0) continue;
+                            const float* gx = &in.gw_xy[2 * gi];
+                            float da = dist(&in.node_xy[2 * in.e_from[e]], gx), db = dist(&in.node_xy[2 * in.e_to[e]], gx);
+                            float frac_from = da + db > 0 ? da / (da + db) : 0;  // доля ребра от from до точки
+                            for (int side = 0; side < 2; ++side) {
+                                uint32_t v = side == 0 ? in.e_from[e] : in.e_to[e];
+                                if (side == 0 && in.e_oneway[e] < 0) continue;  // от from к to движения нет
+                                if (side == 1 && in.e_oneway[e] > 0) continue;  // от to к from движения нет
+                                uint32_t ds = c.ch.query(cq, a, v);
+                                if (ds == kInf) continue;
+                                float part = in.e_len[e] * (side == 0 ? frac_from : 1 - frac_from);
+                                uint32_t tail = uint32_t(std::lround(part / (p.car_speed[in.e_cls[e]] / 3.6)));
+                                uint32_t tm = ds / 10 + tail + uint32_t(p.car_park_s) + walk_s(p, d0);
+                                if (tm < best) { best = tm; g = gi; }
+                            }
                         }
                         (void)d1;
                     } else {
@@ -1290,7 +1305,20 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     res.groups = int64_t(std::unique(group_seen.begin(), group_seen.end()) - group_seen.begin());
     res.mean_wait_s = res.boardings ? double(wait_sum) / res.boardings : 0;
     res.mean_late_s = late_n ? late_sum / late_n : 0;
-    res.hash = fnv(state.data(), n, h);
+    // Хеш полного состояния продолжения: у жителя — состояние, позиция в пути, следующее событие и рейс;
+    // у рейса — позиция и пассажиры с вагонами по порядку; у очереди — ждущие по порядку.
+    for (size_t i = 0; i < n; ++i) {
+        uint32_t rd = run_of[i] == kNone ? kNone : runs[run_of[i]].day_index;
+        h = fnv(&state[i], 1, h); h = fnv(&ride_ix[i], 1, h); h = fnv(&next[i], 4, h); h = fnv(&rd, 4, h);
+    }
+    for (size_t k = 0; k < runs.size(); ++k) {
+        h = fnv(&runs[k].day_index, 4, h); h = fnv(&run_pos[k], 1, h);
+        for (const Onboard& o : onboard[k]) { h = fnv(&o.person, 4, h); h = fnv(&o.alight, 1, h); h = fnv(&o.wagon, 1, h); }
+    }
+    for (uint32_t rs = 0; rs < t.n_rs; ++rs)
+        for (uint32_t i = queue_head[rs]; i < queue[rs].size(); ++i)
+            if (state[queue[rs][i]] == kWaiting) h = fnv(&queue[rs][i], 4, h);
+    res.hash = h;
     res.seconds = seconds_since(t0);
     return res;
 }
@@ -1546,8 +1574,10 @@ Scene make_scene() {
     route({2, 4, 5}, 3); route({5, 4, 2}, 3);        // трамвай V
     route({6, 7}, 1); route({7, 6}, 1);              // маршрутка O: вместимость 1 в этой сцене
     // Внешние входы на правом краю: дорожный (узел (3000, 1000)) и транспортный (остановка (3000, 0))
-    in.gw_xy = {3000.f, 1000.f, 3000.f, 0.f}; in.gw_transit = {0, 1}; in.gw_node = {node(6, 2), kNone}; in.gw_stop = {kNone, 3};
+    in.gw_xy = {3000.f, 1000.f, 3000.f, 0.f}; in.gw_transit = {0, 1}; in.gw_edge = {kNone, kNone}; in.gw_stop = {kNone, 3};
 
+    for (uint32_t e = 0; e < in.e_from.size(); ++e)  // дорожный вход — на вертикальном ребре (3000, 500) – (3000, 1000)
+        if (in.e_from[e] == node(6, 1) && in.e_to[e] == node(6, 2)) in.gw_edge[0] = e;
     uint32_t b_home_t = building(100, 20), b_work_t = building(2000, 2050);
     uint32_t b_home_o = building(0, 2050), b_work_o = building(3000, 1950);
     uint32_t b_iso = building(10050, 10010), b_work_i = building(1000, 1000);
