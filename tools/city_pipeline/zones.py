@@ -57,6 +57,19 @@ class Zones:
                 index[missing[row]] = zone   # при нескольких — меньший индекс (идёт последним)
         return index
 
+    def nearest(self, x, y):
+        """Индекс ближайшей зоны по расстоянию до её геометрии; при равенстве — меньший индекс."""
+        x = np.asarray(x, dtype=np.float64)
+        y = np.asarray(y, dtype=np.float64)
+        index = np.full(len(x), -1, dtype=np.int64)
+        if not len(x) or not len(self.ids):
+            return index
+        tree = shapely.STRtree(self.geometry_metric)
+        point_index, zone_index = tree.query_nearest(shapely.points(x, y), all_matches=True)
+        for row, zone in sorted(zip(point_index.tolist(), zone_index.tolist()), reverse=True):
+            index[row] = zone   # при нескольких — меньший индекс (идёт последним)
+        return index
+
 
 def build_zones(region_metric, cell_size):
     minx, miny, maxx, maxy = region_metric.bounds

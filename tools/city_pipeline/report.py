@@ -119,6 +119,9 @@ def build_report(context):
                f"сумма зон {zone_total}, сумма зданий {int(residents.sum())}, распределено {population.allocated_total}"),
         _check("population_matches_grid", abs(population.allocated_total + population.unallocated - population.region_total) <= 1.0,
                f"сетка {population.region_total:.1f}, распределено {population.allocated_total}, не распределено {population.unallocated:.1f}"),
+        _check("population_fully_allocated", population.unallocated < 0.5 and population.allocated_total == int(round(population.region_total)),
+               f"распределено {population.allocated_total} из округлённого итога сетки {int(round(population.region_total))}; "
+               f"ближайшему блоку {population.nearest_block['residents']:.1f}, ближайшей зоне {population.nearest_zone['residents']:.1f}"),
         _check("residential_density_plausible", _pct(dense_residents, int(residents.sum())) is None or _pct(dense_residents, int(residents.sum())) <= 5.0,
                f"{_pct(dense_residents, int(residents.sum()))}% жителей в зданиях плотнее {dense_limit} чел. на 100 м² жилой площади"),
         _check("raster_covers_region", population.raster_covers_region,
@@ -187,6 +190,8 @@ def build_report(context):
             "grid_cells_missing_in_region": population.missing_cells,
             "populated_cells_without_housing": population.populated_cells_without_housing,
             "populated_cells_over_capacity": population.populated_cells_over_capacity,
+            "nearest_block": population.nearest_block,
+            "nearest_zone_cells": population.nearest_zone,
             "not_in_package": ["возраст", "пол", "домохозяйства", "занятость", "социальные условия"],
         },
         "roads": {
