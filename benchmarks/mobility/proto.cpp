@@ -1029,17 +1029,21 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                             Itinerary iti = extract(c.tr, tree, gs);
                             float od = dist(home, &in.stop_xy[2 * iti.origin_stop]);
                             if (od > p.access_radius) continue;
+                            // Путь, не помещающийся в компактную запись, — не вариант: этот вход отбрасывается.
+                            if (!iti.rides.empty() && (!iti.valid || iti.rides.size() > 255)) continue;
                             uint32_t tm = walk_s(p, od) + iti.core_s;
                             if (tm < best) { best = tm; g = gi; }
                         }
                         if (g != kNone) {
                             // Путь к транспортному входу исполняется рейсами: очереди, вместимость и группы, как у всех.
+                            // Запись общая для ячейки, как у обычных конечных остановок (ключ — остановка входа).
                             uint32_t gs = in.gw_stop[g];
-                            uint32_t entry = store(tree, gs);
+                            auto it = zone_cache.find(gs);
+                            uint32_t entry = it != zone_cache.end() ? it->second : (zone_cache[gs] = store(tree, gs));
                             if (entry != kNone) {
                                 pl.itinerary[id] = entry;
                                 pl.origin_walk_s[id] = walk_s(p, dist(home, &in.stop_xy[2 * cache.pool[entry]]));
-                            }
+                            }  // иначе вход в пешей доступности от начальной остановки: путь без рейсов
                         }
                     }
                     if (g != kNone) { pl.mode[id] = kModeOutside; pl.gateway[id] = g; pl.travel_s[id] = best; }
@@ -1514,7 +1518,11 @@ int full(const std::string& dir, const std::string& pop_dir, double dep_sd, doub
     if (dep_sd >= 0) p.dep_sd = dep_sd;  // −1 — ключ не задан; 0 — все хотят прибыть одновременно
     if (!(capacity_scale > 0)) { std::fprintf(stderr, "--capacity-scale должен быть больше 0\n"); return 2; }
     for (int m = 0; m < kModes; ++m) {
-        p.capacity[m] = uint32_t(std::lround(p.capacity[m] * capacity_scale));
+        double scaled = std::round(p.capacity[m] * capacity_scale);
+        if (!std::isfinite(scaled) || scaled > double(UINT32_MAX)) {
+            std::fprintf(stderr, "вместимость %s после --capacity-scale больше u32\n", kModeNames[m]); return 2;
+        }
+        p.capacity[m] = uint32_t(scaled);
         if (p.capacity[m] == 0) { std::fprintf(stderr, "вместимость %s после --capacity-scale равна 0\n", kModeNames[m]); return 2; }
     }
     auto t0 = Clock::now();
