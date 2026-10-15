@@ -159,6 +159,10 @@ std::map<std::string, std::vector<double>> read_lines(const std::string& path) {
 
 // Ячейка начала пути: номер ячейки в зоне хранится в u8 ключа кеша, поэтому ячеек в зоне не больше 256.
 void check_origin_cell(double cell) {
+    if (!std::isfinite(cell) || cell <= 0 || cell > 1000) {  // до деления: иначе преобразование в u32 не определено
+        std::fprintf(stderr, "origin_cell_m = %g вне (0, 1000]\n", cell);
+        std::exit(1);
+    }
     uint32_t per_side = std::max<uint32_t>(1, uint32_t(1000 / cell));
     if (cell <= 0 || std::fabs(per_side * cell - 1000) > 1e-6) {  // ячейка должна делить зону 1 км без остатка
         std::fprintf(stderr, "origin_cell_m = %g не делит зону 1000 м без остатка (допустимо 1000, 500, 250, …)\n", cell);
@@ -1023,6 +1027,15 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                             uint32_t tm = walk_s(p, od) + iti.core_s;
                             if (tm < best) { best = tm; g = gi; }
                         }
+                        if (g != kNone) {
+                            // Путь к транспортному входу исполняется рейсами: очереди, вместимость и группы, как у всех.
+                            uint32_t gs = in.gw_stop[g];
+                            uint32_t entry = store(tree, gs);
+                            if (entry != kNone) {
+                                pl.itinerary[id] = entry;
+                                pl.origin_walk_s[id] = walk_s(p, dist(home, &in.stop_xy[2 * cache.pool[entry]]));
+                            }
+                        }
                     }
                     if (g != kNone) { pl.mode[id] = kModeOutside; pl.gateway[id] = g; pl.travel_s[id] = best; }
                     else st.no_route_why[3]++;
@@ -1101,7 +1114,7 @@ Crowding update_crowding(City& c, const Plans& pl, const ItineraryCache& cache, 
     const Transit& t = c.tr; const Params& p = c.p;
     std::vector<double> load(t.n_rs, 0);
     for (size_t id = 0; id < pl.mode.size(); ++id) {
-        if (pl.mode[id] != kModeTransit) continue;
+        if (pl.itinerary[id] == kNone) continue;  // транспорт и путь к транспортному входу
         uint32_t e = pl.itinerary[id], rides = cache.pool[e + 2];
         for (uint32_t i = 0; i < rides; ++i) {
             uint32_t r = cache.pool[e + 3 + 2 * i], w = cache.pool[e + 4 + 2 * i];
@@ -1232,7 +1245,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     for (size_t k = 0; k < runs.size(); ++k) run_pos[k] = runs[k].start_pos;
     std::vector<std::vector<Onboard>> onboard(runs.size());
     std::vector<uint32_t> run_load(runs.size(), 0);
-    std::vector<std::array<uint16_t, 16>> wagon_load(runs.size());  // группа контактов — (рейс, вагон)
+    std::vector<std::array<uint32_t, 16>> wagon_load(runs.size());  // группа контактов — (рейс, вагон)
     for (auto& w : wagon_load) w.fill(0);
     // Очереди ожидания по позиции маршрута: FIFO в порядке прихода (время, ID).
     std::vector<std::vector<uint32_t>> queue(t.n_rs);
@@ -1369,7 +1382,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
             else {
                 run_pos[k] = 255; --active_runs;
                 if (!ob.empty()) res.capacity_violations++;
-                for (uint16_t w : wagon_load[k]) if (w) res.capacity_violations++;  // учёт вагонов сходится с высадкой
+                for (uint32_t w : wagon_load[k]) if (w) res.capacity_violations++;  // учёт вагонов сходится с высадкой
                 std::vector<Onboard>().swap(ob);
             }
             continue;
@@ -1381,15 +1394,12 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
             case kHome:
                 if (m == kModeWalk) { set_state(id, kWalking); schedule(id, now + pl.travel_s[id]); }
                 else if (m == kModeCar) { set_state(id, kDriving); schedule(id, now + pl.travel_s[id]); }
-                else if (m == kModeOutside) { set_state(id, kDriving); schedule(id, now + pl.travel_s[id]); }
-                else if (m == kModeTransit) { set_state(id, kWalking); ride_ix[id] = 0; schedule(id, now + std::max<uint32_t>(1, pl.origin_walk_s[id])); }
+                else if (m == kModeOutside && pl.itinerary[id] == kNone) { set_state(id, kDriving); schedule(id, now + pl.travel_s[id]); }
+                else if (m == kModeTransit || m == kModeOutside) { set_state(id, kWalking); ride_ix[id] = 0; schedule(id, now + std::max<uint32_t>(1, pl.origin_walk_s[id])); }
                 break;
             case kWalking:
             case kDriving:
-                if (m == kModeOutside) {
-                    set_state(id, kOutside);
-                    if (cfg.return_time > now) schedule(id, cfg.return_time);
-                } else if (m == kModeTransit && ride_ix[id] < rides_of(id)) {
+                if ((m == kModeTransit || m == kModeOutside) && pl.itinerary[id] != kNone && ride_ix[id] < rides_of(id)) {
                     uint32_t route, board, alight, walk_after;
                     ride_of(id, ride_ix[id], route, board, alight, walk_after);
                     uint32_t rs = t.r_first[route] + board;
@@ -1397,6 +1407,9 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                     { size_t c0 = queue[rs].capacity(); queue[rs].push_back(id); queue_resized(c0, queue[rs].capacity()); }
                     res.max_queue = std::max<int64_t>(res.max_queue, ++active_wait[rs]);
                     schedule(id, now + uint32_t(p.max_wait));  // предел ожидания; посадка делает этот ключ устаревшим
+                } else if (m == kModeOutside) {  // доехал до внешнего входа
+                    set_state(id, kOutside);
+                    if (cfg.return_time > now) schedule(id, cfg.return_time);
                 } else {
                     set_state(id, kAtPlace);
                     late_sum += std::max(0.0, double(now) - arrive_target[id]); late_n++;  // опоздание, досрочные — 0
@@ -1491,7 +1504,7 @@ void report_sim(const char* name, const SimResult& r) {
 
 int full(const std::string& dir, const std::string& pop_dir, double dep_sd, double capacity_scale, double origin_cell) {
     Params p = load_params(dir);
-    if (origin_cell > 0) { p.origin_cell = origin_cell; check_origin_cell(p.origin_cell); }
+    if (origin_cell != -1) { p.origin_cell = origin_cell; check_origin_cell(p.origin_cell); }
     if (dep_sd >= 0) p.dep_sd = dep_sd;  // −1 — ключ не задан; 0 — все хотят прибыть одновременно
     if (!(capacity_scale > 0)) { std::fprintf(stderr, "--capacity-scale должен быть больше 0\n"); return 2; }
     for (int m = 0; m < kModes; ++m) {
@@ -1558,7 +1571,8 @@ int full(const std::string& dir, const std::string& pop_dir, double dep_sd, doub
         Grid bg; bg.build(in.building_xy, [](uint32_t) { return true; }, 250);
         std::vector<std::pair<float, uint32_t>> nb;
         // Попыток не больше 1000 на пару: в малом или разреженном пакете пар может не быть.
-        for (uint32_t attempt = 0; ratio.size() < 400 && attempt < 400000 && in.building_xy.size() / 2 >= 2; ++attempt) {
+        // Без пешего графа (все дороги — trunk и motorway) привязывать некуда: проверка пропускается.
+        for (uint32_t attempt = 0; ratio.size() < 400 && attempt < 400000 && in.building_xy.size() / 2 >= 2 && !wn.items.empty(); ++attempt) {
             uint32_t a = r.below(uint32_t(in.building_xy.size() / 2));
             bg.within(in.building_xy[2 * a], in.building_xy[2 * a + 1], 2000, nb);
             nb.erase(std::remove_if(nb.begin(), nb.end(), [](const auto& x) { return x.first < 300; }), nb.end());
@@ -1796,6 +1810,9 @@ int selftest_run(const std::string&) {
     expect(a.conservation_failures == 0 && a.double_group == 0, "численность сохраняется каждые 15 минут, никто не в двух группах");
     expect(a.counts[kAtPlace] == 5 && a.counts[kHome] == 4, "к 21:00: пятеро на месте; дома — изолированный, неработающий и двое вернувшихся из-за границы");
     expect(a.outside_returned == 2, "выход через внешний вход и возвращение тех же жителей");
+    expect(pl.itinerary[s.outside] != kNone &&
+           std::find(a.board_order.begin(), a.board_order.end(), s.outside) != a.board_order.end(),
+           "  путь к транспортному входу — рейсами: житель садится, как все пассажиры");
 
     SimConfig noon = cfg; noon.end = 12 * 3600;
     SimResult b = simulate_morning(c, pl, cache, noon);
@@ -1840,7 +1857,7 @@ int main(int argc, char** argv) {
     }
     std::string dir = argv[1];
     if (argc > 2 && std::strcmp(argv[2], "--selftest") == 0) return selftest_run(dir);
-    double dep_sd = -1, capacity_scale = 1, origin_cell = 0;
+    double dep_sd = -1, capacity_scale = 1, origin_cell = -1;  // −1 — ключ не задан
     for (int i = 3; i + 1 < argc; i += 2) {
         if (std::strcmp(argv[i], "--departure-sd") == 0) dep_sd = std::atof(argv[i + 1]);
         else if (std::strcmp(argv[i], "--capacity-scale") == 0) capacity_scale = std::atof(argv[i + 1]);
