@@ -331,7 +331,7 @@ Input load_input(const std::string& dir, const std::string& pop_dir) {
     Input in;
     in.node_xy = read_array<float>(dir + "/node_xy.f32");
     in.node_inside = read_array<uint8_t>(dir + "/node_inside.u8");
-    if (in.node_xy.empty()) { std::fprintf(stderr, "в дорожном графе нет узлов\n"); std::exit(1); }
+    if (in.node_xy.size() < 2 || in.node_xy.size() % 2) { std::fprintf(stderr, "в дорожном графе нет узлов или координаты неполные\n"); std::exit(1); }
     in.e_from = read_array<uint32_t>(dir + "/edge_from.u32");
     in.e_to = read_array<uint32_t>(dir + "/edge_to.u32");
     in.e_len = read_array<float>(dir + "/edge_len.f32");
@@ -996,7 +996,7 @@ struct City {
     Csr car;
     CH ch;
     std::vector<uint32_t> car_comp; uint32_t car_main = 0;
-    Grid car_nodes, all_nodes, stops, dest_stops;  // stops — с посадкой (подход), dest_stops — все обслуживаемые (отход)
+    Grid car_nodes, from_nodes, to_nodes, stops, dest_stops;  // from/to — запасная привязка начала и конца пути  // stops — с посадкой (подход), dest_stops — все обслуживаемые (отход)
     Transit tr;
 };
 
@@ -1032,14 +1032,17 @@ struct PlanStats {
     size_t cache_bytes = 0;
 };
 
+constexpr uint64_t kMaxTrip = 7ull * 86400;  // поездка дольше недели — испорченный вход, считается «нет пути»
+
 uint32_t walk_s(const Params& p, float d) { return uint32_t(std::lround(d * p.walk_detour / p.walk_speed)); }
 
 // Привязка точки к дорожному узлу: основная компонента сильной связности в пределах 500 м,
 // иначе ближайший узел любой компоненты (изолированное здание даёт явное «нет пути»).
-uint32_t snap_car(const City& c, const float* xy, float& d) {
+uint32_t snap_car(const City& c, const float* xy, float& d, bool destination) {
     uint32_t v = c.car_nodes.nearest(xy[0], xy[1], &d);
     if (v != kNone && d <= 500) return v;
-    return c.all_nodes.nearest(xy[0], xy[1], &d);
+    // Запасная привязка по направлению: начало пути — узел с исходящей дугой, конец — с входящей.
+    return (destination ? c.to_nodes : c.from_nodes).nearest(xy[0], xy[1], &d);
 }
 
 void build_city(City& c, const Input& in, const Params& p, bool quiet) {
@@ -1052,10 +1055,11 @@ void build_city(City& c, const Input& in, const Params& p, bool quiet) {
     c.car_nodes.build(in.node_xy, [&](uint32_t v) { return c.car_comp[v] == c.car_main && c.car.first[v + 1] > c.car.first[v]; }, 250);
     // Запасная привязка — только к узлам внутри региона с рёбрами автомобильного графа.
     // Узел с исходящими или входящими дугами (конец одностороннего ребра — тоже годная точка назначения).
-    std::vector<char> incident(c.car.n, 0);
+    std::vector<char> has_out(c.car.n, 0), has_in(c.car.n, 0);
     for (uint32_t u = 0; u < c.car.n; ++u)
-        for (uint32_t k = c.car.first[u]; k < c.car.first[u + 1]; ++k) { incident[u] = 1; incident[c.car.head[k]] = 1; }
-    c.all_nodes.build(in.node_xy, [&](uint32_t v) { return in.node_inside[v] && incident[v]; }, 250);
+        for (uint32_t k = c.car.first[u]; k < c.car.first[u + 1]; ++k) { has_out[u] = 1; has_in[c.car.head[k]] = 1; }
+    c.from_nodes.build(in.node_xy, [&](uint32_t v) { return in.node_inside[v] && has_out[v]; }, 250);
+    c.to_nodes.build(in.node_xy, [&](uint32_t v) { return in.node_inside[v] && has_in[v]; }, 250);
     c.tr = build_transit(in, p);
     // Подход и отход — только к остановкам внутри региона; снаружи житель бывает лишь в состоянии «вне региона».
     c.stops.build(in.stop_xy, [&](uint32_t s) { return c.tr.useful[s] != 0 && in.stop_inside[s] != 0; }, 250);
@@ -1171,7 +1175,7 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                     // Водитель — к дорожному входу по дорожному графу, остальные — к транспортному по графу остановок.
                     uint32_t g = kNone, best = kInf;
                     if (transport_of(in.profile[id]) == kCar) {
-                        float d0, d1; uint32_t a = snap_car(c, home, d0);
+                        float d0, d1; uint32_t a = snap_car(c, home, d0, false);
                         for (uint32_t gi = 0; gi < in.gw_transit.size(); ++gi) {
                             if (in.gw_transit[gi]) continue;
                             // Вход — своё ребро пакета: до точки пересечения едут от того конца, откуда
@@ -1191,7 +1195,8 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                                 if (ds == kInf) continue;
                                 float part = in.e_len[e] * (side == 0 ? frac_from : 1 - frac_from);
                                 uint32_t tail = uint32_t(std::lround(part / (p.car_speed[in.e_cls[e]] / 3.6)));
-                                uint32_t tm = ds / 10 + tail + uint32_t(p.car_park_s) + walk_s(p, d0);
+                                uint64_t tm = uint64_t(ds / 10) + tail + uint64_t(p.car_park_s) + walk_s(p, d0);
+                            if (tm > kMaxTrip) continue;  // дольше недели — не вариант
                                 if (tm < best) { best = tm; g = gi; }
                             }
                         }
@@ -1208,7 +1213,8 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                             // Путь, не помещающийся в компактную запись, — не вариант: этот вход отбрасывается.
                             // Как у конечных остановок: путь только пешком или не помещающийся в запись — не вариант.
                             if (iti.rides.empty() || !iti.valid || iti.rides.size() > 255) continue;
-                            uint32_t tm = walk_s(p, od) + iti.core_s;
+                            uint64_t tm = uint64_t(walk_s(p, od)) + iti.core_s;
+                            if (tm > kMaxTrip) continue;
                             if (tm < best) { best = tm; g = gi; }
                         }
                         if (g != kNone) {
@@ -1234,7 +1240,7 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
             if (transport == kCar) {
                 auto t0 = Clock::now();
                 float d0, d1;
-                uint32_t a = snap_car(c, home, d0), b = snap_car(c, dest, d1);
+                uint32_t a = snap_car(c, home, d0, false), b = snap_car(c, dest, d1, true);
                 st.snap_s += seconds_since(t0);
                 size_t settled = 0;
                 uint32_t ds = a == kNone || b == kNone ? kInf : c.ch.query(cq, a, b, nullptr, &settled);  // нет узла — нет пути
@@ -1243,8 +1249,9 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                 if (ds != kInf) {
                     pl.mode[id] = kModeCar;
                     pl.origin_walk_s[id] = walk_s(p, d0); pl.egress_walk_s[id] = walk_s(p, d1);
-                    pl.travel_s[id] = ds / 10 + uint32_t(2 * p.car_park_s) + pl.origin_walk_s[id] + pl.egress_walk_s[id];
-                    continue;
+                    uint64_t total = uint64_t(ds / 10) + uint64_t(2 * p.car_park_s) + pl.origin_walk_s[id] + pl.egress_walk_s[id];
+                    if (total <= kMaxTrip) { pl.travel_s[id] = uint32_t(total); continue; }
+                    pl.mode[id] = kModeNone; pl.origin_walk_s[id] = pl.egress_walk_s[id] = 0;  // дольше недели — как нет пути
                 }
             }
             auto t0 = Clock::now();
@@ -1285,7 +1292,8 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                     float od = dist(home, &in.stop_xy[2 * cache.pool[entry]]);
                     if (od <= p.access_radius) {
                         origin_walk = walk_s(p, od);
-                        transit_time = origin_walk + cache.pool[entry + 1] + best_egress;
+                        uint64_t total = uint64_t(origin_walk) + cache.pool[entry + 1] + best_egress;
+                        transit_time = total <= kMaxTrip ? uint32_t(total) : kInf;
                     } else why = 4;  // приближение «дерево на зону»: житель на краю зоны — см. docs/mobility.md
                 }
             }
@@ -1439,13 +1447,14 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     uint32_t earliest_target = cfg.start + 3600;
     uint32_t warm_start = earliest_target > longest_trip ? earliest_target - longest_trip : 0;
     res.warm_start = warm_start;
-    // Одно суточное расписание от полуночи; в окно попадают рейсы, которые идут хотя бы часть [warm_start, end).
-    // Расписание строится на двое суток подряд: фаза маршрута тянется через полночь (полночь — не граница
-    // периода), поэтому интервал между последним рейсом прошлых суток и первым текущих — заданный.
-    // Вторые сутки — текущие (номер в суточном расписании — их порядок), первые дают рейсы прошлых суток.
-    // Прошлых суток — столько, чтобы покрыть самый долгий рейс (дальние электрички идут дольше суток):
-    // рейс, вышедший days_back суток назад, ещё может быть в пути в окне. Последние сутки — текущие.
-    days_back = std::max<uint32_t>(1, (longest + 86399) / 86400);
+    // Расписание строится одним проходом на 7 прошлых и текущие сутки: фаза маршрута тянется через полночь
+    // (полночь — не граница периода), и рейсы прошлых суток, ещё идущие в окне, входят в модель (дальние
+    // электрички идут дольше суток). Глубина истории фиксирована (это и предел длины рейса), поэтому фазы
+    // непрерывно идущих маршрутов, расписание текущих суток и номера прошлых рейсов не зависят от самого
+    // долгого маршрута. Номер рейса текущих суток — порядок в их расписании; в окно попадают рейсы, которые
+    // идут хотя бы часть [warm_start, end).
+    days_back = 7;
+    if (longest > days_back * 86400) { std::fprintf(stderr, "рейс длиннее %u суток\n", days_back); std::exit(1); }
     uint32_t day0 = days_back * 86400;
     std::vector<Run> all, day, prev;
     make_runs(0, day0 + 86400, &all);
