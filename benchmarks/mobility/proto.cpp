@@ -829,7 +829,8 @@ Transit build_transit(const Input& in, const Params& p) {
             if (i + 1 < seq.size()) ride = std::max<uint32_t>(30, uint32_t(std::lround(dist(&in.stop_xy[2 * seq[i]], &in.stop_xy[2 * seq[i + 1]]) / v)));
             t.rs_stop.push_back(seq[i]); t.rs_route.push_back(uint32_t(t.r_mode.size()));
             t.rs_ride_s.push_back(ride); t.rs_offset_s.push_back(offset);
-            if (uint64_t(offset) + ride > 7ull * 86400) {  // маршрут длиннее недели — испорченный вход
+            // Рейс не длиннее недели (испорченный вход); расписание прошлых суток строится на длину самого долгого рейса.
+            if (uint64_t(offset) + ride > 7ull * 86400) {
                 std::fprintf(stderr, "маршрут %u: время от первой остановки больше недели\n", r); std::exit(1);
             }
             offset += ride;
@@ -1026,7 +1027,11 @@ void build_city(City& c, const Input& in, const Params& p, bool quiet) {
     c.car_main = largest(c.car_comp, count);
     c.car_nodes.build(in.node_xy, [&](uint32_t v) { return c.car_comp[v] == c.car_main; }, 250);
     // Запасная привязка — только к узлам внутри региона с рёбрами автомобильного графа.
-    c.all_nodes.build(in.node_xy, [&](uint32_t v) { return in.node_inside[v] && c.car.first[v + 1] > c.car.first[v]; }, 250);
+    // Узел с исходящими или входящими дугами (конец одностороннего ребра — тоже годная точка назначения).
+    std::vector<char> incident(c.car.n, 0);
+    for (uint32_t u = 0; u < c.car.n; ++u)
+        for (uint32_t k = c.car.first[u]; k < c.car.first[u + 1]; ++k) { incident[u] = 1; incident[c.car.head[k]] = 1; }
+    c.all_nodes.build(in.node_xy, [&](uint32_t v) { return in.node_inside[v] && incident[v]; }, 250);
     c.tr = build_transit(in, p);
     // Подход и отход — только к остановкам внутри региона; снаружи житель бывает лишь в состоянии «вне региона».
     c.stops.build(in.stop_xy, [&](uint32_t s) { return c.tr.useful[s] != 0 && in.stop_inside[s] != 0; }, 250);
@@ -1157,7 +1162,8 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                                 if (v != in.gw_start[gi]) continue;  // выезд — только от внутреннего конца ребра
                                 if (side == 0 && in.e_oneway[e] < 0) continue;  // от from к to движения нет
                                 if (side == 1 && in.e_oneway[e] > 0) continue;  // от to к from движения нет
-                                uint32_t ds = c.ch.query(cq, a, v);
+                                if (a == kNone) continue;  // дом не привязан к дорожному графу
+                            uint32_t ds = c.ch.query(cq, a, v);
                                 if (ds == kInf) continue;
                                 float part = in.e_len[e] * (side == 0 ? frac_from : 1 - frac_from);
                                 uint32_t tail = uint32_t(std::lround(part / (p.car_speed[in.e_cls[e]] / 3.6)));
@@ -1207,7 +1213,7 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                 uint32_t a = snap_car(c, home, d0), b = snap_car(c, dest, d1);
                 st.snap_s += seconds_since(t0);
                 size_t settled = 0;
-                uint32_t ds = c.ch.query(cq, a, b, nullptr, &settled);
+                uint32_t ds = a == kNone || b == kNone ? kInf : c.ch.query(cq, a, b, nullptr, &settled);  // нет узла — нет пути
                 st.car_settled += settled; st.car_queries++;
                 car_s += seconds_since(t0);
                 if (ds != kInf) {
@@ -1409,10 +1415,14 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     // Расписание строится на двое суток подряд: фаза маршрута тянется через полночь (полночь — не граница
     // периода), поэтому интервал между последним рейсом прошлых суток и первым текущих — заданный.
     // Вторые сутки — текущие (номер в суточном расписании — их порядок), первые дают рейсы прошлых суток.
-    std::vector<Run> two, day, prev;
-    make_runs(0, 2 * 86400, &two);
-    for (const Run& run : two) {
-        if (run.depart >= 86400) day.push_back({run.route, run.depart - 86400, uint32_t(day.size())});
+    // Прошлых суток — столько, чтобы покрыть самый долгий рейс (дальние электрички идут дольше суток):
+    // рейс, вышедший days_back суток назад, ещё может быть в пути в окне. Последние сутки — текущие.
+    uint32_t days_back = std::max<uint32_t>(1, (longest + 86399) / 86400);
+    uint32_t day0 = days_back * 86400;
+    std::vector<Run> all, day, prev;
+    make_runs(0, day0 + 86400, &all);
+    for (const Run& run : all) {
+        if (run.depart >= day0) day.push_back({run.route, run.depart - day0, uint32_t(day.size())});
         else prev.push_back({run.route, run.depart, uint32_t(prev.size())});
     }
     res.runs_day = int64_t(day.size());
@@ -1420,19 +1430,18 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
         uint32_t dur = t.rs_offset_s[t.r_first[run.route + 1] - 1];
         if (run.depart < cfg.end && run.depart + dur >= warm_start) runs.push_back(run);
     }
-    // Рейсы прошлых суток, ещё идущие после полуночи. Начинаются с первой остановки, до которой доходят
+    // Рейсы прошлых суток, ещё идущие после полуночи текущих. Начинаются с первой остановки, до которой доходят
     // после полуночи; пассажиров прошлых суток модель утра не ведёт.
     for (const Run& run : prev) {
         uint32_t r = run.route, first = t.r_first[r], last = t.r_first[r + 1] - 1;
-        if (run.depart + t.rs_offset_s[last] < 86400) continue;
+        if (run.depart + t.rs_offset_s[last] < day0) continue;
         uint32_t pos = 0;
-        while (run.depart + t.rs_offset_s[first + pos] < 86400) ++pos;
-        uint32_t at = run.depart + t.rs_offset_s[first + pos] - 86400;
+        while (run.depart + t.rs_offset_s[first + pos] < day0) ++pos;
+        uint32_t at = run.depart + t.rs_offset_s[first + pos] - day0;
         if (at < cfg.end && at + (t.rs_offset_s[last] - t.rs_offset_s[first + pos]) >= warm_start)
             runs.push_back({r, at, uint32_t(day.size()) + run.day_index, uint8_t(pos)});
     }
     res.runs = int64_t(runs.size());
-    (void)longest;
     std::vector<uint8_t> run_pos(runs.size(), 0);
     std::vector<char> started(runs.size(), 0);
     for (size_t k = 0; k < runs.size(); ++k) run_pos[k] = runs[k].start_pos;

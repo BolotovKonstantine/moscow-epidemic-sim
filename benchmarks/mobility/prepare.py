@@ -177,12 +177,18 @@ def main(package: Path, params_path: Path, mobility_path: Path, out: Path):
 
     m = json.loads(mobility_path.read_text(encoding="utf-8"))
     cap = m["vehicle_capacity"]["value"]
+    # Каждый вид транспорта и класс дороги — явно: значение по умолчанию выдавало бы невыбранную настройку за выбранную.
+    for name, table, keys in (("vehicle_capacity", cap, MODES), ("transit_speed_kmh", m["transit_speed_kmh"]["value"], MODES),
+                              ("car_speed_kmh", m["car_speed_kmh"]["value"], ROAD_CLASSES)):
+        missing = [k for k in keys if k not in table]
+        if missing:
+            sys.exit(f"{name}: нет значений для {missing}")
     lines = [
         f"seed {m['seed']}",
         "car_speed_kmh " + " ".join(str(m["car_speed_kmh"]["value"][c]) for c in ROAD_CLASSES),
         "transit_speed_kmh " + " ".join(str(m["transit_speed_kmh"]["value"][x]) for x in MODES),
-        "capacity " + " ".join(str(cap.get(x, [100, 1])[0]) for x in MODES),
-        "wagons " + " ".join(str(cap.get(x, [100, 1])[1]) for x in MODES),
+        "capacity " + " ".join(str(cap[x][0]) for x in MODES),
+        "wagons " + " ".join(str(cap[x][1]) for x in MODES),
         f"departure {m['departure']['value']['mean_s']} {m['departure']['value']['sd_s']}",
     ]
     for key in ["car_park_s", "walk_speed_mps", "walk_detour", "access_radius_m", "access_stops_max", "transfer_radius_m",
