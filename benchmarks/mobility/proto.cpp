@@ -168,8 +168,8 @@ void check_origin_cell(double cell) {
         std::fprintf(stderr, "origin_cell_m = %g не делит зону 1000 м без остатка (допустимо 1000, 500, 250, …)\n", cell);
         std::exit(1);
     }
-    if (per_side * per_side > 256) {
-        std::fprintf(stderr, "origin_cell_m = %.0f: ячеек в зоне %u × %u, больше 256 (ключ кеша — u8)\n", cell, per_side, per_side);
+    if (per_side > 16) {  // сравнение стороны, а не квадрата: квадрат в u32 переполняется
+        std::fprintf(stderr, "origin_cell_m = %g: ячеек в зоне %u × %u, больше 256 (ключ кеша — u8)\n", cell, per_side, per_side);
         std::exit(1);
     }
 }
@@ -788,7 +788,9 @@ void transit_tree(const Transit& t, const Params& p, int period, const std::vect
 // Путь по транспорту в общем кеше: начальная остановка, время ядра пути и поездки
 // (маршрут, позиции посадки и высадки, пешая пересадка после высадки).
 struct Ride { uint32_t route; uint8_t board, alight; uint16_t walk_after_s; };
-struct Itinerary { uint32_t origin_stop = kNone, core_s = 0; std::vector<Ride> rides; };
+// valid = false: путь не помещается в компактную запись (пересадка длиннее 65 535 с или больше 255 поездок —
+// позиция в пути u8) и отклоняется, а не обрезается.
+struct Itinerary { uint32_t origin_stop = kNone, core_s = 0; std::vector<Ride> rides; bool valid = true; };
 
 Itinerary extract(const Transit& t, const TransitTree& tr, uint32_t dest_stop) {
     Itinerary it;
@@ -801,6 +803,7 @@ Itinerary extract(const Transit& t, const TransitTree& tr, uint32_t dest_stop) {
         uint32_t alight = par - t.n_stops, k = alight;
         while (tr.parent[t.n_stops + k] >= t.n_stops) k = tr.parent[t.n_stops + k] - t.n_stops;
         uint32_t r = t.rs_route[k];
+        if (walk > 65535) it.valid = false;
         rev.push_back({r, uint8_t(k - t.r_first[r]), uint8_t(alight - t.r_first[r]), uint16_t(std::min<uint32_t>(walk, 65535))});
         walk = 0;
         cur = tr.parent[t.n_stops + k];
@@ -853,6 +856,7 @@ struct PlanStats {
     int64_t by_mode[5]{}, car_queries = 0, zone_trees = 0, rides_hist[6]{}, cache_entries = 0;
     int64_t no_route_why[5]{};  // нет остановок у места; у дома; пути нет; нет внешнего входа; начальная остановка дальше радиуса
     double snap_s = 0;
+    int64_t oversized = 0;  // пути, не помещающиеся в компактную запись (отклонены)
 
     uint64_t car_settled = 0;
     double mean_travel_min[5]{};
@@ -964,6 +968,7 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
         auto store = [&](const TransitTree& tr, uint32_t d) {
             Itinerary iti = extract(c.tr, tr, d);
             if (iti.rides.empty()) return kNone;
+            if (!iti.valid || iti.rides.size() > 255) { st.oversized++; return kNone; }
             uint32_t entry = uint32_t(cache.pool.size());
             cache.pool.push_back(iti.origin_stop); cache.pool.push_back(iti.core_s); cache.pool.push_back(uint32_t(iti.rides.size()));
             for (const Ride& r : iti.rides) {
@@ -1480,6 +1485,7 @@ void report_plans(const PlanStats& st, const ItineraryCache& cache) {
                 (long long)st.no_route_why[0], (long long)st.no_route_why[1], (long long)st.no_route_why[2], (long long)st.no_route_why[3],
                 (long long)st.no_route_why[4], st.snap_s);
 
+    std::printf("    \"oversized_itineraries\": %lld,\n", (long long)st.oversized);
     std::printf("    \"cache\": {\"entries\": %lld, \"bytes_mb\": %.1f, \"pool_words\": %zu, \"rides_hist\": [%lld, %lld, %lld, %lld, %lld, %lld]}},\n",
                 (long long)st.cache_entries, mb(cache.bytes()), cache.pool.size(), (long long)st.rides_hist[0], (long long)st.rides_hist[1],
                 (long long)st.rides_hist[2], (long long)st.rides_hist[3], (long long)st.rides_hist[4], (long long)st.rides_hist[5]);
