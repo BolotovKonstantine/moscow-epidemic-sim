@@ -774,10 +774,16 @@ int main(int argc, char** argv) {
     if (argc < 2) { std::fprintf(stderr, "использование: gen <каталог входа> [--selftest | --dump <каталог>]\n"); return 2; }
     std::string dir = argv[1];
     Params p = load_params(dir);
-    if (argc > 2 && std::strcmp(argv[2], "--selftest") == 0) return selftest(p);
+    // Допустимо ровно: без ключей, --selftest или --dump <каталог>; опечатка или лишний аргумент — ошибка.
+    bool selftest_only = argc == 3 && std::strcmp(argv[2], "--selftest") == 0;
+    bool dumping = argc == 4 && std::strcmp(argv[2], "--dump") == 0;
+    if (argc > 2 && !selftest_only && !dumping) {
+        std::fprintf(stderr, "использование: gen <каталог входа> [--selftest | --dump <каталог>]\n");
+        return 2;
+    }
+    if (selftest_only) return selftest(p);
     // --dump: колонки населения после назначения мест — вход прототипа поездок (#35, benchmarks/mobility).
-    if (argc > 2 && std::strcmp(argv[2], "--dump") == 0 && argc < 4) { std::fprintf(stderr, "--dump: нужен каталог\n"); return 2; }
-    std::string dump = argc > 3 && std::strcmp(argv[2], "--dump") == 0 ? argv[3] : "";
+    std::string dump = dumping ? argv[3] : "";
     if (!dump.empty()) {  // каталог создаётся до дорогой генерации, а не после
         std::error_code ec;
         std::filesystem::create_directories(dump, ec);

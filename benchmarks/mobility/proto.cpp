@@ -307,6 +307,16 @@ Input load_input(const std::string& dir, const std::string& pop_dir) {
     size_t g = in.gw_xy.size() / 2;
     same(in.gw_transit.size(), g, "gateway_transit"); same(in.gw_edge.size(), g, "gateway_edge");
     same(in.gw_start.size(), g, "gateway_start"); same(in.gw_stop.size(), g, "gateway_stop");
+    // Ссылки на остановки и узлы — в пределах таблиц (kNone допустим там, где ссылки нет).
+    size_t stops = in.stop_xy.size() / 2, nodes = in.node_xy.size() / 2;
+    auto in_range = [](const std::vector<uint32_t>& v, size_t lim, bool none_ok, const char* what) {
+        for (uint32_t x : v)
+            if (!(x < lim || (none_ok && x == kNone))) { std::fprintf(stderr, "%s: ссылка %u вне таблицы (%zu)\n", what, x, lim); std::exit(1); }
+    };
+    in_range(in.tr_from, stops, false, "transfer_from"); in_range(in.tr_to, stops, false, "transfer_to");
+    in_range(in.e_from, nodes, false, "edge_from"); in_range(in.e_to, nodes, false, "edge_to");
+    in_range(in.gw_stop, stops, true, "gateway_stop"); in_range(in.gw_start, nodes, true, "gateway_start");
+    in_range(in.gw_edge, e, true, "gateway_edge");
     return in;
 }
 
@@ -1225,7 +1235,8 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
             while (tm < until) {
                 uint32_t h = p.headway_s[mode][period_at(p, tm)];
                 if (h == 0) { tm += 60; phased = false; continue; }
-                if (!phased) { tm += rng.below(h); phased = true; if (tm >= until) break; }
+                // После сдвига фазы период пересматривается: короткий период может закончиться раньше первого рейса.
+                if (!phased) { tm += rng.below(h); phased = true; continue; }
                 if (out) out->push_back({r, tm, uint32_t(out->size())});
                 ++count;
                 // Новый интервал действует с границы периода: если следующий период чаще, его первый рейс —
@@ -1541,8 +1552,9 @@ void report_sim(const char* name, const SimResult& r) {
 
 int full(const std::string& dir, const std::string& pop_dir, double dep_sd, double capacity_scale, double origin_cell) {
     Params p = load_params(dir);
-    if (origin_cell != -1) { p.origin_cell = origin_cell; check_origin_cell(p.origin_cell); }
-    if (dep_sd >= 0) p.dep_sd = dep_sd;  // −1 — ключ не задан; 0 — все хотят прибыть одновременно
+    // NaN — ключ не задан (явные значения разбираются как конечные числа, поэтому с ним не совпадают).
+    if (!std::isnan(origin_cell)) { p.origin_cell = origin_cell; check_origin_cell(p.origin_cell); }
+    if (!std::isnan(dep_sd)) p.dep_sd = dep_sd;  // 0 — все хотят прибыть одновременно
     if (!(capacity_scale > 0)) { std::fprintf(stderr, "--capacity-scale должен быть больше 0\n"); return 2; }
     for (int m = 0; m < kModes; ++m) {
         double scaled = std::round(p.capacity[m] * capacity_scale);
@@ -1899,7 +1911,7 @@ int main(int argc, char** argv) {
     }
     std::string dir = argv[1];
     if (argc > 2 && std::strcmp(argv[2], "--selftest") == 0) return selftest_run(dir);
-    double dep_sd = -1, capacity_scale = 1, origin_cell = -1;  // −1 — ключ не задан
+    double dep_sd = NAN, capacity_scale = 1, origin_cell = NAN;  // NaN — ключ не задан
     // Число — целиком и конечное; опечатка или неизвестный ключ — ошибка, а не тихий ноль.
     auto number = [](const char* key, const char* tok) {
         char* end = nullptr;
