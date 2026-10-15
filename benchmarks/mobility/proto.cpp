@@ -297,6 +297,12 @@ Input load_input(const std::string& dir, const std::string& pop_dir) {
     same(in.e_oneway.size(), e, "edge_oneway"); same(in.node_inside.size(), in.node_xy.size() / 2, "node_inside");
     same(in.building_zone.size(), in.building_xy.size() / 2, "building_zone"); same(in.stop_inside.size(), in.stop_xy.size() / 2, "stop_inside");
     same(in.route_mode.size() + 1, in.route_first.size(), "route_first");
+    // CSR маршрутов: смещения не убывают, начинаются с 0 и заканчиваются ровно на длине списка остановок.
+    for (size_t r = 0; r + 1 < in.route_first.size(); ++r)
+        if (in.route_first[r] > in.route_first[r + 1]) { std::fprintf(stderr, "route_first убывает у маршрута %zu\n", r); std::exit(1); }
+    if (in.route_first.empty() || in.route_first.front() != 0) { std::fprintf(stderr, "route_first не начинается с 0\n"); std::exit(1); }
+    same(in.route_first.back(), in.route_stops.size(), "route_stops (конец route_first)");
+    for (uint32_t st : in.route_stops) if (st >= in.stop_xy.size() / 2) { std::fprintf(stderr, "route_stops: остановка %u вне таблицы\n", st); std::exit(1); }
     same(in.tr_to.size(), in.tr_from.size(), "transfer_to"); same(in.tr_walk.size(), in.tr_from.size(), "transfer_walk_s");
     size_t g = in.gw_xy.size() / 2;
     same(in.gw_transit.size(), g, "gateway_transit"); same(in.gw_edge.size(), g, "gateway_edge");
@@ -1228,7 +1234,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 if (next > b) {
                     uint32_t h2 = p.headway_s[mode][period_at(p, b)];
                     if (h2 == 0) next = b;  // следующий период без движения: рейса через границу нет, ждём движения
-                    else if (h2 < h) next = std::max(b, tm + h2);
+                    else next = std::max(b, tm + h2);  // и чаще, и реже: интервал через границу — уже новый
                 }
                 tm = next;
             }
@@ -1561,14 +1567,16 @@ int full(const std::string& dir, const std::string& pop_dir, double dep_sd, doub
                     c.car.head.size(), 100.0 * main_n / c.car.n, routes, c.tr.n_rs, useful, c.tr.tf_to.size(), seconds_since(t0));
     }
     int ch_mismatches = 0;
+    // Узлы основной компоненты: проверки выбирают пары прямо из неё (без отбраковки и зацикливания на малых пакетах).
+    std::vector<uint32_t> main_nodes;
+    for (uint32_t v = 0; v < c.car.n; ++v) if (c.car_comp[v] == c.car_main) main_nodes.push_back(v);
     // Один ко всем по автомобильному графу (основа матриц времени для спроса #41).
     {
         Dijkstra dj(c.car.n);
         Rng r{stream_key(p.seed, 99), 0, 0};
         double s = 0; size_t settled = 0; int k = 0;
         while (k < 10) {
-            uint32_t v = r.below(c.car.n);
-            if (c.car_comp[v] != c.car_main) continue;
+            uint32_t v = main_nodes[r.below(uint32_t(main_nodes.size()))];
             auto t1 = Clock::now(); dj.reset(); dj.seed(v, 0); settled += dj.run(c.car); s += seconds_since(t1); ++k;
         }
         std::printf("  \"car_one_to_all\": {\"mean_ms\": %.1f, \"settled\": %zu},\n", s / k * 1000, settled / k);
@@ -1577,8 +1585,7 @@ int full(const std::string& dir, const std::string& pop_dir, double dep_sd, doub
         int mismatches = 0; double ch_s = 0; size_t path_nodes = 0; std::vector<uint32_t> path;
         Csr walk = build_walk(in, p);
         for (int i = 0; i < 300; ) {
-            uint32_t a = r.below(c.car.n), b = r.below(c.car.n);
-            if (c.car_comp[a] != c.car_main || c.car_comp[b] != c.car_main) continue;
+            uint32_t a = main_nodes[r.below(uint32_t(main_nodes.size()))], b = main_nodes[r.below(uint32_t(main_nodes.size()))];
             dj.reset(); dj.seed(a, 0); dj.run(c.car, b);
             auto t1 = Clock::now();
             uint32_t d = c.ch.query(cq, a, b, &path);

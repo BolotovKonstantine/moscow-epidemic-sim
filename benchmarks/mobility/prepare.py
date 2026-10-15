@@ -40,9 +40,13 @@ def road_class(highway):
 
 def main(package: Path, params_path: Path, mobility_path: Path, out: Path):
     # Зона — квадрат 1 км: ID зоны gIX_IY читается как номер километра, ячейки начала пути делят 1 км.
-    cell_size = json.loads((package / "build_config.json").read_text(encoding="utf-8"))["zones"]["cell_size_m"]
+    build_config = json.loads((package / "build_config.json").read_text(encoding="utf-8"))
+    cell_size = build_config["zones"]["cell_size_m"]
     if cell_size != 1000:
         sys.exit(f"zones.cell_size_m = {cell_size}: прототип поддерживает только зоны 1000 м")
+    # ID зон — индексы сетки в метрической проекции сборки; прототип проецирует в EPSG:32637 и только её принимает.
+    if build_config["metric_crs"] != "EPSG:32637":
+        sys.exit(f"metric_crs = {build_config['metric_crs']}: прототип поддерживает только EPSG:32637")
     # Прототип знает только шесть периодов Москвы; пакет с другим набором отклоняется до дорогой подготовки.
     service_periods = json.loads((package / "transit_service.json").read_text(encoding="utf-8"))["periods"]
     if set(service_periods) != set(PERIODS):
