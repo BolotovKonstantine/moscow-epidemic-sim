@@ -224,7 +224,16 @@ Params load_params(const std::string& dir) {
         }
     }
     const char* periods[kPeriods] = {"morning_peak", "day", "evening_peak", "evening", "night", "early"};
-    for (int q = 0; q < kPeriods; ++q) p.period_start[q] = uint32_t(get(sv, std::string("period_start_") + periods[q], 1)[0]);
+    for (int q = 0; q < kPeriods; ++q) {
+        // Начало периода — целые секунды в [0, 86400), все шесть разные.
+        double v = get(sv, std::string("period_start_") + periods[q], 1)[0];
+        if (!std::isfinite(v) || v < 0 || v >= 86400 || v != std::floor(v)) {
+            std::fprintf(stderr, "period_start_%s = %g: нужно целое в [0, 86400)\n", periods[q], v); std::exit(1);
+        }
+        p.period_start[q] = uint32_t(v);
+        for (int k = 0; k < q; ++k)
+            if (p.period_start[k] == p.period_start[q]) { std::fprintf(stderr, "периоды %s и %s начинаются одновременно\n", periods[k], periods[q]); std::exit(1); }
+    }
     p.transfer_speed = get(sv, "transfer_walk_speed_mps", 1)[0];
     p.transfer_overhead = get(sv, "transfer_overhead_s", 1)[0];
     p.dep_mean = get(m, "departure", 2)[0]; p.dep_sd = get(m, "departure", 2)[1];
@@ -368,6 +377,10 @@ Input load_input(const std::string& dir, const std::string& pop_dir) {
         for (uint32_t x : v)
             if (!(x < lim || (none_ok && x == kNone))) { std::fprintf(stderr, "%s: ссылка %u вне таблицы (%zu)\n", what, x, lim); std::exit(1); }
     };
+    for (uint32_t w : in.tr_walk) if (w > 86400) { std::fprintf(stderr, "transfer_walk_s: %u с, больше суток\n", w); std::exit(1); }
+    // Координаты — конечные и в пределах 10 000 км от начала плоскости: расстояния и времена помещаются в u32.
+    for (const std::vector<float>* xy : {&in.node_xy, &in.zone_xy, &in.building_xy, &in.facility_xy, &in.stop_xy, &in.gw_xy})
+        for (float v : *xy) if (!std::isfinite(v) || std::fabs(v) > 1e7f) { std::fprintf(stderr, "координата %g вне допустимого\n", v); std::exit(1); }
     in_range(in.tr_from, stops, false, "transfer_from"); in_range(in.tr_to, stops, false, "transfer_to");
     in_range(in.e_from, nodes, false, "edge_from"); in_range(in.e_to, nodes, false, "edge_to");
     in_range(in.gw_stop, stops, true, "gateway_stop"); in_range(in.gw_start, nodes, true, "gateway_start");
@@ -801,6 +814,9 @@ Transit build_transit(const Input& in, const Params& p) {
             if (i + 1 < seq.size()) ride = std::max<uint32_t>(30, uint32_t(std::lround(dist(&in.stop_xy[2 * seq[i]], &in.stop_xy[2 * seq[i + 1]]) / v)));
             t.rs_stop.push_back(seq[i]); t.rs_route.push_back(uint32_t(t.r_mode.size()));
             t.rs_ride_s.push_back(ride); t.rs_offset_s.push_back(offset);
+            if (uint64_t(offset) + ride > 7ull * 86400) {  // маршрут длиннее недели — испорченный вход
+                std::fprintf(stderr, "маршрут %u: время от первой остановки больше недели\n", r); std::exit(1);
+            }
             offset += ride;
         }
         t.r_mode.push_back(mode); t.r_source.push_back(r);
