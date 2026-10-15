@@ -363,9 +363,21 @@ Csr make_csr(uint32_t n, std::vector<std::array<uint32_t, 3>>& arcs) {
     return g;
 }
 
+// Внутренний граф региона: ребро с концом снаружи или с пересечением границы (дорожный вход пакета; в том числе
+// ребро, которое выходит из региона и возвращается) в нём не участвует. Выезд через границу — только явным путём
+// к внешнему входу (ребро входа считается отдельно).
+std::vector<char> interior_edges(const Input& in) {
+    std::vector<char> ok(in.e_from.size(), 1);
+    for (size_t e = 0; e < ok.size(); ++e) ok[e] = in.node_inside[in.e_from[e]] && in.node_inside[in.e_to[e]];
+    for (size_t g = 0; g < in.gw_edge.size(); ++g) if (in.gw_edge[g] != kNone) ok[in.gw_edge[g]] = 0;
+    return ok;
+}
+
 Csr build_car(const Input& in, const Params& p) {
     std::vector<std::array<uint32_t, 3>> arcs;
+    std::vector<char> interior = interior_edges(in);
     for (size_t e = 0; e < in.e_from.size(); ++e) {
+        if (!interior[e]) continue;
         double v = p.car_speed[in.e_cls[e]];
         if (v <= 0) continue;
         uint32_t w = std::max<uint32_t>(1, uint32_t(std::lround(in.e_len[e] / (v / 3.6) * 10)));
@@ -377,7 +389,9 @@ Csr build_car(const Input& in, const Params& p) {
 
 Csr build_walk(const Input& in, const Params& p) {
     std::vector<std::array<uint32_t, 3>> arcs;
+    std::vector<char> interior = interior_edges(in);
     for (size_t e = 0; e < in.e_from.size(); ++e) {
+        if (!interior[e]) continue;
         if (in.e_cls[e] >= 6) continue;  // trunk и motorway пешеходам закрыты (приближение: тротуаров в пакете нет)
         uint32_t w = std::max<uint32_t>(1, uint32_t(std::lround(in.e_len[e] / p.walk_speed * 10)));
         arcs.push_back({in.e_from[e], in.e_to[e], w});
