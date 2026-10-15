@@ -330,6 +330,12 @@ Input load_input(const std::string& dir, const std::string& pop_dir) {
     size_t buildings = in.building_xy.size() / 2, facilities = in.facility_xy.size() / 2;
     in_range(in.home, buildings, false, "p_home");
     for (size_t id = 0; id < n; ++id) {
+        if (in.role[id] > kPensioner) { std::fprintf(stderr, "p_role: житель %zu, код роли %u неизвестен\n", id, in.role[id]); std::exit(1); }
+        if (in.building_zone[in.home[id]] == kNone) {  // группировка по зоне дома не принимает здание вне зон
+            std::fprintf(stderr, "p_home: житель %zu живёт в здании %u без зоны\n", id, in.home[id]); std::exit(1);
+        }
+    }
+    for (size_t id = 0; id < n; ++id) {
         if (in.place[id] == kNone) continue;
         size_t lim = in.role[id] == kWorker ? buildings : facilities;
         if (in.place[id] >= lim) { std::fprintf(stderr, "p_place: житель %zu, место %u вне таблицы (%zu)\n", id, in.place[id], lim); std::exit(1); }
