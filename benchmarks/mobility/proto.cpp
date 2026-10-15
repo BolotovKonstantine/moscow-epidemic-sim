@@ -380,7 +380,7 @@ Input load_input(const std::string& dir, const std::string& pop_dir) {
     for (uint32_t w : in.tr_walk) if (w > 86400) { std::fprintf(stderr, "transfer_walk_s: %u с, больше суток\n", w); std::exit(1); }
     // Координаты — конечные и в пределах 10 000 км от начала плоскости: расстояния и времена помещаются в u32.
     for (const std::vector<float>* xy : {&in.node_xy, &in.zone_xy, &in.building_xy, &in.facility_xy, &in.stop_xy, &in.gw_xy})
-        for (float v : *xy) if (!std::isfinite(v) || std::fabs(v) > 1e7f) { std::fprintf(stderr, "координата %g вне допустимого\n", v); std::exit(1); }
+        for (float v : *xy) if (!std::isfinite(v) || std::fabs(v) > 1e7f) { std::fprintf(stderr, "координата %g вне ±10 000 км\n", v); std::exit(1); }
     in_range(in.tr_from, stops, false, "transfer_from"); in_range(in.tr_to, stops, false, "transfer_to");
     in_range(in.e_from, nodes, false, "edge_from"); in_range(in.e_to, nodes, false, "edge_to");
     in_range(in.gw_stop, stops, true, "gateway_stop"); in_range(in.gw_start, nodes, true, "gateway_start");
@@ -390,6 +390,13 @@ Input load_input(const std::string& dir, const std::string& pop_dir) {
     in_range(in.home, buildings, false, "p_home");
     for (size_t id = 0; id < n; ++id) {
         if (in.profile[id] >= 576) { std::fprintf(stderr, "p_profile: житель %zu, код %u вне таблицы профилей (576)\n", id, in.profile[id]); std::exit(1); }
+        // Место и флаги согласованы: есть место — нет флага «нет места»; нет места — нет флага «сверх вместимости»;
+        // у учащегося без места — флаг «нет места» (без места и без флага бывает только работающий за границей).
+        bool has_place = in.place[id] != kNone;
+        bool learner = in.role[id] == kKindergartenChild || in.role[id] == kPupil || in.role[id] == kStudent;
+        if ((has_place && (in.flags[id] & 2)) || (!has_place && (in.flags[id] & 1)) || (learner && !has_place && in.flags[id] != 2)) {
+            std::fprintf(stderr, "житель %zu: место %u и флаги 0x%02x не согласованы\n", id, in.place[id], in.flags[id]); std::exit(1);
+        }
         if (in.flags[id] & ~3u) { std::fprintf(stderr, "p_flags: житель %zu, неизвестные биты 0x%02x\n", id, in.flags[id]); std::exit(1); }
         if (in.role[id] > kPensioner) { std::fprintf(stderr, "p_role: житель %zu, код роли %u неизвестен\n", id, in.role[id]); std::exit(1); }
         if (in.building_zone[in.home[id]] == kNone) {  // группировка по зоне дома не принимает здание вне зон
@@ -426,16 +433,24 @@ struct Grid {
     void build(const std::vector<float>& pts, const std::function<bool(uint32_t)>& keep, float cell_m) {
         xy = &pts; cell = cell_m;
         size_t n = pts.size() / 2;
+        // Охват — только по точкам, которые входят в сетку.
+        std::vector<char> kept(n, 0);
         float x1 = 0, y1 = 0; x0 = 1e30f; y0 = 1e30f; x1 = -1e30f; y1 = -1e30f;
+        size_t m = 0;
         for (size_t i = 0; i < n; ++i) {
+            if (!(kept[i] = keep(uint32_t(i)))) continue;
+            ++m;
             x0 = std::min(x0, pts[2 * i]); y0 = std::min(y0, pts[2 * i + 1]);
             x1 = std::max(x1, pts[2 * i]); y1 = std::max(y1, pts[2 * i + 1]);
         }
-        if (n == 0) { x0 = y0 = 0; x1 = y1 = 1; }
+        if (m == 0) { x0 = y0 = 0; x1 = y1 = 1; }
+        // Плотная сетка: размер зависит от охвата точек, а не их числа — слишком большой охват — ошибка, а не bad_alloc.
+        double cells = (double((x1 - x0) / cell) + 1) * (double((y1 - y0) / cell) + 1);
+        if (cells > 64e6) { std::fprintf(stderr, "охват точек сетки слишком велик: %.0f ячеек\n", cells); std::exit(1); }
         nx = int((x1 - x0) / cell) + 1; ny = int((y1 - y0) / cell) + 1;
         first.assign(size_t(nx) * ny + 1, 0);
         std::vector<uint32_t> c(n, kNone);
-        for (uint32_t i = 0; i < n; ++i) if (keep(i)) { c[i] = cell_of(pts[2 * i], pts[2 * i + 1]); first[c[i] + 1]++; }
+        for (uint32_t i = 0; i < n; ++i) if (kept[i]) { c[i] = cell_of(pts[2 * i], pts[2 * i + 1]); first[c[i] + 1]++; }
         for (size_t i = 1; i < first.size(); ++i) first[i] += first[i - 1];
         items.assign(first.back(), 0);
         std::vector<uint32_t> fill(first.begin(), first.end() - 1);
@@ -844,7 +859,8 @@ Transit build_transit(const Input& in, const Params& p) {
         arcs.push_back({in.tr_to[i], in.tr_from[i], w});
     }
     // Пешие пересадки — между всеми обслуживаемыми остановками (и конечными); посадку ограничивает stop_rs.
-    Grid g; g.build(in.stop_xy, [&](uint32_t s) { return t.served[s] != 0; }, 250);
+    // Только внутри региона: снаружи высадки и пересадки нет, а охват сетки остаётся региональным.
+    Grid g; g.build(in.stop_xy, [&](uint32_t s) { return t.served[s] != 0 && in.stop_inside[s] != 0; }, 250);
     std::vector<std::pair<float, uint32_t>> near;
     for (uint32_t s = 0; s < t.n_stops; ++s) {
         g.within(in.stop_xy[2 * s], in.stop_xy[2 * s + 1], float(p.transfer_radius), near);
@@ -865,22 +881,25 @@ Transit build_transit(const Input& in, const Params& p) {
 
 // Дерево кратчайших путей по графу остановок для периода: узлы [0, n_stops) — остановки,
 // [n_stops, n_stops + n_rs) — позиции маршрутов. Стоимость — время + штраф посадки; время — без штрафа.
+// Метки — в u64: сумма стоимостей (с штрафом загрузки до 1001×) по многим перегонам не переполняется.
+constexpr uint64_t kInf64 = UINT64_MAX;
 struct TransitTree {
-    std::vector<uint32_t> cost, time, parent, touched;
-    explicit TransitTree(const Transit& t) : cost(t.n_stops + t.n_rs, kInf), time(cost.size(), kInf), parent(cost.size(), kNone) {}
-    void reset() { for (uint32_t v : touched) { cost[v] = time[v] = kInf; parent[v] = kNone; } touched.clear(); }
+    std::vector<uint64_t> cost, time;
+    std::vector<uint32_t> parent, touched;
+    explicit TransitTree(const Transit& t) : cost(t.n_stops + t.n_rs, kInf64), time(cost.size(), kInf64), parent(cost.size(), kNone) {}
+    void reset() { for (uint32_t v : touched) { cost[v] = time[v] = kInf64; parent[v] = kNone; } touched.clear(); }
 };
 
 void transit_tree(const Transit& t, const Params& p, int period, const std::vector<std::pair<uint32_t, uint32_t>>& seeds, TransitTree& tr) {
     tr.reset();
-    MinHeap q;
-    auto relax = [&](uint32_t v, uint32_t c, uint32_t tm, uint32_t par) {
+    std::priority_queue<std::pair<uint64_t, uint32_t>, std::vector<std::pair<uint64_t, uint32_t>>, std::greater<>> q;
+    auto relax = [&](uint32_t v, uint64_t c, uint64_t tm, uint32_t par) {
         // Порядок меток — (стоимость, время, родитель) лексикографически; обновлённая метка снова ставится в очередь,
         // поэтому при равной стоимости более раннее время доходит и до потомков, и время в дереве согласовано с родителями.
         // Родитель-корень (затравка, kNone) при полной ничьей сохраняется: kNone считается наименьшим.
         auto rank = [](uint32_t x) { return x == kNone ? 0ull : uint64_t(x) + 1; };
         if (c < tr.cost[v] || (c == tr.cost[v] && (tm < tr.time[v] || (tm == tr.time[v] && rank(par) < rank(tr.parent[v]))))) {
-            if (tr.cost[v] == kInf) tr.touched.push_back(v);
+            if (tr.cost[v] == kInf64) tr.touched.push_back(v);
             tr.cost[v] = c; tr.time[v] = tm; tr.parent[v] = par; q.push({c, v});
         }
     };
@@ -888,7 +907,7 @@ void transit_tree(const Transit& t, const Params& p, int period, const std::vect
     while (!q.empty()) {
         auto [c, v] = q.top(); q.pop();
         if (c > tr.cost[v]) continue;
-        uint32_t tm = tr.time[v];
+        uint64_t tm = tr.time[v];
         if (v < t.n_stops) {
             for (uint32_t k = t.tf_first[v]; k < t.tf_first[v + 1]; ++k)
                 if (t.inside[t.tf_to[k]]) relax(t.tf_to[k], c + t.tf_s[k], tm + t.tf_s[k], v);
@@ -897,13 +916,13 @@ void transit_tree(const Transit& t, const Params& p, int period, const std::vect
                 uint32_t h = p.headway_s[t.r_mode[t.rs_route[rs]]][period];
                 if (h == 0) continue;
                 // Стоимость посадки не меньше 1: с нулевой высадкой иначе возможен цикл родителей «остановка ↔ позиция».
-                relax(t.n_stops + rs, c + std::max<uint32_t>(1, h / 2 + uint32_t(p.board_penalty)), tm + h / 2, v);
+                relax(t.n_stops + rs, c + std::max<uint64_t>(1, h / 2 + uint64_t(p.board_penalty)), tm + h / 2, v);
             }
         } else {
             uint32_t rs = v - t.n_stops, r = t.rs_route[rs];
             if (t.inside[t.rs_stop[rs]]) relax(t.rs_stop[rs], c, tm, v);  // снаружи — только проезд в рейсе
             if (rs + 1 < t.r_first[r + 1])
-                relax(v + 1, c + uint32_t(std::lround(t.rs_ride_s[rs] * (1.0 + t.crowd[rs]))), tm + t.rs_ride_s[rs], v);
+                relax(v + 1, c + uint64_t(std::llround(t.rs_ride_s[rs] * (1.0 + t.crowd[rs]))), tm + t.rs_ride_s[rs], v);
         }
     }
 }
@@ -917,7 +936,8 @@ struct Itinerary { uint32_t origin_stop = kNone, core_s = 0; std::vector<Ride> r
 
 Itinerary extract(const Transit& t, const TransitTree& tr, uint32_t dest_stop) {
     Itinerary it;
-    uint32_t cur = dest_stop, walk = 0;
+    uint32_t cur = dest_stop;
+    uint64_t walk = 0;
     std::vector<Ride> rev;
     while (true) {
         uint32_t par = tr.parent[cur];
@@ -927,7 +947,7 @@ Itinerary extract(const Transit& t, const TransitTree& tr, uint32_t dest_stop) {
         while (tr.parent[t.n_stops + k] >= t.n_stops) k = tr.parent[t.n_stops + k] - t.n_stops;
         uint32_t r = t.rs_route[k];
         if (walk > 65535) it.valid = false;
-        rev.push_back({r, uint8_t(k - t.r_first[r]), uint8_t(alight - t.r_first[r]), uint16_t(std::min<uint32_t>(walk, 65535))});
+        rev.push_back({r, uint8_t(k - t.r_first[r]), uint8_t(alight - t.r_first[r]), uint16_t(std::min<uint64_t>(walk, 65535))});
         walk = 0;
         cur = tr.parent[t.n_stops + k];
     }
@@ -935,7 +955,9 @@ Itinerary extract(const Transit& t, const TransitTree& tr, uint32_t dest_stop) {
     if (it.rides.empty()) { it.origin_stop = dest_stop; return it; }
     uint32_t r0 = it.rides[0].route;
     it.origin_stop = t.rs_stop[t.r_first[r0] + it.rides[0].board];
-    it.core_s = tr.time[dest_stop] >= tr.time[it.origin_stop] ? tr.time[dest_stop] - tr.time[it.origin_stop] : 0;
+    uint64_t core = tr.time[dest_stop] >= tr.time[it.origin_stop] ? tr.time[dest_stop] - tr.time[it.origin_stop] : 0;
+    if (core > 7ull * 86400) it.valid = false;  // путь дольше недели в запись не помещается
+    it.core_s = uint32_t(std::min<uint64_t>(core, UINT32_MAX));
     return it;
 }
 
@@ -1003,7 +1025,8 @@ void build_city(City& c, const Input& in, const Params& p, bool quiet) {
     c.car_comp = scc(c.car, count);
     c.car_main = largest(c.car_comp, count);
     c.car_nodes.build(in.node_xy, [&](uint32_t v) { return c.car_comp[v] == c.car_main; }, 250);
-    c.all_nodes.build(in.node_xy, [](uint32_t) { return true; }, 250);
+    // Запасная привязка — только к узлам внутри региона с рёбрами автомобильного графа.
+    c.all_nodes.build(in.node_xy, [&](uint32_t v) { return in.node_inside[v] && c.car.first[v + 1] > c.car.first[v]; }, 250);
     c.tr = build_transit(in, p);
     // Подход и отход — только к остановкам внутри региона; снаружи житель бывает лишь в состоянии «вне региона».
     c.stops.build(in.stop_xy, [&](uint32_t s) { return c.tr.useful[s] != 0 && in.stop_inside[s] != 0; }, 250);
@@ -1147,7 +1170,7 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                         ensure_tree();
                         for (uint32_t gi = 0; gi < in.gw_transit.size(); ++gi) {
                             uint32_t gs = in.gw_stop[gi];
-                            if (!in.gw_transit[gi] || gs == kNone || tree.time[gs] == kInf) continue;
+                            if (!in.gw_transit[gi] || gs == kNone || tree.time[gs] == kInf64) continue;
                             // Как у обычных мест: путь из дерева ячейки, подход — от своего дома и не дальше радиуса.
                             Itinerary iti = extract(c.tr, tree, gs);
                             float od = dist(home, &in.stop_xy[2 * iti.origin_stop]);
@@ -1201,9 +1224,9 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
             if (!near.empty()) ensure_tree();
             // Кандидаты — по (стоимость, остановка); путь, не помещающийся в компактную запись, пропускается,
             // и берётся следующий кандидат, а не теряется транспорт.
-            std::vector<std::array<uint32_t, 3>> cand;  // стоимость, остановка, отход
+            std::vector<std::array<uint64_t, 3>> cand;  // стоимость, остановка, отход
             for (auto& [d, s] : near) {
-                if (tree.cost[s] == kInf) continue;
+                if (tree.cost[s] == kInf64) continue;
                 uint32_t eg = walk_s(p, d);
                 cand.push_back({tree.cost[s] + eg, s, eg});
             }
@@ -1217,7 +1240,7 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                     if (iti.rides.empty()) continue;  // только пешие пересадки — не транспортный путь, берём следующую
                     if (!iti.valid || iti.rides.size() > 255) { st.oversized++; continue; }
                 }
-                (void)cost; best_d = s; best_egress = eg;
+                (void)cost; best_d = uint32_t(s); best_egress = uint32_t(eg);
                 break;
             }
             uint8_t why = near.empty() ? 0 : seeds.empty() ? 1 : 2;
@@ -1343,7 +1366,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
             bool phased = false;  // сдвиг фазы — при первом периоде с движением, свой у каждого маршрута
             while (tm < until) {
                 uint32_t h = p.headway_s[mode][period_at(p, tm)];
-                if (h == 0) { tm += 60; phased = false; continue; }
+                if (h == 0) { tm = next_boundary(p, tm); phased = false; continue; }  // закрытый период — сразу к его концу
                 // После сдвига фазы период пересматривается: короткий период может закончиться раньше первого рейса.
                 if (!phased) {
                     // Сдвиг фазы не перепрыгивает границу периода: если он выходит за неё, фаза разыгрывается
