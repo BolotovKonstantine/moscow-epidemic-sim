@@ -166,7 +166,10 @@ def main(package: Path, params_path: Path, mobility_path: Path, out: Path):
     for m in MODES:
         by_period = service["headway_minutes_by_mode"].get(m, {})
         # Порядок периодов — как в load_params прототипа, а не как в JSON.
-        lines.append(f"headway_{m} " + " ".join(str(by_period.get(p) or 0) for p in PERIODS))
+        # Каждый вид и период — явно; null — сознательное «нет движения», отсутствие ключа — ошибка.
+        if m not in service["headway_minutes_by_mode"] or any(p not in by_period for p in PERIODS):
+            sys.exit(f"transit_service.json: нет интервалов для {m} по всем периодам {PERIODS}")
+        lines.append(f"headway_{m} " + " ".join(str(by_period[p] or 0) for p in PERIODS))
     for name, (a, b) in service["periods"].items():
         h, m = (int(v) for v in a.split(":"))
         lines.append(f"period_start_{name} {h * 3600 + m * 60}")

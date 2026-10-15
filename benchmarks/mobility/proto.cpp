@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -189,7 +190,17 @@ Params load_params(const std::string& dir) {
         std::ifstream in(dir + "/params.txt");
         std::string key, value;
         bool found = false;
-        while (in >> key) { std::getline(in, value); if (key == "seed") { p.seed = std::stoull(value); found = true; } }
+        while (in >> key) {
+            std::getline(in, value);
+            if (key != "seed") continue;
+            // seed — одно десятичное целое без знака, целиком и в пределах u64.
+            std::istringstream vs(value); std::string tok, extra; vs >> tok;
+            bool digits = !tok.empty() && tok.find_first_not_of("0123456789") == std::string::npos;
+            errno = 0;
+            unsigned long long v = digits ? std::strtoull(tok.c_str(), nullptr, 10) : 0;
+            if (!digits || errno == ERANGE || (vs >> extra)) { std::fprintf(stderr, "seed «%s»: нужно одно целое без знака\n", value.c_str()); std::exit(1); }
+            p.seed = v; found = true;
+        }
         if (!found) { std::fprintf(stderr, "нет параметра seed\n"); std::exit(1); }
     }
     for (int i = 0; i < kRoadClasses; ++i) {
@@ -320,6 +331,7 @@ Input load_input(const std::string& dir, const std::string& pop_dir) {
     Input in;
     in.node_xy = read_array<float>(dir + "/node_xy.f32");
     in.node_inside = read_array<uint8_t>(dir + "/node_inside.u8");
+    if (in.node_xy.empty()) { std::fprintf(stderr, "в дорожном графе нет узлов\n"); std::exit(1); }
     in.e_from = read_array<uint32_t>(dir + "/edge_from.u32");
     in.e_to = read_array<uint32_t>(dir + "/edge_to.u32");
     in.e_len = read_array<float>(dir + "/edge_len.f32");
@@ -1375,11 +1387,11 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     // Рейсы: от первой остановки с интервалом периода, сдвиг фазы — розыгрыш по маршруту.
     std::vector<Run> runs;
     uint64_t tkey = stream_key(p.seed, kStreamTransit);
+    uint32_t days_back = 1;  // сколько прошлых суток в расписании (задаётся ниже по самому долгому рейсу)
     auto make_runs = [&](uint32_t from, uint32_t until, std::vector<Run>* out) {
         int64_t count = 0;
         for (uint32_t r = 0; r + 1 < t.r_first.size(); ++r) {
             uint8_t mode = t.r_mode[r];
-            Rng rng{tkey, r, 0xFFFFFFFFu};
             uint32_t tm = from;
             bool phased = false;  // сдвиг фазы — при первом периоде с движением, свой у каждого маршрута
             while (tm < until) {
@@ -1389,7 +1401,11 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 if (!phased) {
                     // Сдвиг фазы не перепрыгивает границу периода: если он выходит за неё, фаза разыгрывается
                     // заново уже в следующем периоде (и после закрытого периода — тоже заново).
-                    uint32_t shift = rng.below(h), b = next_boundary(p, tm);
+                    // Розыгрыш фазы привязан к (маршрут, сутки относительно текущих, период), а не к порядку
+                    // розыгрышей: глубина истории расписания не меняет фазы текущих суток.
+                    uint32_t dayrel = tm / 86400 + 4096 - days_back;
+                    Rng pr{tkey, r, 0x80000000u | (dayrel * kPeriods + uint32_t(period_at(p, tm)))};
+                    uint32_t shift = pr.below(h), b = next_boundary(p, tm);
                     if (tm + shift >= b) { tm = b; continue; }
                     tm += shift; phased = true; continue;
                 }
@@ -1401,7 +1417,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 // своего периода. Интервал через границу — уже новый (и чаще, и реже); период без движения —
                 // остановка на его начале (дальше ждём движения и новую фазу).
                 uint32_t next = tm + h, b = next_boundary(p, tm);
-                while (next > b) {
+                while (next >= b) {  // и рейс точно на границе — уже по интервалу нового периода
                     uint32_t h2 = p.headway_s[mode][period_at(p, b)];
                     if (h2 == 0) { next = b; break; }
                     next = std::max(b, tm + h2);
@@ -1429,7 +1445,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     // Вторые сутки — текущие (номер в суточном расписании — их порядок), первые дают рейсы прошлых суток.
     // Прошлых суток — столько, чтобы покрыть самый долгий рейс (дальние электрички идут дольше суток):
     // рейс, вышедший days_back суток назад, ещё может быть в пути в окне. Последние сутки — текущие.
-    uint32_t days_back = std::max<uint32_t>(1, (longest + 86399) / 86400);
+    days_back = std::max<uint32_t>(1, (longest + 86399) / 86400);
     uint32_t day0 = days_back * 86400;
     std::vector<Run> all, day, prev;
     make_runs(0, day0 + 86400, &all);
