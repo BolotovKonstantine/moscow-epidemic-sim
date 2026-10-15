@@ -286,6 +286,21 @@ Input load_input(const std::string& dir, const std::string& pop_dir) {
     in.role = read_array<uint8_t>(pop_dir + "/p_role.u8");
     in.flags = read_array<uint8_t>(pop_dir + "/p_flags.u8");
     in.profile = read_array<uint16_t>(pop_dir + "/p_profile.u16");
+    // Параллельные колонки обязаны совпадать по длине: обрезка на целый элемент проходит read_array.
+    auto same = [](size_t a, size_t b, const char* what) {
+        if (a != b) { std::fprintf(stderr, "длины колонок не совпадают: %s (%zu против %zu)\n", what, a, b); std::exit(1); }
+    };
+    size_t n = in.home.size(), e = in.e_from.size();
+    same(in.place.size(), n, "p_place"); same(in.role.size(), n, "p_role"); same(in.flags.size(), n, "p_flags");
+    same(in.profile.size(), n, "p_profile");
+    same(in.e_to.size(), e, "edge_to"); same(in.e_len.size(), e, "edge_len"); same(in.e_cls.size(), e, "edge_class");
+    same(in.e_oneway.size(), e, "edge_oneway"); same(in.node_inside.size(), in.node_xy.size() / 2, "node_inside");
+    same(in.building_zone.size(), in.building_xy.size() / 2, "building_zone"); same(in.stop_inside.size(), in.stop_xy.size() / 2, "stop_inside");
+    same(in.route_mode.size() + 1, in.route_first.size(), "route_first");
+    same(in.tr_to.size(), in.tr_from.size(), "transfer_to"); same(in.tr_walk.size(), in.tr_from.size(), "transfer_walk_s");
+    size_t g = in.gw_xy.size() / 2;
+    same(in.gw_transit.size(), g, "gateway_transit"); same(in.gw_edge.size(), g, "gateway_edge");
+    same(in.gw_start.size(), g, "gateway_start"); same(in.gw_stop.size(), g, "gateway_stop");
     return in;
 }
 
@@ -1189,7 +1204,8 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     size_t n = in.home.size();
     std::vector<uint8_t> state(n, kHome), ride_ix(n, 0);
     std::vector<uint32_t> next(n, kNone), wait_since(n, 0), depart(n, 0), arrive_target(n, 0);
-    std::vector<uint32_t> run_of(n, kNone), waited(n, 0);  // waited — сумма завершённых ожиданий посадки
+    std::vector<uint32_t> run_of(n, kNone), waited(n, 0);
+    std::vector<char> crossed(n, 0);  // waited — сумма завершённых ожиданий посадки
     // Рейсы: от первой остановки с интервалом периода, сдвиг фазы — розыгрыш по маршруту.
     std::vector<Run> runs;
     uint64_t tkey = stream_key(p.seed, kStreamTransit);
@@ -1211,7 +1227,8 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 uint32_t next = tm + h, b = next_boundary(p, tm);
                 if (next > b) {
                     uint32_t h2 = p.headway_s[mode][period_at(p, b)];
-                    if (h2 > 0 && h2 < h) next = std::max(b, tm + h2);
+                    if (h2 == 0) next = b;  // следующий период без движения: рейса через границу нет, ждём движения
+                    else if (h2 < h) next = std::max(b, tm + h2);
                 }
                 tm = next;
             }
@@ -1403,7 +1420,10 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
             case kHome:
                 if (m == kModeWalk) { set_state(id, kWalking); schedule(id, now + pl.travel_s[id]); }
                 else if (m == kModeCar) { set_state(id, kDriving); schedule(id, now + pl.travel_s[id]); }
-                else if (m == kModeOutside && pl.itinerary[id] == kNone) { set_state(id, kDriving); schedule(id, now + pl.travel_s[id]); }
+                else if (m == kModeOutside && pl.itinerary[id] == kNone) {  // без рейсов: водитель едет, пассажир идёт пешком
+                    set_state(id, transport_of(in.profile[id]) == kCar ? kDriving : kWalking);
+                    schedule(id, now + pl.travel_s[id]);
+                }
                 else if (m == kModeTransit || m == kModeOutside) { set_state(id, kWalking); ride_ix[id] = 0; schedule(id, now + std::max<uint32_t>(1, pl.origin_walk_s[id])); }
                 break;
             case kWalking:
@@ -1435,11 +1455,12 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 break;
             }
             case kOutside:
+                crossed[id] = 1;  // возвращается именно из-за границы
                 set_state(id, kReturning); schedule(id, now + pl.travel_s[id]);
                 break;
             case kReturning:
                 set_state(id, kHome);
-                if (m == kModeOutside) res.outside_returned++;
+                if (crossed[id]) res.outside_returned++;  // отменивший до входа не считается вернувшимся
                 h = fnv(&id, 4, h); h = fnv(&now, 4, h);
                 break;
             default: break;
@@ -1872,10 +1893,21 @@ int main(int argc, char** argv) {
     std::string dir = argv[1];
     if (argc > 2 && std::strcmp(argv[2], "--selftest") == 0) return selftest_run(dir);
     double dep_sd = -1, capacity_scale = 1, origin_cell = -1;  // −1 — ключ не задан
+    // Число — целиком и конечное; опечатка или неизвестный ключ — ошибка, а не тихий ноль.
+    auto number = [](const char* key, const char* tok) {
+        char* end = nullptr;
+        double v = std::strtod(tok, &end);
+        if (end == tok || *end != '\0' || !std::isfinite(v)) { std::fprintf(stderr, "%s: не число «%s»\n", key, tok); std::exit(2); }
+        return v;
+    };
+    if ((argc - 3) % 2 != 0) { std::fprintf(stderr, "ключ без значения: %s\n", argv[argc - 1]); return 2; }
     for (int i = 3; i + 1 < argc; i += 2) {
-        if (std::strcmp(argv[i], "--departure-sd") == 0) dep_sd = std::atof(argv[i + 1]);
-        else if (std::strcmp(argv[i], "--capacity-scale") == 0) capacity_scale = std::atof(argv[i + 1]);
-        else if (std::strcmp(argv[i], "--origin-cell") == 0) origin_cell = std::atof(argv[i + 1]);
+        if (std::strcmp(argv[i], "--departure-sd") == 0) {
+            dep_sd = number(argv[i], argv[i + 1]);
+            if (dep_sd < 0) { std::fprintf(stderr, "--departure-sd не может быть отрицательным\n"); return 2; }
+        } else if (std::strcmp(argv[i], "--capacity-scale") == 0) capacity_scale = number(argv[i], argv[i + 1]);
+        else if (std::strcmp(argv[i], "--origin-cell") == 0) origin_cell = number(argv[i], argv[i + 1]);
+        else { std::fprintf(stderr, "неизвестный ключ %s\n", argv[i]); return 2; }
     }
     return full(dir, argc > 2 ? argv[2] : dir + "/population", dep_sd, capacity_scale, origin_cell);
 }
