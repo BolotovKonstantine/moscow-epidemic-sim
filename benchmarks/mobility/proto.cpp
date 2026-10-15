@@ -159,8 +159,9 @@ std::map<std::string, std::vector<double>> read_lines(const std::string& path) {
 
 // Ячейка начала пути: номер ячейки в зоне хранится в u8 ключа кеша, поэтому ячеек в зоне не больше 256.
 void check_origin_cell(double cell) {
-    if (!std::isfinite(cell) || cell <= 0 || cell > 1000) {  // до деления: иначе преобразование в u32 не определено
-        std::fprintf(stderr, "origin_cell_m = %g вне (0, 1000]\n", cell);
+    // Частное 1000 / cell проверяется до преобразования в u32: не больше 16 ячеек по стороне (cell ≥ 62,5 м).
+    if (!std::isfinite(cell) || cell <= 0 || cell > 1000 || 1000 / cell > 16) {  // до деления: иначе преобразование в u32 не определено
+        std::fprintf(stderr, "origin_cell_m = %g вне [62,5; 1000] (не больше 16 ячеек по стороне зоны)\n", cell);
         std::exit(1);
     }
     uint32_t per_side = std::max<uint32_t>(1, uint32_t(1000 / cell));
@@ -200,7 +201,7 @@ Params load_params(const std::string& dir) {
         for (int q = 0; q < kPeriods; ++q) {
             // 0 — нет движения; положительный интервал — целые секунды, не меньше 1 (не обнуляется округлением).
             double minutes = get(sv, std::string("headway_") + kModeNames[i], kPeriods)[q];
-            if (!std::isfinite(minutes) || minutes < 0) { std::fprintf(stderr, "интервал %s: %g мин\n", kModeNames[i], minutes); std::exit(1); }
+            if (!std::isfinite(minutes) || minutes < 0 || minutes * 60 > double(UINT32_MAX)) { std::fprintf(stderr, "интервал %s: %g мин\n", kModeNames[i], minutes); std::exit(1); }
             p.headway_s[i][q] = minutes > 0 ? std::max<uint32_t>(1, uint32_t(std::lround(minutes * 60))) : 0;
         }
     }
@@ -1122,14 +1123,26 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                 }
             }
             auto t0 = Clock::now();
-            uint32_t best_cost = kInf, best_d = kNone, best_egress = 0;
+            uint32_t best_d = kNone, best_egress = 0;
             c.dest_stops.within(dest[0], dest[1], float(p.access_radius), near);
             if (near.size() > p.access_stops_max) near.resize(p.access_stops_max);
             if (!near.empty()) ensure_tree();
+            // Кандидаты — по (стоимость, остановка); путь, не помещающийся в компактную запись, пропускается,
+            // и берётся следующий кандидат, а не теряется транспорт.
+            std::vector<std::array<uint32_t, 3>> cand;  // стоимость, остановка, отход
             for (auto& [d, s] : near) {
                 if (tree.cost[s] == kInf) continue;
-                uint32_t eg = walk_s(p, d), cost = tree.cost[s] + eg;
-                if (cost < best_cost || (cost == best_cost && s < best_d)) { best_cost = cost; best_d = s; best_egress = eg; }
+                uint32_t eg = walk_s(p, d);
+                cand.push_back({tree.cost[s] + eg, s, eg});
+            }
+            std::sort(cand.begin(), cand.end());
+            for (const auto& [cost, s, eg] : cand) {
+                if (zone_cache.find(s) == zone_cache.end()) {
+                    Itinerary iti = extract(c.tr, tree, s);
+                    if (!iti.rides.empty() && (!iti.valid || iti.rides.size() > 255)) { st.oversized++; continue; }
+                }
+                (void)cost; best_d = s; best_egress = eg;
+                break;
             }
             uint8_t why = near.empty() ? 0 : seeds.empty() ? 1 : 2;
             if (!tree_ready) why = near.empty() ? 0 : 1;
