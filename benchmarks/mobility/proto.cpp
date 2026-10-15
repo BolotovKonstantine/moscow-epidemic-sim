@@ -201,7 +201,8 @@ Params load_params(const std::string& dir) {
         for (int q = 0; q < kPeriods; ++q) {
             // 0 — нет движения; положительный интервал — целые секунды, не меньше 1 (не обнуляется округлением).
             double minutes = get(sv, std::string("headway_") + kModeNames[i], kPeriods)[q];
-            if (!std::isfinite(minutes) || minutes < 0 || minutes * 60 > double(UINT32_MAX)) { std::fprintf(stderr, "интервал %s: %g мин\n", kModeNames[i], minutes); std::exit(1); }
+            // Интервал не длиннее суток: расписание считается в u32 от полуночи, и время + интервал не переполняется.
+            if (!std::isfinite(minutes) || minutes < 0 || minutes * 60 > 86400) { std::fprintf(stderr, "интервал %s: %g мин\n", kModeNames[i], minutes); std::exit(1); }
             p.headway_s[i][q] = minutes > 0 ? std::max<uint32_t>(1, uint32_t(std::lround(minutes * 60))) : 0;
         }
     }
@@ -330,6 +331,7 @@ Input load_input(const std::string& dir, const std::string& pop_dir) {
     size_t buildings = in.building_xy.size() / 2, facilities = in.facility_xy.size() / 2;
     in_range(in.home, buildings, false, "p_home");
     for (size_t id = 0; id < n; ++id) {
+        if (in.flags[id] & ~3u) { std::fprintf(stderr, "p_flags: житель %zu, неизвестные биты 0x%02x\n", id, in.flags[id]); std::exit(1); }
         if (in.role[id] > kPensioner) { std::fprintf(stderr, "p_role: житель %zu, код роли %u неизвестен\n", id, in.role[id]); std::exit(1); }
         if (in.building_zone[in.home[id]] == kNone) {  // группировка по зоне дома не принимает здание вне зон
             std::fprintf(stderr, "p_home: житель %zu живёт в здании %u без зоны\n", id, in.home[id]); std::exit(1);
@@ -1605,7 +1607,8 @@ int full(const std::string& dir, const std::string& pop_dir, double dep_sd, doub
     }
     auto t0 = Clock::now();
     Input in = load_input(dir, pop_dir);
-    std::printf("{\n  \"scenario\": {\"seed\": %llu, \"departure_sd_s\": %.0f, \"capacity_scale\": %.2f, \"origin_cell_m\": %.0f},\n", (unsigned long long)p.seed, p.dep_sd, capacity_scale, p.origin_cell);
+    // Значения сценария — с точностью, достаточной для повторного запуска (%.17g).
+    std::printf("{\n  \"scenario\": {\"seed\": %llu, \"departure_sd_s\": %.17g, \"capacity_scale\": %.17g, \"origin_cell_m\": %.17g},\n", (unsigned long long)p.seed, p.dep_sd, capacity_scale, p.origin_cell);
     std::printf("  \"input\": {\"nodes\": %zu, \"edges\": %zu, \"persons\": %zu, \"routes\": %zu, \"stops\": %zu, \"load_s\": %.2f},\n",
                 in.node_xy.size() / 2, in.e_from.size(), in.home.size(), in.route_mode.size(), in.stop_xy.size() / 2, seconds_since(t0));
     City c;
