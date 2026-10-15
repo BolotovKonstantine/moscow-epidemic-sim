@@ -347,7 +347,8 @@ Input load_input(const std::string& dir, const std::string& pop_dir) {
     same(in.e_to.size(), e, "edge_to"); same(in.e_len.size(), e, "edge_len"); same(in.e_cls.size(), e, "edge_class");
     same(in.e_oneway.size(), e, "edge_oneway");
     for (size_t k = 0; k < e; ++k)
-        if (!std::isfinite(in.e_len[k]) || in.e_len[k] < 0) { std::fprintf(stderr, "edge_len: ребро %zu, длина %g\n", k, in.e_len[k]); std::exit(1); }
+        // До 1000 км: вес ребра при 1 км/ч и 0,1 м/с помещается в u32 (и в long для lround).
+        if (!std::isfinite(in.e_len[k]) || in.e_len[k] < 0 || in.e_len[k] > 1e6) { std::fprintf(stderr, "edge_len: ребро %zu, длина %g\n", k, in.e_len[k]); std::exit(1); }
     same(in.node_inside.size(), in.node_xy.size() / 2, "node_inside");
     same(in.building_zone.size(), in.building_xy.size() / 2, "building_zone"); same(in.stop_inside.size(), in.stop_xy.size() / 2, "stop_inside");
     same(in.route_mode.size() + 1, in.route_first.size(), "route_first");
@@ -879,7 +880,8 @@ void transit_tree(const Transit& t, const Params& p, int period, const std::vect
                 uint32_t rs = t.stop_rs[k];
                 uint32_t h = p.headway_s[t.r_mode[t.rs_route[rs]]][period];
                 if (h == 0) continue;
-                relax(t.n_stops + rs, c + h / 2 + uint32_t(p.board_penalty), tm + h / 2, v);
+                // Стоимость посадки не меньше 1: с нулевой высадкой иначе возможен цикл родителей «остановка ↔ позиция».
+                relax(t.n_stops + rs, c + std::max<uint32_t>(1, h / 2 + uint32_t(p.board_penalty)), tm + h / 2, v);
             }
         } else {
             uint32_t rs = v - t.n_stops, r = t.rs_route[rs];
