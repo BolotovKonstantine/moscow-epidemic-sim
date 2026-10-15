@@ -198,12 +198,16 @@ Params load_params(const std::string& dir) {
             std::fprintf(stderr, "скорость %s = %g км/ч, нужна конечная, не меньше 1\n", kModeNames[i], p.transit_speed[i]);
             std::exit(1);
         }
-        p.capacity[i] = uint32_t(get(m, "capacity", kModes)[i]);
-        p.wagons[i] = uint32_t(get(m, "wagons", kModes)[i]);
-        if (p.wagons[i] < 1 || p.wagons[i] > 16) {  // загрузка вагонов рейса — массив из 16
-            std::fprintf(stderr, "число вагонов %s = %u вне [1, 16]\n", kModeNames[i], p.wagons[i]);
-            std::exit(1);
-        }
+        // Целые в своих пределах проверяются на double до преобразования: дробь, NaN и переполнение — ошибка.
+        auto whole = [&](const char* what, double v, double lo, double hi) {
+            if (!std::isfinite(v) || v != std::floor(v) || v < lo || v > hi) {
+                std::fprintf(stderr, "%s %s = %g: нужно целое в [%g, %g]\n", what, kModeNames[i], v, lo, hi);
+                std::exit(1);
+            }
+            return uint32_t(v);
+        };
+        p.capacity[i] = whole("вместимость", get(m, "capacity", kModes)[i], 1, double(UINT32_MAX));
+        p.wagons[i] = whole("число вагонов", get(m, "wagons", kModes)[i], 1, 16);  // загрузка вагонов — массив из 16
         for (int q = 0; q < kPeriods; ++q) {
             // 0 — нет движения; положительный интервал — целые секунды, не меньше 1 (не обнуляется округлением).
             double minutes = get(sv, std::string("headway_") + kModeNames[i], kPeriods)[q];
@@ -220,6 +224,9 @@ Params load_params(const std::string& dir) {
     p.car_park_s = get(m, "car_park_s", 1)[0];
     p.walk_speed = get(m, "walk_speed_mps", 1)[0];
     p.walk_detour = get(m, "walk_detour", 1)[0];
+    // Делители времени пути: конечные и положительные (от 0,1 м/с), иначе ошибка, а не испорченное время.
+    for (auto [name, v] : {std::pair<const char*, double>{"walk_speed_mps", p.walk_speed}, {"transfer_walk_speed_mps", p.transfer_speed}})
+        if (!std::isfinite(v) || v < 0.1) { std::fprintf(stderr, "%s = %g: нужна конечная скорость от 0,1 м/с\n", name, v); std::exit(1); }
     p.access_radius = get(m, "access_radius_m", 1)[0];
     p.access_stops_max = uint32_t(get(m, "access_stops_max", 1)[0]);
     p.transfer_radius = get(m, "transfer_radius_m", 1)[0];
@@ -1100,7 +1107,8 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
                             float od = dist(home, &in.stop_xy[2 * iti.origin_stop]);
                             if (od > p.access_radius) continue;
                             // Путь, не помещающийся в компактную запись, — не вариант: этот вход отбрасывается.
-                            if (!iti.rides.empty() && (!iti.valid || iti.rides.size() > 255)) continue;
+                            // Как у конечных остановок: путь только пешком или не помещающийся в запись — не вариант.
+                            if (iti.rides.empty() || !iti.valid || iti.rides.size() > 255) continue;
                             uint32_t tm = walk_s(p, od) + iti.core_s;
                             if (tm < best) { best = tm; g = gi; }
                         }
