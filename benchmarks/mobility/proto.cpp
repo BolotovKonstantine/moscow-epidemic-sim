@@ -160,7 +160,11 @@ std::map<std::string, std::vector<double>> read_lines(const std::string& path) {
 // Ячейка начала пути: номер ячейки в зоне хранится в u8 ключа кеша, поэтому ячеек в зоне не больше 256.
 void check_origin_cell(double cell) {
     uint32_t per_side = std::max<uint32_t>(1, uint32_t(1000 / cell));
-    if (cell <= 0 || per_side * per_side > 256) {
+    if (cell <= 0 || std::fabs(per_side * cell - 1000) > 1e-6) {  // ячейка должна делить зону 1 км без остатка
+        std::fprintf(stderr, "origin_cell_m = %g не делит зону 1000 м без остатка (допустимо 1000, 500, 250, …)\n", cell);
+        std::exit(1);
+    }
+    if (per_side * per_side > 256) {
         std::fprintf(stderr, "origin_cell_m = %.0f: ячеек в зоне %u × %u, больше 256 (ключ кеша — u8)\n", cell, per_side, per_side);
         std::exit(1);
     }
@@ -705,15 +709,17 @@ Transit build_transit(const Input& in, const Params& p) {
     std::vector<std::array<uint32_t, 3>> arcs;
     // stop_area пакета перечисляет пару один раз: пересадка — в обе стороны.
     for (size_t i = 0; i < in.tr_from.size(); ++i) {
-        arcs.push_back({in.tr_from[i], in.tr_to[i], in.tr_walk[i]});
-        arcs.push_back({in.tr_to[i], in.tr_from[i], in.tr_walk[i]});
+        uint32_t w = std::max<uint32_t>(1, in.tr_walk[i]);  // пересадка не бывает нулевой: иначе цикл родителей
+        arcs.push_back({in.tr_from[i], in.tr_to[i], w});
+        arcs.push_back({in.tr_to[i], in.tr_from[i], w});
     }
-    Grid g; g.build(in.stop_xy, [&](uint32_t s) { return t.useful[s] != 0; }, 250);
+    // Пешие пересадки — между всеми обслуживаемыми остановками (и конечными); посадку ограничивает stop_rs.
+    Grid g; g.build(in.stop_xy, [&](uint32_t s) { return t.served[s] != 0; }, 250);
     std::vector<std::pair<float, uint32_t>> near;
     for (uint32_t s = 0; s < t.n_stops; ++s) {
         g.within(in.stop_xy[2 * s], in.stop_xy[2 * s + 1], float(p.transfer_radius), near);
         for (auto& [d, o] : near)
-            if (o != s) arcs.push_back({s, o, uint32_t(std::lround(d * p.walk_detour / p.transfer_speed + p.transfer_overhead))});
+            if (o != s) arcs.push_back({s, o, std::max<uint32_t>(1, uint32_t(std::lround(d * p.walk_detour / p.transfer_speed + p.transfer_overhead)))});
     }
     std::sort(arcs.begin(), arcs.end(), [](const auto& a, const auto& b) { return a[0] != b[0] ? a[0] < b[0] : a[1] != b[1] ? a[1] < b[1] : a[2] < b[2]; });
     t.tf_first.assign(t.n_stops + 1, 0);
@@ -741,7 +747,9 @@ void transit_tree(const Transit& t, const Params& p, int period, const std::vect
     auto relax = [&](uint32_t v, uint32_t c, uint32_t tm, uint32_t par) {
         // Порядок меток — (стоимость, время, родитель) лексикографически; обновлённая метка снова ставится в очередь,
         // поэтому при равной стоимости более раннее время доходит и до потомков, и время в дереве согласовано с родителями.
-        if (c < tr.cost[v] || (c == tr.cost[v] && (tm < tr.time[v] || (tm == tr.time[v] && par < tr.parent[v])))) {
+        // Родитель-корень (затравка, kNone) при полной ничьей сохраняется: kNone считается наименьшим.
+        auto rank = [](uint32_t x) { return x == kNone ? 0ull : uint64_t(x) + 1; };
+        if (c < tr.cost[v] || (c == tr.cost[v] && (tm < tr.time[v] || (tm == tr.time[v] && rank(par) < rank(tr.parent[v]))))) {
             if (tr.cost[v] == kInf) tr.touched.push_back(v);
             tr.cost[v] = c; tr.time[v] = tm; tr.parent[v] = par; q.push({c, v});
         }
@@ -1540,7 +1548,8 @@ int full(const std::string& dir, const std::string& pop_dir, double dep_sd, doub
         // Отношение пешего пути по улицам к прямой для пар зданий 300–2000 м (проверка walk_detour).
         std::vector<double> ratio;
         Dijkstra dw(walk.n);
-        Grid wn; wn.build(in.node_xy, [](uint32_t) { return true; }, 250);
+        // Привязка — только к узлам пешего графа (у которых есть пешие рёбра).
+        Grid wn; wn.build(in.node_xy, [&](uint32_t v) { return walk.first[v + 1] > walk.first[v]; }, 250);
         Grid bg; bg.build(in.building_xy, [](uint32_t) { return true; }, 250);
         std::vector<std::pair<float, uint32_t>> nb;
         // Попыток не больше 1000 на пару: в малом или разреженном пакете пар может не быть.
