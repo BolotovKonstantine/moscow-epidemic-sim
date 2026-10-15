@@ -187,7 +187,9 @@ Params load_params(const std::string& dir) {
     {  // seed — u64 целиком: через double теряются биты старше 2^53
         std::ifstream in(dir + "/params.txt");
         std::string key, value;
-        while (in >> key) { std::getline(in, value); if (key == "seed") p.seed = std::stoull(value); }
+        bool found = false;
+        while (in >> key) { std::getline(in, value); if (key == "seed") { p.seed = std::stoull(value); found = true; } }
+        if (!found) { std::fprintf(stderr, "нет параметра seed\n"); std::exit(1); }
     }
     for (int i = 0; i < kRoadClasses; ++i) p.car_speed[i] = get(m, "car_speed_kmh", kRoadClasses)[i];
     for (int i = 0; i < kModes; ++i) {
@@ -331,6 +333,7 @@ Input load_input(const std::string& dir, const std::string& pop_dir) {
     size_t buildings = in.building_xy.size() / 2, facilities = in.facility_xy.size() / 2;
     in_range(in.home, buildings, false, "p_home");
     for (size_t id = 0; id < n; ++id) {
+        if (in.profile[id] >= 576) { std::fprintf(stderr, "p_profile: житель %zu, код %u вне таблицы профилей (576)\n", id, in.profile[id]); std::exit(1); }
         if (in.flags[id] & ~3u) { std::fprintf(stderr, "p_flags: житель %zu, неизвестные биты 0x%02x\n", id, in.flags[id]); std::exit(1); }
         if (in.role[id] > kPensioner) { std::fprintf(stderr, "p_role: житель %zu, код роли %u неизвестен\n", id, in.role[id]); std::exit(1); }
         if (in.building_zone[in.home[id]] == kNone) {  // группировка по зоне дома не принимает здание вне зон
@@ -1305,15 +1308,23 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     uint32_t warm_start = earliest_target > longest_trip ? earliest_target - longest_trip : 0;
     res.warm_start = warm_start;
     // Одно суточное расписание от полуночи; в окно попадают рейсы, которые идут хотя бы часть [warm_start, end).
-    std::vector<Run> day;
-    res.runs_day = make_runs(0, 86400, &day);
+    // Расписание строится на двое суток подряд: фаза маршрута тянется через полночь (полночь — не граница
+    // периода), поэтому интервал между последним рейсом прошлых суток и первым текущих — заданный.
+    // Вторые сутки — текущие (номер в суточном расписании — их порядок), первые дают рейсы прошлых суток.
+    std::vector<Run> two, day, prev;
+    make_runs(0, 2 * 86400, &two);
+    for (const Run& run : two) {
+        if (run.depart >= 86400) day.push_back({run.route, run.depart - 86400, uint32_t(day.size())});
+        else prev.push_back({run.route, run.depart, uint32_t(prev.size())});
+    }
+    res.runs_day = int64_t(day.size());
     for (const Run& run : day) {
         uint32_t dur = t.rs_offset_s[t.r_first[run.route + 1] - 1];
         if (run.depart < cfg.end && run.depart + dur >= warm_start) runs.push_back(run);
     }
-    // Рейсы прошлых суток, ещё идущие после полуночи: то же расписание на 24 ч раньше. Начинаются с первой
-    // остановки, до которой доходят после полуночи; пассажиров прошлых суток модель утра не ведёт.
-    for (const Run& run : day) {
+    // Рейсы прошлых суток, ещё идущие после полуночи. Начинаются с первой остановки, до которой доходят
+    // после полуночи; пассажиров прошлых суток модель утра не ведёт.
+    for (const Run& run : prev) {
         uint32_t r = run.route, first = t.r_first[r], last = t.r_first[r + 1] - 1;
         if (run.depart + t.rs_offset_s[last] < 86400) continue;
         uint32_t pos = 0;
@@ -1353,7 +1364,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
         schedule(id, depart[id]);
     }
     // ID события рейса — 2^31 + номер в суточном расписании; локальный номер k хранится отдельно.
-    std::vector<uint32_t> local(2 * day.size(), kNone);
+    std::vector<uint32_t> local(day.size() + prev.size(), kNone);
     for (uint32_t k = 0; k < runs.size(); ++k) { local[runs[k].day_index] = k; q.push(Key(runs[k].depart) << 32 | (kRunBase + runs[k].day_index)); }
 
     auto ride_of = [&](uint32_t id, uint32_t i, uint32_t& route, uint32_t& board, uint32_t& alight, uint32_t& walk_after) {
@@ -1482,7 +1493,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                     set_state(id, transport_of(in.profile[id]) == kCar ? kDriving : kWalking);
                     schedule(id, now + pl.travel_s[id]);
                 }
-                else if (m == kModeTransit || m == kModeOutside) { set_state(id, kWalking); ride_ix[id] = 0; schedule(id, now + std::max<uint32_t>(1, pl.origin_walk_s[id])); }
+                else if (m == kModeTransit || m == kModeOutside) { set_state(id, kWalking); ride_ix[id] = 0; schedule(id, now + pl.origin_walk_s[id]); }  // нулевой подход — без сдвига
                 break;
             case kWalking:
             case kDriving:
