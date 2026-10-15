@@ -147,10 +147,11 @@ std::map<std::string, std::vector<double>> read_lines(const std::string& path) {
         std::istringstream s(line);
         std::string key; s >> key;
         std::string tok; std::vector<double> v;
-        while (s >> tok) {
+        while (s >> tok) {  // каждое значение — число целиком: «10oops» или «10,5» — ошибка, а не 10
             char* end = nullptr;
             double x = std::strtod(tok.c_str(), &end);
-            if (end != tok.c_str()) v.push_back(x);
+            if (end == tok.c_str() || *end != '\0') { std::fprintf(stderr, "%s: %s — не число «%s»\n", path.c_str(), key.c_str(), tok.c_str()); std::exit(1); }
+            v.push_back(x);
         }
         out[key] = v;
     }
@@ -507,6 +508,14 @@ struct Csr {
     std::vector<uint32_t> first, head, w;  // w — децисекунды
 };
 
+// Любой простой путь не длиннее суммы весов всех дуг: если она помещается в u32, метки Дейкстры и сокращения CH
+// (суммы весов пути) не переполняются.
+void check_total_weight(const std::vector<std::array<uint32_t, 3>>& arcs) {
+    uint64_t total = 0;
+    for (const auto& a : arcs) total += a[2];
+    if (total >= kInf) { std::fprintf(stderr, "сумма весов дорожного графа %llu не помещается в u32\n", (unsigned long long)total); std::exit(1); }
+}
+
 Csr make_csr(uint32_t n, std::vector<std::array<uint32_t, 3>>& arcs) {
     std::sort(arcs.begin(), arcs.end());
     Csr g; g.n = n; g.first.assign(n + 1, 0);
@@ -541,6 +550,7 @@ Csr build_car(const Input& in, const Params& p) {
         if (in.e_oneway[e] >= 0) arcs.push_back({in.e_from[e], in.e_to[e], w});
         if (in.e_oneway[e] <= 0) arcs.push_back({in.e_to[e], in.e_from[e], w});
     }
+    check_total_weight(arcs);
     return make_csr(uint32_t(in.node_xy.size() / 2), arcs);
 }
 
@@ -554,6 +564,7 @@ Csr build_walk(const Input& in, const Params& p) {
         arcs.push_back({in.e_from[e], in.e_to[e], w});
         arcs.push_back({in.e_to[e], in.e_from[e], w});
     }
+    check_total_weight(arcs);
     return make_csr(uint32_t(in.node_xy.size() / 2), arcs);
 }
 
@@ -1025,7 +1036,8 @@ void build_city(City& c, const Input& in, const Params& p, bool quiet) {
     uint32_t count = 0;
     c.car_comp = scc(c.car, count);
     c.car_main = largest(c.car_comp, count);
-    c.car_nodes.build(in.node_xy, [&](uint32_t v) { return c.car_comp[v] == c.car_main; }, 250);
+    // Основная компонента — только узлы с дугами (при всех нулевых скоростях компоненты — одиночные узлы без дуг).
+    c.car_nodes.build(in.node_xy, [&](uint32_t v) { return c.car_comp[v] == c.car_main && c.car.first[v + 1] > c.car.first[v]; }, 250);
     // Запасная привязка — только к узлам внутри региона с рёбрами автомобильного графа.
     // Узел с исходящими или входящими дугами (конец одностороннего ребра — тоже годная точка назначения).
     std::vector<char> incident(c.car.n, 0);
@@ -1486,6 +1498,10 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     // Счётчики состояний и пиков ведутся на каждом переходе; проверка раз в 15 минут сверяет их полным проходом.
     int64_t cnt[kStates]{}; cnt[kHome] = int64_t(n);
     int64_t active_runs = 0;
+    // Рейс прошлых суток (начинается не с первой остановки) уже в пути с полуночи — сразу на линии.
+    for (size_t k = 0; k < runs.size(); ++k)
+        if (runs[k].start_pos > 0) { started[k] = 1; ++active_runs; }
+    res.peak_active_runs = active_runs;
     std::vector<uint32_t> active_wait(t.n_rs, 0);  // ждущие в очереди позиции без отменивших
     // Память очередей по ёмкости векторов: учитывается на каждом изменении, пик — сразу.
     size_t queue_bytes = 0;
