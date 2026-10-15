@@ -191,7 +191,14 @@ Params load_params(const std::string& dir) {
         while (in >> key) { std::getline(in, value); if (key == "seed") { p.seed = std::stoull(value); found = true; } }
         if (!found) { std::fprintf(stderr, "нет параметра seed\n"); std::exit(1); }
     }
-    for (int i = 0; i < kRoadClasses; ++i) p.car_speed[i] = get(m, "car_speed_kmh", kRoadClasses)[i];
+    for (int i = 0; i < kRoadClasses; ++i) {
+        // 0 — класс закрыт для машин; иначе конечная скорость от 1 км/ч (ребро — не дольше часов, вес помещается в u32).
+        p.car_speed[i] = get(m, "car_speed_kmh", kRoadClasses)[i];
+        double v = p.car_speed[i];
+        if (!std::isfinite(v) || v < 0 || (v > 0 && v < 1) || v > 300) {
+            std::fprintf(stderr, "car_speed_kmh[%d] = %g: нужно 0 или от 1 до 300 км/ч\n", i, v); std::exit(1);
+        }
+    }
     for (int i = 0; i < kModes; ++i) {
         p.transit_speed[i] = get(m, "transit_speed_kmh", kModes)[i];
         if (!std::isfinite(p.transit_speed[i]) || p.transit_speed[i] < 1) {  // от 1 км/ч: перегон не длиннее суток
@@ -228,13 +235,34 @@ Params load_params(const std::string& dir) {
     for (auto [name, v] : {std::pair<const char*, double>{"walk_speed_mps", p.walk_speed}, {"transfer_walk_speed_mps", p.transfer_speed}})
         if (!std::isfinite(v) || v < 0.1) { std::fprintf(stderr, "%s = %g: нужна конечная скорость от 0,1 м/с\n", name, v); std::exit(1); }
     p.access_radius = get(m, "access_radius_m", 1)[0];
-    p.access_stops_max = uint32_t(get(m, "access_stops_max", 1)[0]);
+    double stops_max = get(m, "access_stops_max", 1)[0];
     p.transfer_radius = get(m, "transfer_radius_m", 1)[0];
     p.board_penalty = get(m, "board_penalty_s", 1)[0];
     p.max_wait = get(m, "max_wait_s", 1)[0];
     p.walk_only_max = get(m, "walk_only_max_s", 1)[0];
     p.crowding_penalty = get(m, "crowding_penalty", 1)[0];
-    p.crowding_iterations = uint32_t(get(m, "crowding_iterations", 1)[0]);
+    double iterations = get(m, "crowding_iterations", 1)[0];
+    // Все числовые параметры — конечные и в пределах, при которых производные времена помещаются в u32.
+    auto bounded = [](const char* name, double v, double lo, double hi, bool integer) {
+        if (!std::isfinite(v) || v < lo || v > hi || (integer && v != std::floor(v))) {
+            std::fprintf(stderr, "%s = %g: нужно %s в [%g, %g]\n", name, v, integer ? "целое" : "число", lo, hi); std::exit(1);
+        }
+    };
+    bounded("walk_detour", p.walk_detour, 1, 10, false);
+    bounded("car_park_s", p.car_park_s, 0, 86400, false);
+    bounded("transfer_overhead_s", p.transfer_overhead, 0, 86400, false);
+    bounded("access_radius_m", p.access_radius, 1, 10000, false);
+    bounded("transfer_radius_m", p.transfer_radius, 0, 10000, false);
+    bounded("board_penalty_s", p.board_penalty, 0, 86400, false);
+    bounded("max_wait_s", p.max_wait, 1, 86400, false);
+    bounded("walk_only_max_s", p.walk_only_max, 0, 86400, false);
+    bounded("crowding_penalty", p.crowding_penalty, 0, 1000, false);
+    bounded("departure mean_s", p.dep_mean, 0, 86400, false);
+    bounded("departure sd_s", p.dep_sd, 0, 86400, false);
+    bounded("access_stops_max", stops_max, 1, 64, true);
+    bounded("crowding_iterations", iterations, 0, 100, true);
+    p.access_stops_max = uint32_t(stops_max);
+    p.crowding_iterations = uint32_t(iterations);
     p.origin_cell = get(m, "origin_cell_m", 1)[0];
     check_origin_cell(p.origin_cell);
     return p;
