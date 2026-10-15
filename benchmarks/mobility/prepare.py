@@ -39,6 +39,10 @@ def road_class(highway):
 
 
 def main(package: Path, params_path: Path, mobility_path: Path, out: Path):
+    # Прототип знает только шесть периодов Москвы; пакет с другим набором отклоняется до дорогой подготовки.
+    service_periods = json.loads((package / "transit_service.json").read_text(encoding="utf-8"))["periods"]
+    if set(service_periods) != set(PERIODS):
+        sys.exit(f"периоды transit_service.json {sorted(service_periods)} не совпадают с поддерживаемыми {PERIODS}")
     out.mkdir(parents=True, exist_ok=True)
     to_metric = Transformer.from_crs(4326, 32637, always_xy=True)
 

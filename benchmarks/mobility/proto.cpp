@@ -678,7 +678,11 @@ Transit build_transit(const Input& in, const Params& p) {
         std::vector<uint32_t> seq;
         for (uint32_t k = in.route_first[r]; k < in.route_first[r + 1]; ++k)
             if (seq.empty() || seq.back() != in.route_stops[k]) seq.push_back(in.route_stops[k]);
-        if (seq.size() < 2 || seq.size() > 255) continue;
+        if (seq.size() < 2) continue;
+        if (seq.size() > 255) {  // позиция в пути — u8; маршрут не отбрасывается молча
+            std::fprintf(stderr, "кусок маршрута %u: %zu остановок, больше 255 (позиция в пути — u8)\n", r, seq.size());
+            std::exit(1);
+        }
         uint8_t mode = in.route_mode[r];
         double v = p.transit_speed[mode] / 3.6;
         uint32_t offset = 0;
@@ -1488,7 +1492,8 @@ void report_sim(const char* name, const SimResult& r) {
 int full(const std::string& dir, const std::string& pop_dir, double dep_sd, double capacity_scale, double origin_cell) {
     Params p = load_params(dir);
     if (origin_cell > 0) { p.origin_cell = origin_cell; check_origin_cell(p.origin_cell); }
-    if (dep_sd > 0) p.dep_sd = dep_sd;
+    if (dep_sd >= 0) p.dep_sd = dep_sd;  // −1 — ключ не задан; 0 — все хотят прибыть одновременно
+    if (!(capacity_scale > 0)) { std::fprintf(stderr, "--capacity-scale должен быть больше 0\n"); return 2; }
     for (int m = 0; m < kModes; ++m) {
         p.capacity[m] = uint32_t(std::lround(p.capacity[m] * capacity_scale));
         if (p.capacity[m] == 0) { std::fprintf(stderr, "вместимость %s после --capacity-scale равна 0\n", kModeNames[m]); return 2; }
@@ -1835,7 +1840,7 @@ int main(int argc, char** argv) {
     }
     std::string dir = argv[1];
     if (argc > 2 && std::strcmp(argv[2], "--selftest") == 0) return selftest_run(dir);
-    double dep_sd = 0, capacity_scale = 1, origin_cell = 0;
+    double dep_sd = -1, capacity_scale = 1, origin_cell = 0;
     for (int i = 3; i + 1 < argc; i += 2) {
         if (std::strcmp(argv[i], "--departure-sd") == 0) dep_sd = std::atof(argv[i + 1]);
         else if (std::strcmp(argv[i], "--capacity-scale") == 0) capacity_scale = std::atof(argv[i + 1]);
