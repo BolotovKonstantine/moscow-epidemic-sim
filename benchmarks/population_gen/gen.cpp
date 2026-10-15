@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -776,6 +777,11 @@ int main(int argc, char** argv) {
     if (argc > 2 && std::strcmp(argv[2], "--selftest") == 0) return selftest(p);
     // --dump: колонки населения после назначения мест — вход прототипа поездок (#35, benchmarks/mobility).
     std::string dump = argc > 3 && std::strcmp(argv[2], "--dump") == 0 ? argv[3] : "";
+    if (!dump.empty()) {  // каталог создаётся до дорогой генерации, а не после
+        std::error_code ec;
+        std::filesystem::create_directories(dump, ec);
+        if (ec) { std::fprintf(stderr, "не создан каталог %s: %s\n", dump.c_str(), ec.message().c_str()); return 1; }
+    }
 
     City c = load_city(dir);
     uint64_t population = 0;

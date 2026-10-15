@@ -108,9 +108,14 @@ template <typename T> std::vector<T> read_array(const std::string& path, bool re
         std::exit(1);
     }
     size_t bytes = size_t(in.tellg());
+    if (bytes % sizeof(T) != 0) {  // обрезанный или чужой файл — ошибка, а не запись за буфер
+        std::fprintf(stderr, "размер %s (%zu байт) не кратен размеру элемента %zu\n", path.c_str(), bytes, sizeof(T));
+        std::exit(1);
+    }
     std::vector<T> out(bytes / sizeof(T));
     in.seekg(0);
     in.read(reinterpret_cast<char*>(out.data()), std::streamsize(bytes));
+    if (!in || size_t(in.gcount()) != bytes) { std::fprintf(stderr, "не прочитан %s\n", path.c_str()); std::exit(1); }
     return out;
 }
 
@@ -150,6 +155,15 @@ std::map<std::string, std::vector<double>> read_lines(const std::string& path) {
         out[key] = v;
     }
     return out;
+}
+
+// Ячейка начала пути: номер ячейки в зоне хранится в u8 ключа кеша, поэтому ячеек в зоне не больше 256.
+void check_origin_cell(double cell) {
+    uint32_t per_side = std::max<uint32_t>(1, uint32_t(1000 / cell));
+    if (cell <= 0 || per_side * per_side > 256) {
+        std::fprintf(stderr, "origin_cell_m = %.0f: ячеек в зоне %u × %u, больше 256 (ключ кеша — u8)\n", cell, per_side, per_side);
+        std::exit(1);
+    }
 }
 
 Params load_params(const std::string& dir) {
@@ -194,6 +208,7 @@ Params load_params(const std::string& dir) {
     p.crowding_penalty = get(m, "crowding_penalty", 1)[0];
     p.crowding_iterations = uint32_t(get(m, "crowding_iterations", 1)[0]);
     p.origin_cell = get(m, "origin_cell_m", 1)[0];
+    check_origin_cell(p.origin_cell);
     return p;
 }
 
@@ -1269,9 +1284,10 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
     };
     uint64_t h = 14695981039346656037ull;
     while (!q.empty()) {
-        Key key = q.top(); q.pop();
+        Key key = q.top();
         uint32_t now = uint32_t(key >> 32), id = uint32_t(key);
-        if (now >= cfg.end) break;
+        if (now >= cfg.end) break;  // событие за концом окна остаётся в очереди: состояние продолжения полное
+        q.pop();
         while (now >= next_check) { check(next_check); next_check += 900; }
         if (id >= kRunBase) {
             uint32_t k = local[id - kRunBase], r = runs[k].route;
@@ -1463,7 +1479,7 @@ void report_sim(const char* name, const SimResult& r) {
 
 int full(const std::string& dir, const std::string& pop_dir, double dep_sd, double capacity_scale, double origin_cell) {
     Params p = load_params(dir);
-    if (origin_cell > 0) p.origin_cell = origin_cell;
+    if (origin_cell > 0) { p.origin_cell = origin_cell; check_origin_cell(p.origin_cell); }
     if (dep_sd > 0) p.dep_sd = dep_sd;
     for (int m = 0; m < kModes; ++m) {
         p.capacity[m] = uint32_t(std::lround(p.capacity[m] * capacity_scale));
@@ -1527,7 +1543,8 @@ int full(const std::string& dir, const std::string& pop_dir, double dep_sd, doub
         Grid wn; wn.build(in.node_xy, [](uint32_t) { return true; }, 250);
         Grid bg; bg.build(in.building_xy, [](uint32_t) { return true; }, 250);
         std::vector<std::pair<float, uint32_t>> nb;
-        while (ratio.size() < 400) {
+        // Попыток не больше 1000 на пару: в малом или разреженном пакете пар может не быть.
+        for (uint32_t attempt = 0; ratio.size() < 400 && attempt < 400000 && in.building_xy.size() / 2 >= 2; ++attempt) {
             uint32_t a = r.below(uint32_t(in.building_xy.size() / 2));
             bg.within(in.building_xy[2 * a], in.building_xy[2 * a + 1], 2000, nb);
             nb.erase(std::remove_if(nb.begin(), nb.end(), [](const auto& x) { return x.first < 300; }), nb.end());
@@ -1541,8 +1558,9 @@ int full(const std::string& dir, const std::string& pop_dir, double dep_sd, doub
             ratio.push_back((dw.d[nb_] / 10.0 * p.walk_speed + d0 + d1) / d);
         }
         std::sort(ratio.begin(), ratio.end());
-        std::printf("  \"walk_detour_check\": {\"pairs\": %zu, \"median\": %.2f, \"p10\": %.2f, \"p90\": %.2f},\n", ratio.size(),
-                    ratio[ratio.size() / 2], ratio[ratio.size() / 10], ratio[ratio.size() * 9 / 10]);
+        if (ratio.empty()) std::printf("  \"walk_detour_check\": {\"pairs\": 0},\n");  // пар 300–2000 м не нашлось
+        else std::printf("  \"walk_detour_check\": {\"pairs\": %zu, \"median\": %.2f, \"p10\": %.2f, \"p90\": %.2f},\n", ratio.size(),
+                         ratio[ratio.size() / 2], ratio[ratio.size() / 10], ratio[ratio.size() * 9 / 10]);
     }
     Plans pl; ItineraryCache cache; PlanStats st;
     uint64_t before = phys_footprint();
