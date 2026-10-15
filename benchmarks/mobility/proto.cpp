@@ -197,7 +197,12 @@ Params load_params(const std::string& dir) {
             std::fprintf(stderr, "число вагонов %s = %u вне [1, 16]\n", kModeNames[i], p.wagons[i]);
             std::exit(1);
         }
-        for (int q = 0; q < kPeriods; ++q) p.headway_s[i][q] = uint32_t(get(sv, std::string("headway_") + kModeNames[i], kPeriods)[q] * 60);
+        for (int q = 0; q < kPeriods; ++q) {
+            // 0 — нет движения; положительный интервал — целые секунды, не меньше 1 (не обнуляется округлением).
+            double minutes = get(sv, std::string("headway_") + kModeNames[i], kPeriods)[q];
+            if (!std::isfinite(minutes) || minutes < 0) { std::fprintf(stderr, "интервал %s: %g мин\n", kModeNames[i], minutes); std::exit(1); }
+            p.headway_s[i][q] = minutes > 0 ? std::max<uint32_t>(1, uint32_t(std::lround(minutes * 60))) : 0;
+        }
     }
     const char* periods[kPeriods] = {"morning_peak", "day", "evening_peak", "evening", "night", "early"};
     for (int q = 0; q < kPeriods; ++q) p.period_start[q] = uint32_t(get(sv, std::string("period_start_") + periods[q], 1)[0]);
@@ -254,6 +259,9 @@ struct Input {
     std::vector<uint8_t> role, flags;
     std::vector<uint16_t> profile;
 };
+
+// Роли — как в benchmarks/population_gen/gen.cpp.
+enum Role : uint8_t { kHomeChild, kKindergartenChild, kPupil, kStudent, kWorker, kNotWorking, kPensioner };
 
 Input load_input(const std::string& dir, const std::string& pop_dir) {
     Input in;
@@ -317,11 +325,23 @@ Input load_input(const std::string& dir, const std::string& pop_dir) {
     in_range(in.e_from, nodes, false, "edge_from"); in_range(in.e_to, nodes, false, "edge_to");
     in_range(in.gw_stop, stops, true, "gateway_stop"); in_range(in.gw_start, nodes, true, "gateway_start");
     in_range(in.gw_edge, e, true, "gateway_edge");
+    // Жители: дом — здание пакета; работа — здание, учёба — учреждение (kNone — нет места или место за границей).
+    size_t buildings = in.building_xy.size() / 2, facilities = in.facility_xy.size() / 2;
+    in_range(in.home, buildings, false, "p_home");
+    for (size_t id = 0; id < n; ++id) {
+        if (in.place[id] == kNone) continue;
+        size_t lim = in.role[id] == kWorker ? buildings : facilities;
+        if (in.place[id] >= lim) { std::fprintf(stderr, "p_place: житель %zu, место %u вне таблицы (%zu)\n", id, in.place[id], lim); std::exit(1); }
+    }
+    in_range(in.building_zone, in.zone_xy.size() / 2, true, "building_zone");
+    // Коды — в пределах своих таблиц: класс дороги, вид транспорта, направление ребра.
+    for (uint8_t c : in.e_cls) if (c >= kRoadClasses) { std::fprintf(stderr, "edge_class: код %u вне [0, %d)\n", c, kRoadClasses); std::exit(1); }
+    for (uint8_t m : in.route_mode) if (m >= kModes) { std::fprintf(stderr, "route_mode: код %u вне [0, %d)\n", m, kModes); std::exit(1); }
+    for (int8_t o : in.e_oneway) if (o < -1 || o > 1) { std::fprintf(stderr, "edge_oneway: %d вне {-1, 0, 1}\n", o); std::exit(1); }
     return in;
 }
 
 // Роли и транспортный профиль — как в benchmarks/population_gen/gen.cpp.
-enum Role : uint8_t { kHomeChild, kKindergartenChild, kPupil, kStudent, kWorker, kNotWorking, kPensioner };
 enum Transport : uint8_t { kAccompanied = 0, kPublic = 1, kCar = 2 };
 uint8_t transport_of(uint16_t profile) { return uint8_t(profile / 48 % 3); }  // ((socio·3 + transport)·3 + contact)·4·4 + …
 // Флаги мест (1 — сверх вместимости, 2 — нет места): у работающего без места и без флага место за границей региона.
@@ -1910,7 +1930,10 @@ int main(int argc, char** argv) {
         return 2;
     }
     std::string dir = argv[1];
-    if (argc > 2 && std::strcmp(argv[2], "--selftest") == 0) return selftest_run(dir);
+    if (argc > 2 && std::strcmp(argv[2], "--selftest") == 0) {
+        if (argc != 3) { std::fprintf(stderr, "--selftest не принимает других аргументов\n"); return 2; }
+        return selftest_run(dir);
+    }
     double dep_sd = NAN, capacity_scale = 1, origin_cell = NAN;  // NaN — ключ не задан
     // Число — целиком и конечное; опечатка или неизвестный ключ — ошибка, а не тихий ноль.
     auto number = [](const char* key, const char* tok) {
