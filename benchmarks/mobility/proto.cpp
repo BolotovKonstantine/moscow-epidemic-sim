@@ -194,6 +194,10 @@ Params load_params(const std::string& dir) {
     for (int i = 0; i < kRoadClasses; ++i) p.car_speed[i] = get(m, "car_speed_kmh", kRoadClasses)[i];
     for (int i = 0; i < kModes; ++i) {
         p.transit_speed[i] = get(m, "transit_speed_kmh", kModes)[i];
+        if (!std::isfinite(p.transit_speed[i]) || p.transit_speed[i] < 1) {  // от 1 км/ч: перегон не длиннее суток
+            std::fprintf(stderr, "скорость %s = %g км/ч, нужна конечная, не меньше 1\n", kModeNames[i], p.transit_speed[i]);
+            std::exit(1);
+        }
         p.capacity[i] = uint32_t(get(m, "capacity", kModes)[i]);
         p.wagons[i] = uint32_t(get(m, "wagons", kModes)[i]);
         if (p.wagons[i] < 1 || p.wagons[i] > 16) {  // загрузка вагонов рейса — массив из 16
@@ -1151,9 +1155,13 @@ void plan_trips(City& c, Plans& pl, ItineraryCache& cache, PlanStats& st, int pe
             }
             std::sort(cand.begin(), cand.end());
             for (const auto& [cost, s, eg] : cand) {
-                if (zone_cache.find(s) == zone_cache.end()) {
+                auto zc = zone_cache.find(s);
+                if (zc != zone_cache.end()) {
+                    if (zc->second == kNone) continue;  // уже известно: путь только пешком
+                } else {
                     Itinerary iti = extract(c.tr, tree, s);
-                    if (!iti.rides.empty() && (!iti.valid || iti.rides.size() > 255)) { st.oversized++; continue; }
+                    if (iti.rides.empty()) continue;  // только пешие пересадки — не транспортный путь, берём следующую
+                    if (!iti.valid || iti.rides.size() > 255) { st.oversized++; continue; }
                 }
                 (void)cost; best_d = s; best_egress = eg;
                 break;
@@ -1294,11 +1302,15 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 ++count;
                 // Новый интервал действует с границы периода: если следующий период чаще, его первый рейс —
                 // не позже границы плюс новый интервал, а не через прежний (длинный) интервал.
+                // Следующий рейс: границы периодов проходятся по одной, пока кандидат не останется внутри
+                // своего периода. Интервал через границу — уже новый (и чаще, и реже); период без движения —
+                // остановка на его начале (дальше ждём движения и новую фазу).
                 uint32_t next = tm + h, b = next_boundary(p, tm);
-                if (next > b) {
+                while (next > b) {
                     uint32_t h2 = p.headway_s[mode][period_at(p, b)];
-                    if (h2 == 0) next = b;  // следующий период без движения: рейса через границу нет, ждём движения
-                    else next = std::max(b, tm + h2);  // и чаще, и реже: интервал через границу — уже новый
+                    if (h2 == 0) { next = b; break; }
+                    next = std::max(b, tm + h2);
+                    b = next_boundary(p, b);
                 }
                 tm = next;
             }
@@ -1529,7 +1541,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 set_state(id, kReturning); res.cancelled++; res.cancelled_by[t.r_mode[route]]++;
                 active_wait[t.r_first[route] + board]--;
                 // Обратно без ожидания: с первой остановки — пешком, после пересадки — пройденным путём до очереди.
-                schedule(id, now + std::max<uint32_t>(1, ride_ix[id] == 0 ? pl.origin_walk_s[id] : wait_since[id] - depart[id] - waited[id]));
+                schedule(id, now + (ride_ix[id] == 0 ? pl.origin_walk_s[id] : wait_since[id] - depart[id] - waited[id]));  // в т. ч. 0
                 break;
             }
             case kOutside:
