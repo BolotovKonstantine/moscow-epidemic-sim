@@ -306,7 +306,10 @@ Input load_input(const std::string& dir, const std::string& pop_dir) {
     same(in.place.size(), n, "p_place"); same(in.role.size(), n, "p_role"); same(in.flags.size(), n, "p_flags");
     same(in.profile.size(), n, "p_profile");
     same(in.e_to.size(), e, "edge_to"); same(in.e_len.size(), e, "edge_len"); same(in.e_cls.size(), e, "edge_class");
-    same(in.e_oneway.size(), e, "edge_oneway"); same(in.node_inside.size(), in.node_xy.size() / 2, "node_inside");
+    same(in.e_oneway.size(), e, "edge_oneway");
+    for (size_t k = 0; k < e; ++k)
+        if (!std::isfinite(in.e_len[k]) || in.e_len[k] < 0) { std::fprintf(stderr, "edge_len: ребро %zu, длина %g\n", k, in.e_len[k]); std::exit(1); }
+    same(in.node_inside.size(), in.node_xy.size() / 2, "node_inside");
     same(in.building_zone.size(), in.building_xy.size() / 2, "building_zone"); same(in.stop_inside.size(), in.stop_xy.size() / 2, "stop_inside");
     same(in.route_mode.size() + 1, in.route_first.size(), "route_first");
     // CSR маршрутов: смещения не убывают, начинаются с 0 и заканчиваются ровно на длине списка остановок.
@@ -1280,7 +1283,13 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 uint32_t h = p.headway_s[mode][period_at(p, tm)];
                 if (h == 0) { tm += 60; phased = false; continue; }
                 // После сдвига фазы период пересматривается: короткий период может закончиться раньше первого рейса.
-                if (!phased) { tm += rng.below(h); phased = true; continue; }
+                if (!phased) {
+                    // Сдвиг фазы не перепрыгивает границу периода: если он выходит за неё, фаза разыгрывается
+                    // заново уже в следующем периоде (и после закрытого периода — тоже заново).
+                    uint32_t shift = rng.below(h), b = next_boundary(p, tm);
+                    if (tm + shift >= b) { tm = b; continue; }
+                    tm += shift; phased = true; continue;
+                }
                 if (out) out->push_back({r, tm, uint32_t(out->size())});
                 ++count;
                 // Новый интервал действует с границы периода: если следующий период чаще, его первый рейс —
@@ -1430,9 +1439,9 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
                 ride_ix[pid]++;
                 run_of[pid] = kNone;
                 if (ride_ix[pid] < rides_of(pid)) {  // пересадка: пешком к следующей посадке
-                    set_state(pid, kWalking); schedule(pid, now + std::max<uint32_t>(1, walk_after));
+                    set_state(pid, kWalking); schedule(pid, now + walk_after);  // пересадка на той же остановке — 0 с
                 } else {
-                    set_state(pid, kWalking); schedule(pid, now + std::max<uint32_t>(1, walk_after + pl.egress_walk_s[pid]));
+                    set_state(pid, kWalking); schedule(pid, now + walk_after + pl.egress_walk_s[pid]);  // нулевой отход — без сдвига
                 }
             }
             ob.resize(keep);
@@ -1548,6 +1557,7 @@ SimResult simulate_morning(const City& c, const Plans& pl, const ItineraryCache&
         uint32_t rd = run_of[i] == kNone ? kNone : runs[run_of[i]].day_index;
         h = fnv(&state[i], 1, h); h = fnv(&ride_ix[i], 1, h); h = fnv(&next[i], 4, h); h = fnv(&rd, 4, h);
         // Изменяемые времена, от которых зависят будущие события: накопленное ожидание, начало текущего, выезд, цель.
+        h = fnv(&crossed[i], 1, h);  // флаг «возвращается из-за границы» определяет счёт вернувшихся
         h = fnv(&waited[i], 4, h); h = fnv(&wait_since[i], 4, h); h = fnv(&depart[i], 4, h); h = fnv(&arrive_target[i], 4, h);
     }
     for (size_t k = 0; k < runs.size(); ++k) {
