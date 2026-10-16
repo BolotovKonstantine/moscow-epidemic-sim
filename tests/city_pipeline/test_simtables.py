@@ -527,6 +527,9 @@ class SimValidationTests(unittest.TestCase):
             ("census_household_children", self.set_value("children_in_3_plus", 2, 1), "меньше трёх на домохозяйство"),
             ("transit_modes", self.set_value("wagons", 0, 17), "wagons: значение больше 16"),
             ("gateways", self.set_value("inside_node", road, mtab.NONE["u32"]), "нет дуги или внутреннего конца"),
+            ("buildings", self.set_value("x_cm", 0, int(buildings["x_cm"][1][0]) + 300_000), "buildings.zone: точка вне квадрата"),
+            ("route_pieces", self.set_value("segment_cm", 0, int(pieces["segment_cm"][1][0]) + 1000), "длина перегона не совпадает"),
+            ("transfers", self.set_value("walk_s", 0, 1), "transfers.walk_s"),
         ]
         for name, change, message in cases:
             with self.subTest(table=name, message=message):
@@ -540,6 +543,37 @@ class SimValidationTests(unittest.TestCase):
         table.unlink()
         table.symlink_to(outside)
         self.assert_rejected(package, "не ссылкой")
+
+    def test_ninth_review_round_checks(self):
+        arcs = mtab.decode_table((self.out / "sim" / "road_arcs.mtab").read_bytes(), "road_arcs").columns
+        gateways = mtab.decode_table((self.out / "sim" / "gateways.mtab").read_bytes(), "gateways").columns
+        nodes = mtab.decode_table((self.out / "sim" / "road_nodes.mtab").read_bytes(), "road_nodes").columns
+        road = int(np.nonzero(gateways["kind"][1] == 0)[0][0])
+        arc = int(gateways["arc"][1][road])
+        offsets = nodes["arc_offset"][1].astype(np.int64)
+        ends = [int(np.searchsorted(offsets, arc, side="right") - 1), int(arcs["to"][1][arc])]
+        outer_end = next(e for e in ends if nodes["inside"][1][e] == 0)
+        pedestrian_arcs = np.nonzero(arcs["road_class"][1] == 1)[0]
+        cases = [("gateways", self.set_value("inside_node", road, outer_end), "inside_node дорожного входа вне региона")]
+        if len(pedestrian_arcs):
+            cases.append(("road_arcs", self.set_value("car", int(pedestrian_arcs[0]), 1), "машина по пешеходной дороге"))
+        for name, change, message in cases:
+            with self.subTest(message=message):
+                self.assert_rejected(self.rewrite(name, change), message)
+
+    def test_sim_metadata_is_checked_without_files(self):
+        for edit, message in ((lambda a: a.update(data_kind="game_setting"), "должен быть estimated"),
+                              (lambda a: a.update(path="sim2/index.json"), "должен быть sim/index.json")):
+            with self.subTest(message=message):
+                package = self.copy()
+                manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+                asset = next(a for a in manifest["assets"] if a["role"] == "sim")
+                edit(asset)
+                if asset["data_kind"] != "estimated":
+                    del asset["estimation"]
+                (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+                with self.assertRaisesRegex(ManifestError, message):
+                    validate_manifest(package / "manifest.json", check_files=False)
 
     def test_sim_asset_must_be_estimated(self):
         package = self.copy()

@@ -134,6 +134,11 @@ def validate_manifest(path: Path, *, check_files: bool = True) -> dict:
             mtab.check_package(manifest["package_id"], manifest["package_version"])
         except mtab.TableError as error:
             raise ManifestError(f"{sim_assets[0]['asset_id']}: {error}") from error
+        sim = sim_assets[0]
+        if sim["path"] != "sim/index.json":
+            raise ManifestError(f"{sim['asset_id']}: путь индекса расчётных таблиц должен быть sim/index.json")
+        if sim["data_kind"] != "estimated" or "estimation" not in sim:
+            raise ManifestError(f"{sim['asset_id']}: файл роли sim должен быть estimated с методом и неопределённостью")
 
     known_sources = set(source_ids)
     synthetic_sources = {source["source_id"] for source in manifest["sources"] if source["source_type"] == "synthetic"}

@@ -368,6 +368,10 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
     mobility = config["model_assumptions"]["mobility"]
     headways = config["model_assumptions"]["headway_minutes"]
     periods = list(headways["periods"])
+    # Пешие параметры округляются один раз: те же целые значения идут и в таблицы, и в расчёт времени пересадок.
+    walk_speed_mm_s = round(config["model_assumptions"]["transfer_walk_speed_mps"] * 1000)
+    transfer_overhead_s = round(config["model_assumptions"]["transfer_overhead_s"])
+    walk_detour = round(mobility["walk_detour"] * SHARE_ONE)
     codes = {name: list(values) for name, values in FIXED_CODES.items()}
     codes["period"] = periods
 
@@ -549,9 +553,8 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
         ("from_stop", "u32", [stop_index[t["from_stop"]] for t in transfers]),
         ("to_stop", "u32", [stop_index[t["to_stop"]] for t in transfers]),
         ("distance_cm", "u32", _cm([float(t["distance_m"]) for t in transfers])),
-        ("walk_s", "u32", [transfer_walk_s(round(float(t["distance_m"]) * 100), config["model_assumptions"]["transfer_walk_speed_mps"],
-                                           config["model_assumptions"]["transfer_overhead_s"], mobility["walk_detour"])
-                           for t in transfers]),
+        ("walk_s", "u32", [transfer_walk_s(int(distance), walk_speed_mm_s / 1000, transfer_overhead_s, walk_detour / SHARE_ONE)
+                           for distance in _cm([float(t["distance_m"]) for t in transfers])]),
     ]
 
     # Учреждения.
@@ -632,8 +635,8 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
             h_value.append(none["u32"] if minutes is None else int(round(minutes * 60)))
     tables["transit_headways"] = [("mode", "u8", h_mode), ("period", "u8", h_period), ("headway_s", "u32", h_value)]
     tables["mobility"] = [
-        ("walk_speed_mm_s", "u32", [round(model["transfer_walk_speed_mps"] * 1000)]),
-        ("transfer_overhead_s", "u32", [round(model["transfer_overhead_s"])]),
+        ("walk_speed_mm_s", "u32", [walk_speed_mm_s]),
+        ("transfer_overhead_s", "u32", [transfer_overhead_s]),
         ("car_park_s", "u32", [mobility["car_park_s"]]),
         ("access_radius_cm", "u32", [round(mobility["access_radius_m"] * 100)]),
         ("access_stops_max", "u16", [mobility["access_stops_max"]]),
@@ -646,7 +649,7 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
         ("crowding_iterations", "u16", [mobility["crowding_iterations"]]),
         ("building_node_max_cm", "u32", [round(mobility["building_node_max_m"] * 100)]),
     ]
-    tables["mobility_estimates"] = [("walk_detour", "u16", [round(mobility["walk_detour"] * SHARE_ONE)])]
+    tables["mobility_estimates"] = [("walk_detour", "u16", [walk_detour])]
 
     # Итоги переписи (observed): числа как в таблицах Росстата.
     rows = {name: [] for name in CENSUS_TABLES}
@@ -842,7 +845,7 @@ def _unique(table_name, columns, keys):
     _expect(len(np.unique(stacked, axis=0)) == len(stacked), f"{table_name}: повторяющиеся ключи {keys}")
 
 
-def _cross_checks(t, codes, zone_cell_m):
+def _cross_checks(t, codes, zone_cell_m, origin):
     """Сверки между колонками и таблицами, которые не выразить проверками отдельной колонки."""
     # Числа строк таблиц-справочников — до любых обращений к ним по кодам.
     _expect(len(t["road_classes"]["car_speed_mm_s"]) == len(codes["road_class"]), "road_classes: строка на каждый класс дороги")
@@ -852,9 +855,21 @@ def _cross_checks(t, codes, zone_cell_m):
     # Ячейка начала пути (кеш путей #42) делит сторону зоны без остатка, не больше 16 ячеек по стороне — как в прототипе #35.
     cell = int(t["mobility"]["origin_cell_cm"][0])
     _expect(origin_cell_fits(zone_cell_m, cell), f"mobility.origin_cell_cm {cell} не делит зону {zone_cell_m} м на 1–16 ячеек по стороне")
-    # Жители зданий по зонам равны жителям зон (здания вне зон в сумму не входят).
+    # Жители зданий по зонам равны жителям зон; у зданий вне зон жителей нет (иначе итог населения больше суммы зон).
     b, z = t["buildings"], t["zones"]
     in_zone = b["zone"] != mtab.NONE["u32"]
+    _expect((b["residents"][~in_zone] == 0).all(), "buildings: жители у здания вне зон")
+    # Ссылка на зону согласована с координатами: точка в квадрате своей зоны (допуск 1 м — точки входов на границе региона).
+    x0, y0 = origin
+    for name in ("buildings", "road_nodes", "stops", "facilities", "gateways"):
+        c = t[name]
+        k = c["zone"] != mtab.NONE["u32"]
+        zone = c["zone"][k].astype(np.int64)
+        east, north = c["x_cm"][k].astype(np.int64) / 100 + x0, y0 - c["y_cm"][k].astype(np.int64) / 100
+        ix, iy = z["ix"][zone].astype(np.int64), z["iy"][zone].astype(np.int64)
+        dx = np.maximum(np.maximum(ix * zone_cell_m - east, east - (ix + 1) * zone_cell_m), 0)
+        dy = np.maximum(np.maximum(iy * zone_cell_m - north, north - (iy + 1) * zone_cell_m), 0)
+        _expect((np.hypot(dx, dy) <= 1.0).all(), f"{name}.zone: точка вне квадрата своей зоны")
     by_zone = np.bincount(b["zone"][in_zone].astype(np.int64), weights=b["residents"][in_zone].astype(np.float64), minlength=len(z["residents"]))
     _expect(np.array_equal(by_zone.astype(np.int64), z["residents"].astype(np.int64)), "buildings/zones: жители зданий по зонам не совпадают с жителями зон")
     _expect(np.array_equal(b["road_node_arrive"] == mtab.NONE["u32"], b["road_node_depart"] == mtab.NONE["u32"]), "buildings: привязка к узлу задана только для одного направления")
@@ -878,6 +893,7 @@ def _cross_checks(t, codes, zone_cell_m):
         first = np.argmax(step != 0, axis=1)
         positive = step[np.arange(len(step)), first] > 0
         _expect(((step != 0).any(axis=1) & positive).all(), "road_arcs: дуги не упорядочены по (узел, конечный узел, путь, участок, обратная)")
+    _expect((a["car"][a["road_class"] == codes["road_class"].index("pedestrian")] == 0).all(), "road_arcs.car: машина по пешеходной дороге")
     perm = a["by_edge"].astype(np.int64)
     _expect(np.array_equal(np.sort(perm), np.arange(len(perm))), "road_arcs.by_edge: не перестановка дуг")
     if len(perm):
@@ -911,6 +927,14 @@ def _cross_checks(t, codes, zone_cell_m):
     r = t["route_pieces"]
     stop_offset = r["stop_offset"].astype(np.int64)
     _expect(not (np.diff(stop_offset) < 2).any(), "route_pieces: кусок маршрута короче двух остановок")
+    # Длина перегона — прямая между остановками (допуск 10 см: округление координат до см и расстояний пакета до 0,1 м).
+    last = np.zeros(len(r["stops"]), dtype=bool)
+    last[stop_offset[1:] - 1] = True
+    inner = np.nonzero(~last)[0]
+    sx, sy = t["stops"]["x_cm"].astype(np.int64), t["stops"]["y_cm"].astype(np.int64)
+    here, there = r["stops"][inner].astype(np.int64), r["stops"][inner + 1].astype(np.int64)
+    straight = np.hypot(sx[there] - sx[here], sy[there] - sy[here])
+    _expect((np.abs(r["segment_cm"][inner].astype(np.int64) - straight) <= 10).all(), "route_pieces.segment_cm: длина перегона не совпадает с расстоянием между остановками")
     if len(stop_offset) > 1:
         _expect((r["segment_cm"][stop_offset[1:] - 1] == 0).all(), "route_pieces.segment_cm: у последней остановки куска должно быть 0")
     piece_mode = np.repeat(r["mode"].astype(np.int64), np.diff(stop_offset))
@@ -977,13 +1001,14 @@ def _cross_checks(t, codes, zone_cell_m):
     mob, est, tr = t["mobility"], t["mobility_estimates"], t["transfers"]
     expected_walk = np.array([transfer_walk_s(int(d), int(mob["walk_speed_mm_s"][0]) / 1000, int(mob["transfer_overhead_s"][0]), int(est["walk_detour"][0]) / SHARE_ONE)
                               for d in tr["distance_cm"]], dtype=np.int64)
-    _expect((np.abs(tr["walk_s"].astype(np.int64) - expected_walk) <= 1).all(), "transfers.walk_s: не согласовано с расстоянием, скоростью, надбавкой и walk_detour")
+    _expect(np.array_equal(tr["walk_s"].astype(np.int64), expected_walk), "transfers.walk_s: не согласовано с расстоянием, скоростью, надбавкой и walk_detour")
     # Дорожный вход: дуга с тем же классом, не внутренняя; внутренний узел — один из её концов.
     rows = np.nonzero(road & (g["arc"] != none["u32"]))[0]
     arc_of = g["arc"][rows].astype(np.int64)
     _expect((a["road_class"][arc_of] == g["road_class"][rows]).all() and (a["internal"][arc_of] == 0).all(), "gateways: класс или внутренний флаг дуги дорожного входа не совпадает")
     node = g["inside_node"][rows].astype(np.int64)
     _expect(((node == none["u32"]) | (node == source[arc_of]) | (node == a["to"][arc_of].astype(np.int64))).all(), "gateways: inside_node не является концом дуги входа")
+    _expect((n["inside"][node[node != none["u32"]]] == 1).all(), "gateways: inside_node дорожного входа вне региона")
     # Остановка входа стоит на одном из кусков своего маршрута того же вида транспорта.
     pieces = t["route_pieces"]
     counts = np.diff(pieces["stop_offset"].astype(np.int64))
@@ -1049,7 +1074,7 @@ def validate_sim_dir(sim_dir: Path, package_id: str, package_version: str, *, ki
         for column, dtype, _, checks in spec["columns"]:
             _check_column_values(name, column, dtype, tables[name][column], checks, sizes, codes)
         _unique(name, tables[name], spec["unique"])
-    _cross_checks(tables, codes, index["zone_cell_m"])
+    _cross_checks(tables, codes, index["zone_cell_m"], index["plane"]["origin_metric"])
     return len(entries)
 
 
