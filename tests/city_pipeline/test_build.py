@@ -392,13 +392,18 @@ class BuildTests(unittest.TestCase):
     def test_road_graph_splits_at_shared_nodes_and_reports_components(self):
         roads = self.report["roads"]
         # Крест — 4 ребра, изолированная улица — 1, длинная улица — 1, кольцо МКАД — 1 петля,
-        # сквозное ребро с концами вне региона — 1.
-        self.assertEqual(roads["edges"], 8)
-        self.assertEqual(roads["nodes"], 12)
-        self.assertEqual(roads["weak_components"], 5)
-        self.assertEqual(roads["gateway_crossings"], 2)
+        # сквозное ребро с концами вне региона — 1, выезд из региона — 1.
+        self.assertEqual(roads["edges"], 9)
+        self.assertEqual(roads["nodes"], 14)
+        self.assertEqual(roads["weak_components"], 6)
+        self.assertEqual(roads["gateway_crossings"], 3)
         crossings = [row for row in read_csv(self.out / "gateways.csv.gz") if row["kind"] == "road"]
-        self.assertTrue(all(row["inside_ref"] == "" and row["outside_ref"].count(";") == 1 and row["zone_id"] for row in crossings))
+        self.assertTrue(all(row["zone_id"] for row in crossings))
+        chords = [row for row in crossings if row["inside_ref"] == ""]   # сквозное ребро: две точки, оба конца снаружи
+        self.assertEqual(len(chords), 2)
+        self.assertTrue(all(row["outside_ref"].count(";") == 1 for row in chords))
+        exits = [row for row in crossings if row["inside_ref"]]   # выезд: один конец внутри, другой снаружи
+        self.assertEqual([(row["inside_ref"].count(";"), row["outside_ref"].count(";")) for row in exits], [(0, 0)])
         self.assertNotIn("footway", roads["length_km_by_class"])
         with gzip.open(self.out / "roads.geojsonl.gz", "rt", encoding="utf-8") as stream:
             self.assertNotIn("gateway", json.loads(stream.readline())["properties"])   # вычисленный флаг не в наблюдении

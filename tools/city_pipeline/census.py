@@ -7,6 +7,7 @@
 прототипом benchmarks/population_gen.
 """
 
+import math
 import re
 import zipfile
 import xml.etree.ElementTree as ET
@@ -75,7 +76,7 @@ def number(text):
     if re.fullmatch(r"\d+", text):
         return int(text)
     value = float(text)
-    if value != int(value) or value < 0:
+    if not math.isfinite(value) or value != int(value) or value < 0:   # 1e400 → inf: int() дал бы OverflowError
         raise ManifestError(f"ожидалось целое неотрицательное число, получено {text!r}")
     return int(value)
 

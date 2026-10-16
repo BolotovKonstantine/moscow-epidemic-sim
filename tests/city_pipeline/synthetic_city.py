@@ -78,6 +78,8 @@ def build_city(directory: Path):
     b.way([b.node(lon0 - 0.025, lat0 + 0.03), b.node(lon0 + 0.025, lat0 + 0.03)], {"highway": "tertiary", "bridge": "yes", "layer": "2"})
     # Ребро с обоими концами вне региона (±0.6° ≈ 37 км), середина которого проходит через регион.
     b.way([b.node(lon0 - 0.6, lat0 + 0.25), b.node(lon0 + 0.6, lat0 + 0.25)], {"highway": "primary"})
+    # Выезд из региона: внутренний конец у МКАД, внешний — за поясом (≈ 50 км на восток); настоящий дорожный вход для sim/.
+    b.way([b.node(lon0 + 0.03, lat0 - 0.03), b.node(lon0 + 0.8, lat0 - 0.03)], {"highway": "trunk"})
 
     # Здания.
     b.square(lon0 + 0.002, lat0 + 0.002, 0.0003, {"building": "apartments", "building:levels": "9"})

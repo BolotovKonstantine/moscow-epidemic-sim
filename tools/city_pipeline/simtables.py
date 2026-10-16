@@ -243,8 +243,9 @@ ESTIMATION = {
     "route_pieces": ("Маршруты из отрезков transit_segments: где у маршрута нет отрезка (ненайденный член), маршрут делится на непрерывные "
                      "куски; segment_cm — расстояние по прямой до следующей остановки куска (у последней — 0). Маршруты без кусков — в отчёте качества.",
                      "Наследует эвристику объединения остановок; отрезки — по прямой."),
-    "transfers": ("Пересадки transit_transfers пакета (stop_area OSM), время — по прямой при transfer_walk_speed_mps плюс transfer_overhead_s.",
-                  "Как у transit_transfers."),
+    "transfers": ("Пересадки transit_transfers пакета (stop_area OSM); walk_s пересчитано как у пешей пересадки между близкими остановками: "
+                  "прямая × walk_detour / transfer_walk_speed_mps + transfer_overhead_s, не меньше 1 с (в transit_transfers.csv — без walk_detour).",
+                  "Как у transit_transfers; реальные переходы и коэффициент 1,3 — оценки."),
     "facilities": ("Учреждения facilities пакета; buildings — CSR привязанных зданий; вместимость unknown.",
                    "Объединение и привязка к зданиям — пространственная эвристика, как у facilities."),
     "gateways": ("Внешние входы gateways пакета; у дорожного входа arc — дуга ребра по направлению файла, inside_node — ближайший к точке "
@@ -305,6 +306,11 @@ def _clock_seconds(clock: str) -> int:
 
 def _mm_s_from_kmh(value) -> int:
     return int(round(value * 1_000_000 / 3600))
+
+
+def transfer_walk_s(distance_cm: int, speed_mps: float, overhead_s: float, detour: float) -> int:
+    """Время пешей пересадки: прямая × walk_detour / скорость + надбавка, не меньше 1 с."""
+    return max(1, round(distance_cm / 100 * detour / speed_mps + overhead_s))
 
 
 def origin_cell_fits(zone_cell_m: int, origin_cell_cm: int) -> bool:
@@ -543,7 +549,9 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
         ("from_stop", "u32", [stop_index[t["from_stop"]] for t in transfers]),
         ("to_stop", "u32", [stop_index[t["to_stop"]] for t in transfers]),
         ("distance_cm", "u32", _cm([float(t["distance_m"]) for t in transfers])),
-        ("walk_s", "u32", [int(t["walk_s"]) for t in transfers]),
+        ("walk_s", "u32", [transfer_walk_s(round(float(t["distance_m"]) * 100), config["model_assumptions"]["transfer_walk_speed_mps"],
+                                           config["model_assumptions"]["transfer_overhead_s"], mobility["walk_detour"])
+                           for t in transfers]),
     ]
 
     # Учреждения.
@@ -569,6 +577,12 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
     ]
 
     # Внешние входы.
+    # Дорожное ребро-хорда (оба конца снаружи) пересекает регион, но выездом не является (mobility.md): вход без
+    # внутреннего конца не экспортируется, число таких строк — в отчёте качества.
+    def has_inside_end(g):
+        return g["kind"] != "road" or any(v and int(v) in node_position for v in g["inside_ref"].split(";"))
+    gateways_without_inside = sum(not has_inside_end(g) for g in gateways)
+    gateways = [g for g in gateways if has_inside_end(g)]
     gx, gy, gate_x, gate_y = plane([g["lon"] for g in gateways], [g["lat"] for g in gateways])
     none = mtab.NONE
     g_class, g_mode, g_arc, g_node, g_stop, g_route = [], [], [], [], [], []
@@ -699,6 +713,7 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
         "buildings_without_road_node": int(((depart == none["u32"]) | (arrive == none["u32"])).sum()),
         "car_main_nodes": int(car_main.sum()),
         "routes_without_pieces": len(without_pieces),
+        "road_gateways_without_inside_end": gateways_without_inside,
         "routes_without_pieces_list": without_pieces,
     }
 
@@ -957,6 +972,12 @@ def _cross_checks(t, codes, zone_cell_m):
     stops_of = g["stop"][transit].astype(np.int64)
     _expect((t["stops"]["inside"][stops_of] == 1).all(), "gateways: остановка транспортного входа вне региона")
     _expect(np.isin(g["route_osm_id"][transit], t["route_pieces"]["route_osm_id"]).all(), "gateways: маршрут транспортного входа отсутствует в route_pieces")
+    _expect(((g["arc"][road] != none["u32"]) & (g["inside_node"][road] != none["u32"])).all(), "gateways: у дорожного входа нет дуги или внутреннего конца")
+    # Время пересадки согласовано с пешими параметрами (±1 с на округление расстояния до см).
+    mob, est, tr = t["mobility"], t["mobility_estimates"], t["transfers"]
+    expected_walk = np.array([transfer_walk_s(int(d), int(mob["walk_speed_mm_s"][0]) / 1000, int(mob["transfer_overhead_s"][0]), int(est["walk_detour"][0]) / SHARE_ONE)
+                              for d in tr["distance_cm"]], dtype=np.int64)
+    _expect((np.abs(tr["walk_s"].astype(np.int64) - expected_walk) <= 1).all(), "transfers.walk_s: не согласовано с расстоянием, скоростью, надбавкой и walk_detour")
     # Дорожный вход: дуга с тем же классом, не внутренняя; внутренний узел — один из её концов.
     rows = np.nonzero(road & (g["arc"] != none["u32"]))[0]
     arc_of = g["arc"][rows].astype(np.int64)

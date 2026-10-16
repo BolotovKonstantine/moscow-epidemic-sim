@@ -164,7 +164,11 @@ class SimTablesTests(unittest.TestCase):
         self.assertEqual(self.tables["road_arcs"].rows, 2 * len(roads))
         self.assertEqual(self.tables["stops"].rows, len(read_csv(self.out / "transit_stops.csv.gz")))
         self.assertEqual(self.tables["transfers"].rows, len(read_csv(self.out / "transit_transfers.csv.gz")))
-        self.assertEqual(self.tables["gateways"].rows, len(read_csv(self.out / "gateways.csv.gz")))
+        self.assertEqual(self.tables["gateways"].rows, len(read_csv(self.out / "gateways.csv.gz")) - self.report["sim"]["road_gateways_without_inside_end"])
+        transfers = read_csv(self.out / "transit_transfers.csv.gz")
+        mobility = self.config["model_assumptions"]
+        self.assertEqual(self.column("transfers", "walk_s").tolist(),   # прямая × walk_detour, как у близких остановок
+                         [max(1, round(float(r["distance_m"]) * mobility["mobility"]["walk_detour"] / mobility["transfer_walk_speed_mps"] + mobility["transfer_overhead_s"])) for r in transfers])
         facilities = read_csv(self.out / "facilities.csv.gz")
         self.assertEqual(self.tables["facilities"].rows, len(facilities))
         offsets = self.column("facilities", "building_offset")
@@ -522,6 +526,7 @@ class SimValidationTests(unittest.TestCase):
             ("census_study", self.set_value("general", 0, 1000), "учащихся больше, чем указавших"),
             ("census_household_children", self.set_value("children_in_3_plus", 2, 1), "меньше трёх на домохозяйство"),
             ("transit_modes", self.set_value("wagons", 0, 17), "wagons: значение больше 16"),
+            ("gateways", self.set_value("inside_node", road, mtab.NONE["u32"]), "нет дуги или внутреннего конца"),
         ]
         for name, change, message in cases:
             with self.subTest(table=name, message=message):

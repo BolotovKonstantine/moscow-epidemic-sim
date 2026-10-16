@@ -361,6 +361,12 @@ if __name__ == "__main__":
 
 
 class CensusTests(unittest.TestCase):
+    def test_infinite_number_is_a_data_error(self):
+        from tools.city_pipeline.census import number
+        for text in ("1e400", "-5", "2.5"):
+            with self.subTest(text=text), self.assertRaises(ManifestError):
+                number(text)
+
     def test_broken_sheet_structure_is_a_data_error(self):
         import zipfile
         from tools.city_pipeline.census import ROLES, read_census
