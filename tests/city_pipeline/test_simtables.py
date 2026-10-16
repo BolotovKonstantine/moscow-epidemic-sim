@@ -610,6 +610,43 @@ class SimValidationTests(unittest.TestCase):
             with self.subTest(table=name, message=message):
                 self.assert_rejected(self.rewrite(name, change), message)
 
+    def test_twelfth_review_round_checks(self):
+        arcs = mtab.decode_table((self.out / "sim" / "road_arcs.mtab").read_bytes(), "road_arcs").columns
+        nodes = mtab.decode_table((self.out / "sim" / "road_nodes.mtab").read_bytes(), "road_nodes").columns
+        gateways = mtab.decode_table((self.out / "sim" / "gateways.mtab").read_bytes(), "gateways").columns
+        stops = mtab.decode_table((self.out / "sim" / "stops.mtab").read_bytes(), "stops").columns
+        road = int(np.nonzero(gateways["kind"][1] == 0)[0][0])
+        arc = int(gateways["arc"][1][road])
+        by_edge = arcs["by_edge"][1].astype(np.int64)
+        position = int(np.nonzero(by_edge == arc)[0][0])
+        reverse_arc = int(by_edge[position + 1])   # пара прямой дуги — следующая в by_edge
+        offsets = nodes["arc_offset"][1].astype(np.int64)
+        source = np.repeat(np.arange(len(offsets) - 1), np.diff(offsets))
+        inside = nodes["inside"][1]
+        internal = np.nonzero((arcs["internal"][1] == 1) & (inside[source] == 1))[0]
+        outside_stop = np.nonzero(stops["inside"][1] == 0)[0]
+
+        def flip_internal(columns, rows):   # обе дуги внутреннего ребра помечены внешними
+            row = int(internal[0])
+            pair = by_edge[int(np.nonzero(by_edge == row)[0][0]) ^ 1]
+            return [(n, d, np.where(np.isin(np.arange(len(v)), [row, pair]), 0, v) if n == "internal" else v) for n, d, v in columns], rows
+
+        def swap_rows(columns, rows):   # две строки зданий поменялись местами
+            order = np.arange(rows)
+            order[[0, 1]] = order[[1, 0]]
+            return [(n, d, v[order]) for n, d, v in columns], rows
+
+        cases = [
+            ("gateways", self.set_value("arc", road, reverse_arc), "не прямая дуга ребра"),
+            ("road_arcs", flip_internal, "помечено внешним|car_main|road_node_depart|road_node_arrive"),
+            ("zones", swap_rows, "строки не в порядке|жители зданий по зонам|точка вне квадрата"),
+        ]
+        if len(outside_stop):
+            cases.append(("transfers", self.set_value("to_stop", 0, int(outside_stop[0])), "пересадка с остановкой вне региона"))
+        for name, change, message in cases:
+            with self.subTest(table=name, message=message):
+                self.assert_rejected(self.rewrite(name, change), message)
+
     def test_sim_metadata_is_checked_without_files(self):
         for edit, message in ((lambda a: a.update(data_kind="game_setting"), "должен быть estimated"),
                               (lambda a: a.update(path="sim2/index.json"), "должен быть sim/index.json")):

@@ -547,7 +547,9 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
         ("route_osm_id", "u64", piece_route), ("piece", "u16", piece_number), ("mode", "u8", piece_mode),
         ("stop_offset", "u32", stop_offset), ("stops", "u32", pool_stops), ("segment_cm", "u32", pool_segment),
     ]
-    transfers = _read_csv(package_dir / "transit_transfers.csv.gz")
+    # Пересадка снаружи региона не разрешена моделью: пары с внешней остановкой не экспортируются.
+    transfers = [row for row in _read_csv(package_dir / "transit_transfers.csv.gz")
+                 if stops[stop_index[row["from_stop"]]]["inside"] == "1" and stops[stop_index[row["to_stop"]]]["inside"] == "1"]
     tables["transfers"] = [
         ("stop_area_osm_id", "u64", [_relation(t["stop_area_id"], "transit_transfers") for t in transfers]),
         ("from_stop", "u32", [stop_index[t["from_stop"]] for t in transfers]),
@@ -852,6 +854,15 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     owner = np.repeat(np.arange(len(fac["building_offset"]) - 1), np.diff(fac["building_offset"].astype(np.int64)))
     pairs = np.column_stack((owner, fac["buildings"].astype(np.int64)))
     _expect(len(np.unique(pairs, axis=0)) == len(pairs), "facilities.buildings: здание повторяется в одном учреждении")
+    # Строки — в порядке стабильных ID пакета (как в промежуточных файлах): от него зависят компактные индексы и ID жителей.
+    for name in ("buildings", "stops", "facilities"):
+        ids = [OSM_TYPES[kind] + str(number) for kind, number in zip(t[name]["osm_type"].tolist(), t[name]["osm_id"].tolist())]
+        _expect(all(x < y for x, y in zip(ids, ids[1:])), f"{name}: строки не в порядке стабильных ID")
+    _expect(not (np.diff(t["road_nodes"]["osm_id"].astype(np.int64)) <= 0).any(), "road_nodes: строки не в порядке ID узлов")
+    zone_ids = [f"g{x}_{y}" for x, y in zip(t["zones"]["ix"].tolist(), t["zones"]["iy"].tolist())]
+    _expect(all(x < y for x, y in zip(zone_ids, zone_ids[1:])), "zones: строки не в порядке ID зон")
+    route_ids = [(f"r{route}", piece) for route, piece in zip(t["route_pieces"]["route_osm_id"].tolist(), t["route_pieces"]["piece"].tolist())]
+    _expect(all(x < y for x, y in zip(route_ids, route_ids[1:])), "route_pieces: куски не в порядке ID маршрутов")
     # Числа строк таблиц-справочников — до любых обращений к ним по кодам.
     _expect(len(t["road_classes"]["car_speed_mm_s"]) == len(codes["road_class"]), "road_classes: строка на каждый класс дороги")
     _expect(len(t["transit_modes"]["speed_mm_s"]) == len(codes["mode"]), "transit_modes: строка на каждый вид транспорта")
@@ -947,7 +958,9 @@ def _cross_checks(t, codes, zone_cell_m, origin):
         fallback_distance = cKDTree(node_xy[candidates]).query(points)[0] if len(candidates) else np.full(len(points), np.inf)
         distance = np.full(len(points), np.inf)
         distance[bound] = np.hypot(*(points[bound] - node_xy[node[bound]]).T)
-        near_main = (distance <= limit + tolerance) & (distance <= main_distance + tolerance)
+        in_main = np.zeros(len(points), dtype=bool)
+        in_main[bound] = n["car_main"][node[bound]] == 1
+        near_main = in_main & (distance <= limit + tolerance) & (distance <= main_distance + tolerance)
         fallback = (main_distance >= limit - tolerance) & (distance <= fallback_distance + tolerance)
         _expect(((near_main | fallback) & bound | ~bound & ~np.isfinite(fallback_distance)).all(),
                 f"buildings.{column}: узел не по правилу привязки (ближайший узел основной компоненты или запасной)")
@@ -1029,6 +1042,8 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     _expect(((g["arc"][road] != none["u32"]) & (g["inside_node"][road] != none["u32"])).all(), "gateways: у дорожного входа нет дуги или внутреннего конца")
     # Время пересадки согласовано с пешими параметрами (±1 с на округление расстояния до см).
     mob, est, tr = t["mobility"], t["mobility_estimates"], t["transfers"]
+    # Пересадка — только между остановками внутри региона: снаружи житель не пересаживается (mobility.md).
+    _expect(((t["stops"]["inside"][tr["from_stop"]] == 1) & (t["stops"]["inside"][tr["to_stop"]] == 1)).all(), "transfers: пересадка с остановкой вне региона")
     expected_walk = np.array([transfer_walk_s(int(d), int(mob["walk_speed_mm_s"][0]) / 1000, int(mob["transfer_overhead_s"][0]), int(est["walk_detour"][0]) / SHARE_ONE)
                               for d in tr["distance_cm"]], dtype=np.int64)
     _expect(np.array_equal(tr["walk_s"].astype(np.int64), expected_walk), "transfers.walk_s: не согласовано с расстоянием, скоростью, надбавкой и walk_detour")
@@ -1041,6 +1056,15 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     rows = np.nonzero(road & (g["arc"] != none["u32"]))[0]
     arc_of = g["arc"][rows].astype(np.int64)
     _expect((a["road_class"][arc_of] == g["road_class"][rows]).all() and (a["internal"][arc_of] == 0).all(), "gateways: класс или внутренний флаг дуги дорожного входа не совпадает")
+    _expect((a["reverse"][arc_of] == 0).all(), "gateways: arc дорожного входа — не прямая дуга ребра")
+    # Обратное условие internal: дуга с обоими концами внутри не внутренняя только если её ребро — дорожный вход.
+    both_inside = (n["inside"][source] == 1) & (n["inside"][a["to"]] == 1)
+    gateway_edges = np.unique(np.column_stack((a["way_id"][arc_of].astype(np.int64), a["way_part"][arc_of].astype(np.int64))), axis=0)
+    excluded = np.nonzero(both_inside & (a["internal"] == 0))[0]
+    if len(excluded):
+        keys = np.column_stack((a["way_id"][excluded].astype(np.int64), a["way_part"][excluded].astype(np.int64)))
+        known = {tuple(k) for k in gateway_edges.tolist()}
+        _expect(all(tuple(k) in known for k in keys.tolist()), "road_arcs.internal: внутреннее ребро помечено внешним, хотя не является входом")
     node = g["inside_node"][rows].astype(np.int64)
     _expect(((node == none["u32"]) | (node == source[arc_of]) | (node == a["to"][arc_of].astype(np.int64))).all(), "gateways: inside_node не является концом дуги входа")
     _expect((n["inside"][node[node != none["u32"]]] == 1).all(), "gateways: inside_node дорожного входа вне региона")

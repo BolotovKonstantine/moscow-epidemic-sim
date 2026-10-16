@@ -92,6 +92,9 @@ class ConfigTests(unittest.TestCase):
             del old_config["model_assumptions"]["mobility"]
             path.write_text(json.dumps(old_config))
             self.assertEqual(load_config(path)["config_version"], 1)
+            old_config["model_assumptions"]["headway_minutes"]["by_mode"]["bus"]["morning_peak"] = 0.001   # v1 не пишет sim/: допустимо
+            path.write_text(json.dumps(old_config))
+            self.assertEqual(load_config(path)["config_version"], 1)
             with self.assertRaisesRegex(ManifestError, "ожидается 2"):
                 load_config(path, versions=(2,))
             from tests.city_pipeline.synthetic_city import mini_city_config
