@@ -21,7 +21,7 @@ from scipy.spatial import cKDTree
 from . import mtab
 from .buildings import FUNCTIONS
 from .geo import Projector
-from .manifest import ManifestError, parse_json_bytes
+from .manifest import MAP_INDEX_MAX_BYTES, ManifestError, parse_json_bytes
 from .maptiles import BUILDING_CLASSES, FACILITY_CLASSES, HIGHWAY_CLASS, STOP_CLASSES, STOP_MODES
 from .writers import write_json
 
@@ -64,8 +64,8 @@ SCHEMA = {
         _col("inside_mkad", "u8", "rows", ("bool",)),
         _col("function", "u8", "rows", ("code", "building_function", False)),
         _col("function_source", "u8", "rows", ("code", "function_source", False)),
-        _col("footprint_dm2", "u32"),
-        _col("floor_area_dm2", "u32"),
+        _col("footprint_dm2", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)),
+        _col("floor_area_dm2", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)),
         _col("residents", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)),
         *[_col(f"share_{name}", "u16", "rows", ("max", SHARE_ONE)) for name in FUNCTIONS],
         _col("road_node_depart", "u32", "rows", ("ref", "road_nodes", True)),
@@ -74,7 +74,7 @@ SCHEMA = {
     "zones": {"version": 1, "kind": "estimated", "unique": ["ix", "iy"], "columns": [
         _col("ix", "i32"), _col("iy", "i32"),
         _col("residents", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)),
-        _col("area_dm2", "u32"),
+        _col("area_dm2", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)),
         _col("moscow_share", "u16", "rows", ("max", SHARE_ONE)),
         _col("inside_mkad_share", "u16", "rows", ("max", SHARE_ONE)),
     ]},
@@ -90,7 +90,7 @@ SCHEMA = {
     ]},
     "road_arcs": {"version": 1, "kind": "estimated", "unique": [], "columns": [
         _col("to", "u32", "rows", ("ref", "road_nodes", False)),
-        _col("length_cm", "u32"),
+        _col("length_cm", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)),   # метки none/unknown зарезервированы, длина обязательна
         _col("road_class", "u8", "rows", ("code", "road_class", False)),
         _col("car", "u8", "rows", ("bool",)),
         _col("internal", "u8", "rows", ("bool",)),
@@ -117,13 +117,13 @@ SCHEMA = {
         _col("mode", "u8", "rows", ("code", "mode", False)),
         _col("stop_offset", "u32", "rows+1", ("csr", "stops_pool")),
         _col("stops", "u32", ("pool", "stop_offset"), ("ref", "stops", False)),
-        _col("segment_cm", "u32", ("pool", "stop_offset")),
+        _col("segment_cm", "u32", ("pool", "stop_offset"), ("max", mtab.UNKNOWN["u32"] - 1)),
     ]},
     "transfers": {"version": 1, "kind": "estimated", "unique": ["from_stop", "to_stop", "stop_area_osm_id"], "columns": [
         _col("stop_area_osm_id", "u64", "rows", ("min", 1)),
         _col("from_stop", "u32", "rows", ("ref", "stops", False)),
         _col("to_stop", "u32", "rows", ("ref", "stops", False)),
-        _col("distance_cm", "u32"),
+        _col("distance_cm", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)),
         _col("walk_s", "u32", "rows", ("max", 86_400)),
     ]},
     "facilities": {"version": 1, "kind": "estimated", "unique": ["osm_type", "osm_id"], "columns": [
@@ -853,7 +853,8 @@ def _cross_checks(t, codes):
         for column in ("length_cm", "road_class", "internal", "bridge", "tunnel", "layer"):
             _expect(np.array_equal(a[column][forward], a[column][backward]), f"road_arcs.{column}: различается у прямой и обратной дуги ребра")
     # Узлы основной компоненты машины имеют исходящую дугу машины.
-    car_arc = (a["car"] == 1) & (a["internal"] == 1)
+    speed = t["road_classes"]["car_speed_mm_s"]
+    car_arc = (a["car"] == 1) & (a["internal"] == 1) & (speed[np.minimum(a["road_class"], len(speed) - 1)] > 0)
     has_out = np.bincount(source[car_arc], minlength=len(offsets) - 1) > 0
     _expect(not (n["car_main"].astype(bool) & ~has_out).any(), "road_nodes.car_main: узел без исходящей дуги машины")
     # Куски маршрутов: не меньше двух остановок, у последней остановки куска расстояние 0, номера кусков маршрута подряд.
@@ -891,6 +892,10 @@ def _cross_checks(t, codes):
             _expect(rows.any(), f"{name}: нет строк территории {codes['territory'][territory]}")
             low, high = c["age_low"][rows].astype(np.int64), c["age_high"][rows].astype(np.int64)
             _expect((low[1:] == high[:-1] + 1).all(), f"{name}: возрастные группы {codes['territory'][territory]} не идут встык")
+    # Категории по числу детей взаимоисключающие: их сумма не больше числа домохозяйств (иначе доля без детей отрицательна).
+    k = t["census_household_children"]
+    with_children = k["with_1_child"].astype(np.int64) + k["with_2_children"].astype(np.int64) + k["with_3_plus_children"].astype(np.int64)
+    _expect((with_children <= k["households"].astype(np.int64)).all(), "census_household_children: домохозяйств с детьми больше, чем домохозяйств")
     # Размеры домохозяйств — полная сетка: 1–6 и 2–6 (6 — шесть и более) для каждой территории, по порядку.
     for name, sizes in (("census_household_size", range(1, 7)), ("census_household_children", range(2, 7))):
         expected = [(territory, size) for territory in range(len(codes["territory"])) for size in sizes]
@@ -978,6 +983,8 @@ def validate_sim_index(path: Path, manifest: dict, asset_id: str) -> int:
     _expect(sim_asset["path"] == f"sim/{INDEX_NAME}", f"{asset_id}: путь индекса расчётных таблиц должен быть sim/{INDEX_NAME}")
     map_index_path = path.parent.parent / map_asset["path"]   # path — <пакет>/sim/index.json
     try:
+        # Предел индекса карты — тот же, что у validate_map_index: порядок файлов в паспорте не должен его обходить.
+        _expect(map_index_path.stat().st_size <= MAP_INDEX_MAX_BYTES, f"{asset_id}: индекс карты больше {MAP_INDEX_MAX_BYTES} байт")
         origin = parse_json_bytes(map_index_path.read_bytes(), map_index_path)["plane"]["origin_metric"]
     except (OSError, KeyError, TypeError) as error:
         raise SimError(f"{asset_id}: не удалось прочитать плоскость карты {map_asset['path']}: {error}") from error

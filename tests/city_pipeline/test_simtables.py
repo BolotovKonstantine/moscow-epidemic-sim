@@ -392,6 +392,9 @@ class SimValidationTests(unittest.TestCase):
             ("stops", self.set_value("modes", 0, 255), None),   # 8 видов — маска u8 занята целиком, 255 допустимо
             ("zones", self.set_value("moscow_share", 0, 10_001), "больше 10000"),
             ("facilities", self.set_value("capacity", 0, 0), "все значения должны быть"),
+            ("road_arcs", self.set_value("length_cm", 0, mtab.NONE["u32"]), "length_cm: значение больше"),
+            ("census_household_children", self.set_value("with_1_child", 0, 10 ** 9), "домохозяйств с детьми больше"),
+            ("road_classes", self.set_value("car_speed_mm_s", 2, 0), "car_main: узел без исходящей дуги машины"),
             ("transit_periods", self.set_value("end_s", 0, 1), "разбивать сутки"),
             ("road_arcs", self.set_value("length_cm", 0, 7), "различается у прямой и обратной"),
         ]
@@ -443,6 +446,19 @@ class SimValidationTests(unittest.TestCase):
         outside = np.nonzero(stops["inside"][1] == 0)[0]
         if len(outside):
             self.assert_rejected(self.rewrite("gateways", self.set_value("stop", row, int(outside[0]))), "вне региона")
+
+    def test_oversized_map_index_is_rejected_before_reading(self):
+        package = self.copy()
+        manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+        manifest["assets"].sort(key=lambda a: a["role"] != "sim")   # sim раньше map: предел карты всё равно действует
+        map_index = package / "map" / "index.json"
+        with map_index.open("a", encoding="utf-8") as stream:
+            stream.write(" " * (9 << 20))
+        data = map_index.read_bytes()
+        asset = next(a for a in manifest["assets"] if a["role"] == "map")
+        asset["size_bytes"], asset["sha256"] = len(data), hashlib.sha256(data).hexdigest()
+        (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        self.assert_rejected(package, "индекс карты больше")
 
     def test_household_sizes_must_be_complete(self):
         def drop_last(columns, rows):
