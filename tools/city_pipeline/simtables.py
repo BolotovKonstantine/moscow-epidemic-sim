@@ -331,11 +331,15 @@ def car_graph(node_count, arc_from, arc_to, arc_ok):
     sizes = np.bincount(labels)
     first = np.full(len(sizes), node_count, dtype=np.int64)
     np.minimum.at(first, labels, np.arange(node_count))
-    # Выбор — только среди компонент с исходящей дугой: изолированный узел с меньшим номером не должен выиграть равенство.
+    # Выбор — только среди компонент с узлом, пригодным и для отправления, и для прибытия (есть исходящая и входящая дуги):
+    # изолированный узел или узел только с исходящей дугой не должен выиграть равенство — здание привязывается к нему в обе стороны.
+    usable = has_out & has_in
+    if not usable.any():
+        return labels, np.zeros(node_count, dtype=bool), has_out, has_in
     driveable = np.zeros(len(sizes), dtype=bool)
-    driveable[labels[has_out]] = True
+    driveable[labels[usable]] = True
     best = min(np.nonzero(driveable)[0].tolist(), key=lambda c: (-sizes[c], first[c]))
-    return labels, (labels == best) & has_out, has_out, has_in
+    return labels, (labels == best) & usable, has_out, has_in
 
 
 def _nearest(tree_points, tree_index, query, max_distance=np.inf):
@@ -474,6 +478,9 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
     for target, mask in ((depart, car_out), (arrive, car_in)):
         candidates = np.nonzero(mask & (node_inside == 1))[0]
         target[far], _ = _nearest(node_points[candidates], candidates, points[far])
+    # Нет узла хотя бы для одного направления — здание без привязки в обе стороны (явное «нет пути»).
+    missing = (depart == mtab.NONE["u32"]) | (arrive == mtab.NONE["u32"])
+    depart[missing] = arrive[missing] = mtab.NONE["u32"]
     tables["buildings"] = [
         ("osm_type", "u8", [t for t, _ in building_osm]), ("osm_id", "u64", [n for _, n in building_osm]),
         ("x_cm", "i32", building_x), ("y_cm", "i32", building_y),
@@ -1040,6 +1047,11 @@ def _cross_checks(t, codes, zone_cell_m, origin):
         expected = [(region, size) for region in range(len(codes["census_region"])) for size in sizes]
         _expect(list(zip(t[name]["region"].tolist(), t[name]["size"].tolist())) == expected,
                 f"{name}: нужны строки (регион, размер) {expected[0]}…{expected[-1]} подряд, без пропусков")
+    # Все домохозяйства размера 2–6 в таблице детей — те же, что в таблице размеров (знаменатель долей детей).
+    size_rows = t["census_household_size"]
+    by_size = {(int(r), int(s)): int(h) for r, s, h in zip(size_rows["region"], size_rows["size"], size_rows["households"])}
+    _expect(all(by_size.get((int(r), int(s))) == int(h) for r, s, h in zip(k["region"], k["size"], k["households"])),
+            "census_household_children: число домохозяйств не совпадает с census_household_size")
     g = t["gateways"]
     road, transit = g["kind"] == GATEWAY_KINDS.index("road"), g["kind"] == GATEWAY_KINDS.index("transit")
     none = mtab.NONE
@@ -1167,6 +1179,12 @@ def _matches_reexport(sim_dir: Path, manifest: dict):
     _expect(config_asset is not None, "роль sim требует build_config.json (роль config) для сверки с файлами пакета")
     config = parse_json_bytes((package_dir / config_asset["path"]).read_bytes(), package_dir / config_asset["path"])
     _expect(isinstance(config, dict) and config.get("config_version") == 2, "build_config.json пакета с ролью sim должен быть версии 2")
+    # Встроенная конфигурация проверяется той же схемой v2, что у build: ошибка структуры — сообщение, а не KeyError.
+    from jsonschema import Draft202012Validator
+    schema = parse_json_bytes((Path(__file__).parent / "schemas" / "build-config-v2.schema.json").read_bytes(), "build-config-v2.schema.json")
+    errors = sorted(Draft202012Validator(schema).iter_errors(config), key=lambda error: list(error.absolute_path))
+    _expect(not errors, "build_config.json пакета не соответствует схеме v2: " + "; ".join(
+        f"{'.'.join(map(str, e.absolute_path)) or '$'}: {e.message}" for e in errors[:5]))
     source_roles = dict(config["sources"], config=f"build-config-{config['package_id']}")
     try:
         census = census_from_tables(sim_dir)

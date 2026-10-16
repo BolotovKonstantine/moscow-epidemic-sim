@@ -104,9 +104,14 @@ class CarGraphTests(unittest.TestCase):
         self.assertEqual(main.tolist(), [True, True, False, False])
 
     def test_isolated_node_does_not_win_tie(self):
-        # Узел 0 без дуг и дуга 1→2: все компоненты размера 1, основная — с исходящей дугой (узел 1), а не узел 0.
+        # Узел 0 без дуг, одностороннее 1→2 и цикл 3⇄4: основная — {3, 4}, а не изолированный узел 0.
+        _, main, _, _ = car_graph(5, np.array([1, 3, 4]), np.array([2, 4, 3]), np.ones(3, dtype=bool))
+        self.assertEqual(main.tolist(), [False, False, False, True, True])
+
+    def test_one_way_only_node_is_not_main(self):
+        # Только дуга 1→2: ни у одного узла нет и исходящей, и входящей дуги — к основной компоненте нельзя и приехать, и уехать.
         _, main, _, _ = car_graph(3, np.array([1]), np.array([2]), np.array([True]))
-        self.assertEqual(main.tolist(), [False, True, False])
+        self.assertFalse(main.any())
 
     def test_no_arcs_means_no_main_component(self):
         _, main, _, _ = car_graph(3, np.array([0]), np.array([1]), np.array([False]))
@@ -691,6 +696,7 @@ class SimValidationTests(unittest.TestCase):
                     for n, d, v in columns], rows
 
         cases = [
+            ("census_household_children", self.set_value("households", 0, 10 ** 6), "число домохозяйств не совпадает"),
             ("road_arcs", swap_direction, "повторным экспортом|car_main|road_node"),
             ("census_household_children", self.set_value("with_2_children", 0, 1), "больше, чем позволяет размер"),
             ("transit_modes", self.set_value("speed_mm_s", 0, 1), "дольше 7 суток|повторным экспортом"),
@@ -702,6 +708,19 @@ class SimValidationTests(unittest.TestCase):
         package = self.copy()
         self.reseal_index(package, lambda i: next(e for e in i["tables"] if e["name"] == "census_age").update(source_ids=["build-config-synthetic-mini-city"]))
         self.assert_rejected(package, "повторным экспортом|источники")
+
+    def test_broken_embedded_config_is_a_package_error(self):
+        package = self.copy()
+        config_path = package / "build_config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        del config["sources"]
+        config_path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+        manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+        asset = next(a for a in manifest["assets"] if a["role"] == "config")
+        data = config_path.read_bytes()
+        asset["size_bytes"], asset["sha256"] = len(data), hashlib.sha256(data).hexdigest()
+        (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        self.assert_rejected(package, "не соответствует схеме v2")
 
     def test_sim_metadata_is_checked_without_files(self):
         for edit, message in ((lambda a: a.update(data_kind="game_setting"), "должен быть estimated"),

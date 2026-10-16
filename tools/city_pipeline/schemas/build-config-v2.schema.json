@@ -78,7 +78,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["route_modes", "stop_roles", "platform_roles", "stop_platform_pair_m", "stop_platform_pair_same_name_m"],
       "properties": {
-        "route_modes": {"$ref": "#/$defs/strings"},
+        "route_modes": {"type": "array", "items": {"$ref": "#/$defs/mode"}},
         "stop_roles": {"$ref": "#/$defs/strings"},
         "platform_roles": {"$ref": "#/$defs/strings"},
         "stop_platform_pair_m": {"type": "number", "minimum": 0},
