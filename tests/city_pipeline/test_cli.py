@@ -98,6 +98,11 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(ManifestError, "quality.sample_seed"):
                 load_config(path)
             # Заголовок расчётной таблицы строже схемы: такой ID отклоняется до тяжёлой сборки, а не на экспорте sim/.
+            broken = json.loads(real.read_text(encoding="utf-8"))
+            broken["zones"]["cell_size_m"] = 1000.5   # в индекс sim/ пишется целым — дробное отклоняется сразу
+            path.write_text(json.dumps(broken))
+            with self.assertRaisesRegex(ManifestError, "zones.cell_size_m"):
+                load_config(path)
             for key, value, message in (("package_id", "custom_city", "package_id"), ("package_version", "1.0.0-very-long-version", "package_version")):
                 broken = json.loads(real.read_text(encoding="utf-8"))
                 broken[key] = value

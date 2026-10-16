@@ -29,6 +29,7 @@ INDEX_FORMAT = "mesim-sim-index"
 INDEX_VERSION = 1
 INDEX_NAME = "index.json"
 MAX_TABLE_BYTES = 1 << 30   # 1 ГиБ: больший файл ядро не читает целиком в память
+MAX_INDEX_BYTES = 1 << 20   # 1 МиБ: индекс — десятки КБ; больший не читается
 OSM_TYPES = ("n", "w", "r")
 TERRITORIES = ("moscow", "buffer")
 FUNCTION_SOURCES = ("tag", "tag+poi", "poi", "site", "unknown")
@@ -131,7 +132,7 @@ SCHEMA = {
         _col("kind", "u8", "rows", ("code", "facility_kind", False)),
         _col("x_cm", "i32"), _col("y_cm", "i32"),
         _col("zone", "u32", "rows", ("ref", "zones", True)),
-        _col("capacity", "u32"),
+        _col("capacity", "u32", "rows", ("all", mtab.UNKNOWN["u32"])),   # источника вместимости нет: всегда unknown, не 0
         _col("building_offset", "u32", "rows+1", ("csr", "buildings_pool")),
         _col("buildings", "u32", ("pool", "building_offset"), ("ref", "buildings", False)),
     ]},
@@ -315,7 +316,10 @@ def car_graph(node_count, arc_from, arc_to, arc_ok):
     sizes = np.bincount(labels)
     first = np.full(len(sizes), node_count, dtype=np.int64)
     np.minimum.at(first, labels, np.arange(node_count))
-    best = min(range(len(sizes)), key=lambda c: (-sizes[c], first[c]))
+    # Выбор — только среди компонент с исходящей дугой: изолированный узел с меньшим номером не должен выиграть равенство.
+    driveable = np.zeros(len(sizes), dtype=bool)
+    driveable[labels[has_out]] = True
+    best = min(np.nonzero(driveable)[0].tolist(), key=lambda c: (-sizes[c], first[c]))
     return labels, (labels == best) & has_out, has_out, has_in
 
 
@@ -760,7 +764,7 @@ def _check_index(index, package_id, package_version, kind, plane_expected, manif
         else:
             _expect(estimation is None, f"sim/index.json {name}: оценка указана у вида {entry['data_kind']}")
         ids = entry["source_ids"]
-        _expect(isinstance(ids, list) and ids and ids == sorted(set(ids)) and all(isinstance(i, str) for i in ids), f"sim/index.json {name}: source_ids — непустой отсортированный список")
+        _expect(isinstance(ids, list) and ids and all(isinstance(i, str) for i in ids) and ids == sorted(set(ids)), f"sim/index.json {name}: source_ids — непустой отсортированный список строк")
         if manifest_sources is not None:
             unknown = sorted(set(ids) - set(manifest_sources))
             _expect(not unknown, f"sim/index.json {name}: источники {unknown} отсутствуют в паспорте")
@@ -798,6 +802,8 @@ def _check_column_values(table_name, column, dtype, values, checks, sizes, codes
             _expect(not (values < check[1]).any(), f"{what}: значение меньше {check[1]}")
         elif rule == "mask":
             _expect(not (values >= (1 << len(codes[check[1]]))).any(), f"{what}: маска вне набора {check[1]}")
+        elif rule == "all":
+            _expect(not (values != check[1]).any(), f"{what}: все значения должны быть {check[1]}")
         elif rule == "csr":
             _expect(len(values) > 0 and values[0] == 0 and not (np.diff(values.astype(np.int64)) < 0).any(), f"{what}: смещения CSR должны начинаться с 0 и не убывать")
             _expect(int(values[-1]) == sizes[check[1]], f"{what}: последнее смещение {int(values[-1])} не равно {sizes[check[1]]}")
@@ -897,6 +903,10 @@ def _cross_checks(t, codes):
     _expect((g["stop"][road] == none["u32"]).all() and (g["stop"][transit] != none["u32"]).all() and (g["arc"][transit] == none["u32"]).all()
             and (g["inside_node"][transit] == none["u32"]).all() and (g["route_osm_id"][road] == none["u64"]).all(),
             "gateways: поля дорожного и транспортного входа перепутаны")
+    # Транспортный вход — остановка внутри региона на маршруте, у которого есть куски: иначе рейсом не выехать и не вернуться.
+    stops_of = g["stop"][transit].astype(np.int64)
+    _expect((t["stops"]["inside"][stops_of] == 1).all(), "gateways: остановка транспортного входа вне региона")
+    _expect(np.isin(g["route_osm_id"][transit], t["route_pieces"]["route_osm_id"]).all(), "gateways: маршрут транспортного входа отсутствует в route_pieces")
 
 
 def read_table(path: Path, entry: dict, package_id: str, package_version: str):
@@ -941,6 +951,7 @@ def validate_sim_dir(sim_dir: Path, package_id: str, package_version: str, *, ki
     plane — ожидаемые (origin_metric, metric_crs) плоскости карты."""
     index_path = sim_dir / INDEX_NAME
     _expect(index_path.is_file(), f"{index_path}: индекс расчётных таблиц отсутствует")
+    _expect(index_path.stat().st_size <= MAX_INDEX_BYTES, f"{index_path}: индекс больше {MAX_INDEX_BYTES} байт")
     index = parse_json_bytes(index_path.read_bytes(), index_path)
     entries = _check_index(index, package_id, package_version, kind, plane, manifest_sources)
     codes = index["codes"]

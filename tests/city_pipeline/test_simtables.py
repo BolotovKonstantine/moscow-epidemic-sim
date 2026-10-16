@@ -103,6 +103,11 @@ class CarGraphTests(unittest.TestCase):
         _, main, _, _ = car_graph(4, arcs[:, 0], arcs[:, 1], np.ones(len(arcs), dtype=bool))
         self.assertEqual(main.tolist(), [True, True, False, False])
 
+    def test_isolated_node_does_not_win_tie(self):
+        # Узел 0 без дуг и дуга 1→2: все компоненты размера 1, основная — с исходящей дугой (узел 1), а не узел 0.
+        _, main, _, _ = car_graph(3, np.array([1]), np.array([2]), np.array([True]))
+        self.assertEqual(main.tolist(), [False, True, False])
+
     def test_no_arcs_means_no_main_component(self):
         _, main, _, _ = car_graph(3, np.array([0]), np.array([1]), np.array([False]))
         self.assertFalse(main.any())
@@ -359,6 +364,8 @@ class SimValidationTests(unittest.TestCase):
             (lambda i: i["tables"][0].update(data_kind="observed"), "вид данных"),
             (lambda i: i["codes"]["road_class"].reverse(), "коды road_class"),
             (lambda i: i["tables"][0].update(source_ids=["unknown-source"]), "отсутствуют в паспорте"),
+            (lambda i: i["tables"][0].update(source_ids=["synthetic-mini-city", 1]), "список строк"),
+            (lambda i: i.update(padding=" " * (2 << 20)), "индекс больше"),
         ]
         for edit, message in cases:
             with self.subTest(message=message):
@@ -384,6 +391,7 @@ class SimValidationTests(unittest.TestCase):
             ("road_arcs", self.set_value("by_edge", 0, 1), "перестановка"),
             ("stops", self.set_value("modes", 0, 255), None),   # 8 видов — маска u8 занята целиком, 255 допустимо
             ("zones", self.set_value("moscow_share", 0, 10_001), "больше 10000"),
+            ("facilities", self.set_value("capacity", 0, 0), "все значения должны быть"),
             ("transit_periods", self.set_value("end_s", 0, 1), "разбивать сутки"),
             ("road_arcs", self.set_value("length_cm", 0, 7), "различается у прямой и обратной"),
         ]
@@ -424,6 +432,17 @@ class SimValidationTests(unittest.TestCase):
         manifest["kind"] = "city_data"
         (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
         self.assert_rejected(package, "census_age: вид данных 'game_setting', ожидается observed")
+
+    def test_transit_gateway_needs_inside_stop_and_known_route(self):
+        gateways = mtab.decode_table((self.out / "sim" / "gateways.mtab").read_bytes(), "gateways").columns
+        transit = np.nonzero(gateways["kind"][1] == 1)[0]
+        self.assertGreater(len(transit), 0, "в мини-городе нужен транспортный вход")
+        row = int(transit[0])
+        self.assert_rejected(self.rewrite("gateways", self.set_value("route_osm_id", row, 999_999_999)), "маршрут транспортного входа")
+        stops = mtab.decode_table((self.out / "sim" / "stops.mtab").read_bytes(), "stops").columns
+        outside = np.nonzero(stops["inside"][1] == 0)[0]
+        if len(outside):
+            self.assert_rejected(self.rewrite("gateways", self.set_value("stop", row, int(outside[0]))), "вне региона")
 
     def test_household_sizes_must_be_complete(self):
         def drop_last(columns, rows):
