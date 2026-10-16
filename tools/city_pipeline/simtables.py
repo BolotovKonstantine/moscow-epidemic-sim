@@ -1002,6 +1002,11 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     expected_walk = np.array([transfer_walk_s(int(d), int(mob["walk_speed_mm_s"][0]) / 1000, int(mob["transfer_overhead_s"][0]), int(est["walk_detour"][0]) / SHARE_ONE)
                               for d in tr["distance_cm"]], dtype=np.int64)
     _expect(np.array_equal(tr["walk_s"].astype(np.int64), expected_walk), "transfers.walk_s: не согласовано с расстоянием, скоростью, надбавкой и walk_detour")
+    # Расстояние пересадки — прямая между её остановками (допуск 10 см, как у перегонов).
+    sx, sy = t["stops"]["x_cm"].astype(np.int64), t["stops"]["y_cm"].astype(np.int64)
+    a_stop, b_stop = tr["from_stop"].astype(np.int64), tr["to_stop"].astype(np.int64)
+    _expect((np.abs(tr["distance_cm"].astype(np.int64) - np.hypot(sx[b_stop] - sx[a_stop], sy[b_stop] - sy[a_stop])) <= 10).all(),
+            "transfers.distance_cm: не совпадает с расстоянием между остановками")
     # Дорожный вход: дуга с тем же классом, не внутренняя; внутренний узел — один из её концов.
     rows = np.nonzero(road & (g["arc"] != none["u32"]))[0]
     arc_of = g["arc"][rows].astype(np.int64)
@@ -1015,6 +1020,19 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     served = set(zip(np.repeat(pieces["route_osm_id"], counts).tolist(), pieces["stops"].tolist(), np.repeat(pieces["mode"], counts).tolist()))
     _expect(all(key in served for key in zip(g["route_osm_id"][transit].tolist(), g["stop"][transit].tolist(), g["mode"][transit].tolist())),
             "gateways: остановка транспортного входа не стоит на куске своего маршрута того же вида")
+    # Вход — внутренняя остановка, соседняя по куску с внешней (как в transit.py): а не любая остановка маршрута в глубине города.
+    inside = t["stops"]["inside"]
+    pool = pieces["stops"].astype(np.int64)
+    piece_of = np.repeat(np.arange(len(counts)), counts)
+    same_piece_next = np.r_[piece_of[1:] == piece_of[:-1], False]
+    outside_next = np.zeros(len(pool), dtype=bool)
+    outside_next[:-1] = same_piece_next[:-1] & (inside[pool[1:]] == 0)
+    outside_prev = np.zeros(len(pool), dtype=bool)
+    outside_prev[1:] = same_piece_next[:-1] & (inside[pool[:-1]] == 0)
+    border = set(zip(np.repeat(pieces["route_osm_id"], counts)[outside_next | outside_prev].tolist(), pool[outside_next | outside_prev].tolist(),
+                     np.repeat(pieces["mode"], counts)[outside_next | outside_prev].tolist()))
+    _expect(all(key in border for key in zip(g["route_osm_id"][transit].tolist(), g["stop"][transit].tolist(), g["mode"][transit].tolist())),
+            "gateways: у остановки транспортного входа нет соседней внешней остановки на куске маршрута")
 
 
 def read_table(path: Path, entry: dict, package_id: str, package_version: str):

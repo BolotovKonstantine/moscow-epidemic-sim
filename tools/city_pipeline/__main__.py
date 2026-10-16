@@ -56,10 +56,10 @@ def work_dir(root: Path, package_id) -> Path:
     return work
 
 
-SUPPORTED_CONFIG_VERSION = 1
-
-
-CONFIG_SCHEMA = Path(__file__).parent / "schemas" / "build-config-v1.schema.json"
+# Версия 1 — пакеты до 0.7.0 (без расчётных таблиц): читается для map-tile и fetch их пакетов.
+# Версия 2 — с переписью и параметрами поездок; её требует build, потому что он пишет sim/ (#36).
+CONFIG_SCHEMAS = {version: Path(__file__).parent / "schemas" / f"build-config-v{version}.schema.json" for version in (1, 2)}
+BUILD_CONFIG_VERSION = 2
 
 # В схеме конфигурации integer — только целые Python (60, а не 60.0): дальше значения идут в numpy
 # (размер выборки, seed), где float падает лишь в конце сборки. bool целым не считается.
@@ -70,7 +70,7 @@ StrictIntegerValidator = validators.extend(
 )
 
 
-def load_config(path: Path, data: bytes | None = None) -> dict:
+def load_config(path: Path, data: bytes | None = None, *, versions=tuple(CONFIG_SCHEMAS)) -> dict:
     """Конфигурация сборки версии 1, проверенная JSON Schema до любой работы.
 
     Неизвестная версия отклоняется отдельным сообщением; true не считается версией 1.
@@ -83,9 +83,9 @@ def load_config(path: Path, data: bytes | None = None) -> dict:
             raise ManifestError(f"Не удалось прочитать {path}: {error}") from error
     config = parse_json_bytes(data, path)
     version = config.get("config_version") if isinstance(config, dict) else None
-    if type(version) is not int or version != SUPPORTED_CONFIG_VERSION:
-        raise ManifestError(f"{path}: неподдерживаемая config_version {version!r}, ожидается {SUPPORTED_CONFIG_VERSION}")
-    errors = sorted(StrictIntegerValidator(read_json(CONFIG_SCHEMA)).iter_errors(config), key=lambda error: list(error.absolute_path))
+    if type(version) is not int or version not in versions:
+        raise ManifestError(f"{path}: неподдерживаемая config_version {version!r}, ожидается {' или '.join(map(str, versions))}")
+    errors = sorted(StrictIntegerValidator(read_json(CONFIG_SCHEMAS[version])).iter_errors(config), key=lambda error: list(error.absolute_path))
     if errors:
         raise ManifestError("\n".join(f"{path}: {'.'.join(map(str, error.absolute_path)) or '$'}: {error.message}" for error in errors))
     try:
@@ -93,16 +93,17 @@ def load_config(path: Path, data: bytes | None = None) -> dict:
         Projector(config["metric_crs"])
     except Exception as error:   # неизвестная CRS (pyproj) или не метрическая (GeoError)
         raise ManifestError(f"{path}: metric_crs {config['metric_crs']!r} не подходит: {error}") from error
-    # Пакет пишет расчётные таблицы sim/, их заголовок строже схемы конфигурации: проверяем до тяжёлой сборки.
-    from .mtab import TableError, check_package
-    try:
-        check_package(config["package_id"], config["package_version"])
-    except TableError as error:
-        raise ManifestError(f"{path}: {error}") from error
-    from .simtables import origin_cell_fits
-    origin_cell = config["model_assumptions"]["mobility"]["origin_cell_m"]
-    if not origin_cell_fits(config["zones"]["cell_size_m"], round(origin_cell * 100)):
-        raise ManifestError(f"{path}: model_assumptions.mobility.origin_cell_m {origin_cell} не делит зону {config['zones']['cell_size_m']} м на 1–16 ячеек по стороне")
+    if version >= 2:
+        # Пакет пишет расчётные таблицы sim/, их заголовок строже схемы конфигурации: проверяем до тяжёлой сборки.
+        from .mtab import TableError, check_package
+        try:
+            check_package(config["package_id"], config["package_version"])
+        except TableError as error:
+            raise ManifestError(f"{path}: {error}") from error
+        from .simtables import origin_cell_fits
+        origin_cell = config["model_assumptions"]["mobility"]["origin_cell_m"]
+        if not origin_cell_fits(config["zones"]["cell_size_m"], round(origin_cell * 100)):
+            raise ManifestError(f"{path}: model_assumptions.mobility.origin_cell_m {origin_cell} не делит зону {config['zones']['cell_size_m']} м на 1–16 ячеек по стороне")
     problem = _check_day_partition(config["model_assumptions"]["headway_minutes"]["periods"])
     if problem:
         raise ManifestError(f"{path}: model_assumptions.headway_minutes.periods: {problem}")
@@ -231,7 +232,7 @@ def command_build(args) -> int:
         raise ManifestError("Не найдена утилита osmium (osmium-tool)")
     registry = load_registry(args.registry)
     config_bytes = args.config.read_bytes()   # один снимок: из него и разбор, и хеш в паспорте
-    config = load_config(args.config, config_bytes)
+    config = load_config(args.config, config_bytes, versions=(BUILD_CONFIG_VERSION,))   # build пишет sim/: нужна версия 2
     # ID и версия проверяются до любой записи на диск: и рабочий, и выходной каталог — внутри своих корней.
     out = package_dir(args.out, config.get("package_id"), config.get("package_version"))
     # Отдельный рабочий каталог на версию и конфигурацию: разные сборки не делят вырезку.

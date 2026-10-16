@@ -530,6 +530,7 @@ class SimValidationTests(unittest.TestCase):
             ("buildings", self.set_value("x_cm", 0, int(buildings["x_cm"][1][0]) + 300_000), "buildings.zone: точка вне квадрата"),
             ("route_pieces", self.set_value("segment_cm", 0, int(pieces["segment_cm"][1][0]) + 1000), "длина перегона не совпадает"),
             ("transfers", self.set_value("walk_s", 0, 1), "transfers.walk_s"),
+            ("transfers", self.set_value("distance_cm", 0, 1), "transfers.walk_s|transfers.distance_cm"),
         ]
         for name, change, message in cases:
             with self.subTest(table=name, message=message):
@@ -555,6 +556,21 @@ class SimValidationTests(unittest.TestCase):
         outer_end = next(e for e in ends if nodes["inside"][1][e] == 0)
         pedestrian_arcs = np.nonzero(arcs["road_class"][1] == 1)[0]
         cases = [("gateways", self.set_value("inside_node", road, outer_end), "inside_node дорожного входа вне региона")]
+        # Транспортный вход на остановке маршрута без внешнего соседа: тот же маршрут и вид, но в глубине региона.
+        stops = mtab.decode_table((self.out / "sim" / "stops.mtab").read_bytes(), "stops").columns
+        pieces = mtab.decode_table((self.out / "sim" / "route_pieces.mtab").read_bytes(), "route_pieces").columns
+        transit = int(np.nonzero(gateways["kind"][1] == 1)[0][0])
+        route, mode = int(gateways["route_osm_id"][1][transit]), int(gateways["mode"][1][transit])
+        offsets_p = pieces["stop_offset"][1].astype(np.int64)
+        inner = None
+        for p in np.nonzero((pieces["route_osm_id"][1] == route) & (pieces["mode"][1] == mode))[0]:
+            chain = pieces["stops"][1][offsets_p[p]:offsets_p[p + 1]].astype(np.int64)
+            for j, stop in enumerate(chain):
+                neighbours = [chain[k] for k in (j - 1, j + 1) if 0 <= k < len(chain)]
+                if stops["inside"][1][stop] == 1 and all(stops["inside"][1][x] == 1 for x in neighbours):
+                    inner = int(stop)
+        self.assertIsNotNone(inner, "в мини-городе нужен маршрут входа с остановкой без внешнего соседа")
+        cases.append(("gateways", self.set_value("stop", transit, inner), "нет соседней внешней остановки"))
         if len(pedestrian_arcs):
             cases.append(("road_arcs", self.set_value("car", int(pedestrian_arcs[0]), 1), "машина по пешеходной дороге"))
         for name, change, message in cases:
