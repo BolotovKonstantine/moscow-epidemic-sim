@@ -228,4 +228,4 @@ def synthetic_census():
                       "preschool": [scale * 2] * len(STUDY_BINS), "general": [scale * 5] * len(STUDY_BINS),
                       "professional": [scale * 3] * len(STUDY_BINS)},
         }
-    return {"moscow": territory(3), "buffer": territory(2)}
+    return {"moscow": territory(3), "moscow_oblast": territory(2)}

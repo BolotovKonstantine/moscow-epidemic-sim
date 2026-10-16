@@ -250,10 +250,11 @@ class SimTablesTests(unittest.TestCase):
         self.assertEqual(int(headway[subway, night]), mtab.NONE["u32"])
         self.assertEqual(int(headway[subway, self.index["codes"]["period"].index("morning_peak")]), 120)
         census = synthetic_census()
-        territory = self.column("census_age", "territory")
-        self.assertEqual(self.column("census_age", "persons")[territory == 0].tolist(), census["moscow"]["age"]["persons"])
-        sizes = self.column("census_household_size", "persons")[self.column("census_household_size", "territory") == 1]
-        self.assertEqual(int(sizes.sum()), census["buffer"]["household_size"]["persons"])
+        region = self.column("census_age", "region")
+        self.assertEqual(self.index["codes"]["census_region"], ["moscow", "moscow_oblast"])   # исходная география, не пояс
+        self.assertEqual(self.column("census_age", "persons")[region == 0].tolist(), census["moscow"]["age"]["persons"])
+        sizes = self.column("census_household_size", "persons")[self.column("census_household_size", "region") == 1]
+        self.assertEqual(int(sizes.sum()), census["moscow_oblast"]["household_size"]["persons"])
 
 
 class SimValidationTests(unittest.TestCase):
@@ -366,6 +367,7 @@ class SimValidationTests(unittest.TestCase):
             (lambda i: i["tables"][0].update(source_ids=["unknown-source"]), "отсутствуют в паспорте"),
             (lambda i: i["tables"][0].update(source_ids=["synthetic-mini-city", 1]), "список строк"),
             (lambda i: i.update(padding=" " * (2 << 20)), "индекс больше"),
+            (lambda i: i["tables"][0].update(size_bytes=1 << 30) or [e.update(size_bytes=1 << 30) for e in i["tables"][1:5]], "таблицы занимают"),
         ]
         for edit, message in cases:
             with self.subTest(message=message):
@@ -392,9 +394,11 @@ class SimValidationTests(unittest.TestCase):
             ("stops", self.set_value("modes", 0, 255), None),   # 8 видов — маска u8 занята целиком, 255 допустимо
             ("zones", self.set_value("moscow_share", 0, 10_001), "больше 10000"),
             ("facilities", self.set_value("capacity", 0, 0), "все значения должны быть"),
+            ("buildings", self.set_value("osm_id", 0, mtab.NONE["u64"]), "osm_id: значение больше"),
+            ("road_arcs", self.set_value("way_id", 0, mtab.UNKNOWN["u64"]), "way_id: значение больше"),
             ("road_arcs", self.set_value("length_cm", 0, mtab.NONE["u32"]), "length_cm: значение больше"),
             ("census_household_children", self.set_value("with_1_child", 0, 10 ** 9), "домохозяйств с детьми больше"),
-            ("road_classes", self.set_value("car_speed_mm_s", 2, 0), "car_main: узел без исходящей дуги машины"),
+            ("road_classes", self.set_value("car_speed_mm_s", 2, 0), "car_main: не совпадает"),
             ("transit_periods", self.set_value("end_s", 0, 1), "разбивать сутки"),
             ("road_arcs", self.set_value("length_cm", 0, 7), "различается у прямой и обратной"),
         ]
@@ -459,6 +463,26 @@ class SimValidationTests(unittest.TestCase):
         asset["size_bytes"], asset["sha256"] = len(data), hashlib.sha256(data).hexdigest()
         (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
         self.assert_rejected(package, "индекс карты больше")
+
+    def test_car_main_must_match_recomputed_component(self):
+        nodes = mtab.decode_table((self.out / "sim" / "road_nodes.mtab").read_bytes(), "road_nodes").columns
+        outside = np.nonzero(nodes["car_main"][1] == 0)[0]
+        self.assertGreater(len(outside), 0)
+        self.assert_rejected(self.rewrite("road_nodes", self.set_value("car_main", int(outside[0]), 1)), "car_main: не совпадает")
+
+    def test_map_origin_must_be_two_numbers(self):
+        package = self.copy()
+        map_index = package / "map" / "index.json"
+        index = json.loads(map_index.read_text(encoding="utf-8"))
+        index["plane"]["origin_metric"] = 5
+        map_index.write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
+        manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+        manifest["assets"].sort(key=lambda a: a["role"] != "sim")
+        data = map_index.read_bytes()
+        asset = next(a for a in manifest["assets"] if a["role"] == "map")
+        asset["size_bytes"], asset["sha256"] = len(data), hashlib.sha256(data).hexdigest()
+        (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        self.assert_rejected(package, "не два числа")
 
     def test_household_sizes_must_be_complete(self):
         def drop_last(columns, rows):

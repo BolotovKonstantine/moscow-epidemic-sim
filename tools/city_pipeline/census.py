@@ -15,7 +15,9 @@ from pathlib import Path
 from .manifest import ManifestError
 
 NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
-TERRITORIES = {"moscow": "г. Москва", "buffer": "Московская область"}
+# Регионы переписи (исходная география). Пояс пакета — лишь часть области: перенос её распределений
+# на пояс — допущение генератора жителей (estimated, docs/population.md), а не свойство этих таблиц.
+REGIONS = {"moscow": "г. Москва", "moscow_oblast": "Московская область"}
 # Роль источника в конфигурации сборки → таблица переписи.
 ROLES = {
     "census_age": "age",
@@ -158,14 +160,14 @@ READERS = {"age": age, "household_size": household_size, "household_children": h
 
 
 def read_census(paths: dict) -> dict:
-    """paths — {роль census_*: путь xlsx}. Результат — {территория: {таблица: данные}}."""
+    """paths — {роль census_*: путь xlsx}. Результат — {регион переписи: {таблица: данные}}."""
     missing = sorted(set(ROLES) - set(paths))
     if missing:
         raise ManifestError(f"нет таблиц переписи для ролей {missing}")
-    result = {territory: {} for territory in TERRITORIES}
+    result = {territory: {} for territory in REGIONS}
     for role, key in ROLES.items():
         rows = rows_of(paths[role])
-        for territory, region in TERRITORIES.items():
+        for territory, region in REGIONS.items():
             try:
                 result[territory][key] = READERS[key](rows, region)
             except (ManifestError, IndexError, ValueError) as error:

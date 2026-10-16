@@ -30,8 +30,10 @@ INDEX_VERSION = 1
 INDEX_NAME = "index.json"
 MAX_TABLE_BYTES = 1 << 30   # 1 ГиБ: больший файл ядро не читает целиком в память
 MAX_INDEX_BYTES = 1 << 20   # 1 МиБ: индекс — десятки КБ; больший не читается
+MAX_TOTAL_BYTES = 4 << 30   # 4 ГиБ на все таблицы: ядро держит их в памяти целиком (полный пакет — 76 МБ)
 OSM_TYPES = ("n", "w", "r")
 TERRITORIES = ("moscow", "buffer")
+CENSUS_REGIONS = ("moscow", "moscow_oblast")   # исходная география переписи (census.REGIONS)
 FUNCTION_SOURCES = ("tag", "tag+poi", "poi", "site", "unknown")
 # Классы дорог движения: как классы линий карты (связки *_link — класс основной дороги, unclassified,
 # living_street и road — residential); порядок — по возрастанию значимости, как в прототипе #35.
@@ -41,7 +43,7 @@ FIXED_CODES = {
     "osm_type": OSM_TYPES, "territory": TERRITORIES, "building_function": tuple(BUILDING_CLASSES),
     "function_source": FUNCTION_SOURCES, "share_function": FUNCTIONS, "road_class": ROAD_CLASSES,
     "mode": tuple(STOP_MODES), "stop_kind": tuple(STOP_CLASSES), "facility_kind": tuple(FACILITY_CLASSES),
-    "gateway_kind": GATEWAY_KINDS,
+    "gateway_kind": GATEWAY_KINDS, "census_region": CENSUS_REGIONS,
 }
 SHARE_ONE = 10_000   # доли — u16 в 1/10 000
 
@@ -57,7 +59,7 @@ def _col(name, dtype, length="rows", *checks):
 SCHEMA = {
     "buildings": {"version": 1, "kind": "estimated", "unique": ["osm_type", "osm_id"], "columns": [
         _col("osm_type", "u8", "rows", ("code", "osm_type", False)),
-        _col("osm_id", "u64", "rows", ("min", 1)),
+        _col("osm_id", "u64", "rows", ("min", 1), ("max", mtab.UNKNOWN["u64"] - 1)),
         _col("x_cm", "i32"), _col("y_cm", "i32"),
         _col("zone", "u32", "rows", ("ref", "zones", True)),
         _col("territory", "u8", "rows", ("code", "territory", False)),
@@ -79,7 +81,7 @@ SCHEMA = {
         _col("inside_mkad_share", "u16", "rows", ("max", SHARE_ONE)),
     ]},
     "road_nodes": {"version": 1, "kind": "estimated", "unique": ["osm_id"], "columns": [
-        _col("osm_id", "u64", "rows", ("min", 1)),
+        _col("osm_id", "u64", "rows", ("min", 1), ("max", mtab.UNKNOWN["u64"] - 1)),
         _col("x_cm", "i32"), _col("y_cm", "i32"),
         _col("inside", "u8", "rows", ("bool",)),
         _col("zone", "u32", "rows", ("ref", "zones", True)),
@@ -97,14 +99,14 @@ SCHEMA = {
         _col("bridge", "u8", "rows", ("bool",)),
         _col("tunnel", "u8", "rows", ("bool",)),
         _col("layer", "i8"),
-        _col("way_id", "u64", "rows", ("min", 1)),
+        _col("way_id", "u64", "rows", ("min", 1), ("max", mtab.UNKNOWN["u64"] - 1)),
         _col("way_part", "u16", "rows", ("max", mtab.UNKNOWN["u16"] - 1)),
         _col("reverse", "u8", "rows", ("bool",)),
         _col("by_edge", "u32", "rows", ("ref", "road_arcs", False)),
     ]},
     "stops": {"version": 1, "kind": "estimated", "unique": ["osm_type", "osm_id"], "columns": [
         _col("osm_type", "u8", "rows", ("code", "osm_type", False)),
-        _col("osm_id", "u64", "rows", ("min", 1)),
+        _col("osm_id", "u64", "rows", ("min", 1), ("max", mtab.UNKNOWN["u64"] - 1)),
         _col("kind", "u8", "rows", ("code", "stop_kind", False)),
         _col("x_cm", "i32"), _col("y_cm", "i32"),
         _col("inside", "u8", "rows", ("bool",)),
@@ -112,7 +114,7 @@ SCHEMA = {
         _col("modes", "u8", "rows", ("mask", "mode")),
     ]},
     "route_pieces": {"version": 1, "kind": "estimated", "unique": ["route_osm_id", "piece"], "columns": [
-        _col("route_osm_id", "u64", "rows", ("min", 1)),
+        _col("route_osm_id", "u64", "rows", ("min", 1), ("max", mtab.UNKNOWN["u64"] - 1)),
         _col("piece", "u16", "rows", ("max", mtab.UNKNOWN["u16"] - 1)),
         _col("mode", "u8", "rows", ("code", "mode", False)),
         _col("stop_offset", "u32", "rows+1", ("csr", "stops_pool")),
@@ -120,7 +122,7 @@ SCHEMA = {
         _col("segment_cm", "u32", ("pool", "stop_offset"), ("max", mtab.UNKNOWN["u32"] - 1)),
     ]},
     "transfers": {"version": 1, "kind": "estimated", "unique": ["from_stop", "to_stop", "stop_area_osm_id"], "columns": [
-        _col("stop_area_osm_id", "u64", "rows", ("min", 1)),
+        _col("stop_area_osm_id", "u64", "rows", ("min", 1), ("max", mtab.UNKNOWN["u64"] - 1)),
         _col("from_stop", "u32", "rows", ("ref", "stops", False)),
         _col("to_stop", "u32", "rows", ("ref", "stops", False)),
         _col("distance_cm", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)),
@@ -128,7 +130,7 @@ SCHEMA = {
     ]},
     "facilities": {"version": 1, "kind": "estimated", "unique": ["osm_type", "osm_id"], "columns": [
         _col("osm_type", "u8", "rows", ("code", "osm_type", False)),
-        _col("osm_id", "u64", "rows", ("min", 1)),
+        _col("osm_id", "u64", "rows", ("min", 1), ("max", mtab.UNKNOWN["u64"] - 1)),
         _col("kind", "u8", "rows", ("code", "facility_kind", False)),
         _col("x_cm", "i32"), _col("y_cm", "i32"),
         _col("zone", "u32", "rows", ("ref", "zones", True)),
@@ -145,7 +147,7 @@ SCHEMA = {
         _col("arc", "u32", "rows", ("ref", "road_arcs", True)),
         _col("inside_node", "u32", "rows", ("ref", "road_nodes", True)),
         _col("stop", "u32", "rows", ("ref", "stops", True)),
-        _col("route_osm_id", "u64"),
+        _col("route_osm_id", "u64", "rows", ("max_or_none", mtab.UNKNOWN["u64"] - 1)),
     ]},
     "road_classes": {"version": 1, "kind": "game_setting", "unique": [], "columns": [
         _col("car_speed_mm_s", "u32", "rows", ("max", 100_000)),
@@ -182,29 +184,29 @@ SCHEMA = {
     "mobility_estimates": {"version": 1, "kind": "estimated", "unique": [], "columns": [
         _col("walk_detour", "u16", "rows", ("min", SHARE_ONE), ("max", 60_000)),
     ]},
-    "census_age": {"version": 1, "kind": "observed", "unique": ["territory", "age_low"], "columns": [
-        _col("territory", "u8", "rows", ("code", "territory", False)),
+    "census_age": {"version": 1, "kind": "observed", "unique": ["region", "age_low"], "columns": [
+        _col("region", "u8", "rows", ("code", "census_region", False)),
         _col("age_low", "u8", "rows", ("max", 120)), _col("age_high", "u8", "rows", ("max", 120)),
         _col("persons", "u32"),
     ]},
-    "census_household_size": {"version": 1, "kind": "observed", "unique": ["territory", "size"], "columns": [
-        _col("territory", "u8", "rows", ("code", "territory", False)),
+    "census_household_size": {"version": 1, "kind": "observed", "unique": ["region", "size"], "columns": [
+        _col("region", "u8", "rows", ("code", "census_region", False)),
         _col("size", "u8", "rows", ("min", 1), ("max", 6)),
         _col("households", "u32"), _col("persons", "u32"),
     ]},
-    "census_household_children": {"version": 1, "kind": "observed", "unique": ["territory", "size"], "columns": [
-        _col("territory", "u8", "rows", ("code", "territory", False)),
+    "census_household_children": {"version": 1, "kind": "observed", "unique": ["region", "size"], "columns": [
+        _col("region", "u8", "rows", ("code", "census_region", False)),
         _col("size", "u8", "rows", ("min", 2), ("max", 6)),
         _col("households", "u32"), _col("with_1_child", "u32"), _col("with_2_children", "u32"),
         _col("with_3_plus_children", "u32"), _col("children_in_3_plus", "u32"),
     ]},
-    "census_labour": {"version": 1, "kind": "observed", "unique": ["territory", "age_low"], "columns": [
-        _col("territory", "u8", "rows", ("code", "territory", False)),
+    "census_labour": {"version": 1, "kind": "observed", "unique": ["region", "age_low"], "columns": [
+        _col("region", "u8", "rows", ("code", "census_region", False)),
         _col("age_low", "u8", "rows", ("max", 120)), _col("age_high", "u8", "rows", ("max", 120)),
         _col("total", "u32"), _col("status_indicated", "u32"), _col("employed", "u32"),
     ]},
-    "census_study": {"version": 1, "kind": "observed", "unique": ["territory", "age_low"], "columns": [
-        _col("territory", "u8", "rows", ("code", "territory", False)),
+    "census_study": {"version": 1, "kind": "observed", "unique": ["region", "age_low"], "columns": [
+        _col("region", "u8", "rows", ("code", "census_region", False)),
         _col("age_low", "u8", "rows", ("max", 120)), _col("age_high", "u8", "rows", ("max", 120)),
         _col("total", "u32"), _col("not_indicated", "u32"), _col("preschool", "u32"), _col("general", "u32"), _col("professional", "u32"),
     ]},
@@ -627,7 +629,7 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
 
     # Итоги переписи (observed): числа как в таблицах Росстата.
     rows = {name: [] for name in CENSUS_TABLES}
-    for t, territory in enumerate(TERRITORIES):
+    for t, territory in enumerate(CENSUS_REGIONS):
         data = census[territory]
         age = data["age"]
         if sum(age["persons"]) != age["total"]:
@@ -853,10 +855,12 @@ def _cross_checks(t, codes):
         for column in ("length_cm", "road_class", "internal", "bridge", "tunnel", "layer"):
             _expect(np.array_equal(a[column][forward], a[column][backward]), f"road_arcs.{column}: различается у прямой и обратной дуги ребра")
     # Узлы основной компоненты машины имеют исходящую дугу машины.
+    # car_main пересчитывается тем же правилом, что в экспорте (наибольшая компонента с исходящей дугой, ничья — меньший
+    # номер узла), и должен совпасть целиком: иначе «основных» компонент могло бы оказаться несколько.
     speed = t["road_classes"]["car_speed_mm_s"]
     car_arc = (a["car"] == 1) & (a["internal"] == 1) & (speed[np.minimum(a["road_class"], len(speed) - 1)] > 0)
-    has_out = np.bincount(source[car_arc], minlength=len(offsets) - 1) > 0
-    _expect(not (n["car_main"].astype(bool) & ~has_out).any(), "road_nodes.car_main: узел без исходящей дуги машины")
+    _, expected_main, _, _ = car_graph(len(offsets) - 1, source, a["to"].astype(np.int64), car_arc)
+    _expect(np.array_equal(n["car_main"].astype(bool), expected_main), "road_nodes.car_main: не совпадает с основной компонентой сильной связности машины")
     # Куски маршрутов: не меньше двух остановок, у последней остановки куска расстояние 0, номера кусков маршрута подряд.
     r = t["route_pieces"]
     stop_offset = r["stop_offset"].astype(np.int64)
@@ -887,20 +891,20 @@ def _cross_checks(t, codes):
     for name in ("census_age", "census_labour", "census_study"):
         c = t[name]
         _expect((c["age_low"] <= c["age_high"]).all(), f"{name}: нижняя граница возраста больше верхней")
-        for territory in range(len(codes["territory"])):
-            rows = c["territory"] == territory
-            _expect(rows.any(), f"{name}: нет строк территории {codes['territory'][territory]}")
+        for region in range(len(codes["census_region"])):
+            rows = c["region"] == region
+            _expect(rows.any(), f"{name}: нет строк региона {codes['census_region'][region]}")
             low, high = c["age_low"][rows].astype(np.int64), c["age_high"][rows].astype(np.int64)
-            _expect((low[1:] == high[:-1] + 1).all(), f"{name}: возрастные группы {codes['territory'][territory]} не идут встык")
+            _expect((low[1:] == high[:-1] + 1).all(), f"{name}: возрастные группы {codes['census_region'][region]} не идут встык")
     # Категории по числу детей взаимоисключающие: их сумма не больше числа домохозяйств (иначе доля без детей отрицательна).
     k = t["census_household_children"]
     with_children = k["with_1_child"].astype(np.int64) + k["with_2_children"].astype(np.int64) + k["with_3_plus_children"].astype(np.int64)
     _expect((with_children <= k["households"].astype(np.int64)).all(), "census_household_children: домохозяйств с детьми больше, чем домохозяйств")
     # Размеры домохозяйств — полная сетка: 1–6 и 2–6 (6 — шесть и более) для каждой территории, по порядку.
     for name, sizes in (("census_household_size", range(1, 7)), ("census_household_children", range(2, 7))):
-        expected = [(territory, size) for territory in range(len(codes["territory"])) for size in sizes]
-        _expect(list(zip(t[name]["territory"].tolist(), t[name]["size"].tolist())) == expected,
-                f"{name}: нужны строки (территория, размер) {expected[0]}…{expected[-1]} подряд, без пропусков")
+        expected = [(region, size) for region in range(len(codes["census_region"])) for size in sizes]
+        _expect(list(zip(t[name]["region"].tolist(), t[name]["size"].tolist())) == expected,
+                f"{name}: нужны строки (регион, размер) {expected[0]}…{expected[-1]} подряд, без пропусков")
     g = t["gateways"]
     road, transit = g["kind"] == GATEWAY_KINDS.index("road"), g["kind"] == GATEWAY_KINDS.index("transit")
     none = mtab.NONE
@@ -960,6 +964,8 @@ def validate_sim_dir(sim_dir: Path, package_id: str, package_version: str, *, ki
     index = parse_json_bytes(index_path.read_bytes(), index_path)
     entries = _check_index(index, package_id, package_version, kind, plane, manifest_sources)
     codes = index["codes"]
+    total = sum(entry["size_bytes"] for entry in entries.values())
+    _expect(total <= MAX_TOTAL_BYTES, f"sim/index.json: таблицы занимают {total} байт, больше {MAX_TOTAL_BYTES}")
     tables = {name: read_table(sim_dir / entry["path"], entry, package_id, package_version) for name, entry in entries.items()}
     sizes = {name: entry["rows"] for name, entry in entries.items()}
     sizes["stops_pool"] = len(tables["route_pieces"]["stops"])
@@ -988,6 +994,8 @@ def validate_sim_index(path: Path, manifest: dict, asset_id: str) -> int:
         origin = parse_json_bytes(map_index_path.read_bytes(), map_index_path)["plane"]["origin_metric"]
     except (OSError, KeyError, TypeError) as error:
         raise SimError(f"{asset_id}: не удалось прочитать плоскость карты {map_asset['path']}: {error}") from error
+    _expect(isinstance(origin, list) and len(origin) == 2 and all(type(v) in (int, float) for v in origin),
+            f"{asset_id}: plane.origin_metric карты {map_asset['path']} — не два числа")
     try:
         return validate_sim_dir(path.parent, manifest["package_id"], manifest["package_version"], kind=manifest["kind"],
                                 plane=(origin, manifest["region"]["metric_crs"]), manifest_sources=sources)

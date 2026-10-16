@@ -108,6 +108,12 @@ class ConfigTests(unittest.TestCase):
             path.write_text(json.dumps(broken))
             with self.assertRaisesRegex(ManifestError, "bus.morning_peak: 0.001 мин меньше секунды"):
                 load_config(path)
+            for section, key, value in (("transit_speed_kmh", "bus", 0.000001), ("car_speed_kmh", "residential", 0.000001)):
+                broken = json.loads(real.read_text(encoding="utf-8"))
+                broken["model_assumptions"]["mobility"][section][key] = value   # округлилось бы до 0 мм/с
+                path.write_text(json.dumps(broken))
+                with self.subTest(section=section), self.assertRaisesRegex(ManifestError, f"mobility.{section}.{key}"):
+                    load_config(path)
             for key, value, message in (("package_id", "custom_city", "package_id"), ("package_version", "1.0.0-very-long-version", "package_version")):
                 broken = json.loads(real.read_text(encoding="utf-8"))
                 broken[key] = value
