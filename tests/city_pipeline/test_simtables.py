@@ -577,6 +577,39 @@ class SimValidationTests(unittest.TestCase):
             with self.subTest(message=message):
                 self.assert_rejected(self.rewrite(name, change), message)
 
+    def test_eleventh_review_round_checks(self):
+        buildings = mtab.decode_table((self.out / "sim" / "buildings.mtab").read_bytes(), "buildings").columns
+        nodes = mtab.decode_table((self.out / "sim" / "road_nodes.mtab").read_bytes(), "road_nodes").columns
+        facilities = mtab.decode_table((self.out / "sim" / "facilities.mtab").read_bytes(), "facilities").columns
+        pieces = mtab.decode_table((self.out / "sim" / "route_pieces.mtab").read_bytes(), "route_pieces").columns
+        # Другой узел основной компоненты, заведомо не ближайший к зданию 0.
+        x, y = int(buildings["x_cm"][1][0]), int(buildings["y_cm"][1][0])
+        main = np.nonzero(nodes["car_main"][1] == 1)[0]
+        far = int(main[np.argmax(np.hypot(nodes["x_cm"][1][main].astype(np.int64) - x, nodes["y_cm"][1][main].astype(np.int64) - y))])
+
+        def duplicate_building(columns, rows):
+            values = {name: (dtype, v) for name, dtype, v in columns}
+            offsets = values["building_offset"][1].astype(np.int64)
+            first = int(np.nonzero(np.diff(offsets) > 0)[0][0])
+            pool = values["buildings"][1]
+            pool = np.insert(pool, offsets[first + 1], pool[offsets[first]])   # то же здание ещё раз в своём учреждении
+            offsets = offsets + (np.arange(len(offsets)) > first)
+            return [(name, dtype, offsets if name == "building_offset" else pool if name == "buildings" else v) for name, dtype, v in columns], rows
+
+        cases = [
+            ("buildings", self.set_value("road_node_depart", 0, far), "не по правилу привязки"),
+            ("road_arcs", self.set_value("length_cm", 0, 0), "дуга короче прямой|различается у прямой"),
+            ("facilities", duplicate_building, "здание повторяется"),
+        ]
+        same_route = np.nonzero(np.r_[False, pieces["route_osm_id"][1][1:] == pieces["route_osm_id"][1][:-1]])[0]
+        if len(same_route):
+            row = int(same_route[0])
+            cases.append(("route_pieces", self.set_value("mode", row, (int(pieces["mode"][1][row]) + 1) % 8), "разные виды у кусков|нет вида транспорта"))
+        self.assertTrue(len(np.nonzero(np.diff(facilities["building_offset"][1].astype(np.int64)) > 0)[0]))
+        for name, change, message in cases:
+            with self.subTest(table=name, message=message):
+                self.assert_rejected(self.rewrite(name, change), message)
+
     def test_sim_metadata_is_checked_without_files(self):
         for edit, message in ((lambda a: a.update(data_kind="game_setting"), "должен быть estimated"),
                               (lambda a: a.update(path="sim2/index.json"), "должен быть sim/index.json")):

@@ -847,6 +847,11 @@ def _unique(table_name, columns, keys):
 
 def _cross_checks(t, codes, zone_cell_m, origin):
     """Сверки между колонками и таблицами, которые не выразить проверками отдельной колонки."""
+    # Здание в учреждении один раз: вес учреждения — сумма площадей его зданий.
+    fac = t["facilities"]
+    owner = np.repeat(np.arange(len(fac["building_offset"]) - 1), np.diff(fac["building_offset"].astype(np.int64)))
+    pairs = np.column_stack((owner, fac["buildings"].astype(np.int64)))
+    _expect(len(np.unique(pairs, axis=0)) == len(pairs), "facilities.buildings: здание повторяется в одном учреждении")
     # Числа строк таблиц-справочников — до любых обращений к ним по кодам.
     _expect(len(t["road_classes"]["car_speed_mm_s"]) == len(codes["road_class"]), "road_classes: строка на каждый класс дороги")
     _expect(len(t["transit_modes"]["speed_mm_s"]) == len(codes["mode"]), "transit_modes: строка на каждый вид транспорта")
@@ -894,6 +899,10 @@ def _cross_checks(t, codes, zone_cell_m, origin):
         positive = step[np.arange(len(step)), first] > 0
         _expect(((step != 0).any(axis=1) & positive).all(), "road_arcs: дуги не упорядочены по (узел, конечный узел, путь, участок, обратная)")
     _expect((a["car"][a["road_class"] == codes["road_class"].index("pedestrian")] == 0).all(), "road_arcs.car: машина по пешеходной дороге")
+    # Длина дуги не меньше прямой между её узлами (допуск 20 см: координаты до см, длины пакета до 0,1 м).
+    straight = np.hypot(n["x_cm"][a["to"]].astype(np.int64) - n["x_cm"][source].astype(np.int64),
+                        n["y_cm"][a["to"]].astype(np.int64) - n["y_cm"][source].astype(np.int64))
+    _expect((a["length_cm"].astype(np.int64) >= straight - 20).all(), "road_arcs.length_cm: дуга короче прямой между узлами")
     perm = a["by_edge"].astype(np.int64)
     _expect(np.array_equal(np.sort(perm), np.arange(len(perm))), "road_arcs.by_edge: не перестановка дуг")
     if len(perm):
@@ -923,6 +932,25 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     for column, usable in (("road_node_depart", has_out), ("road_node_arrive", has_in)):
         node = b[column][b[column] != mtab.NONE["u32"]].astype(np.int64)
         _expect(((n["inside"][node] == 1) & usable[node]).all(), f"buildings.{column}: узел вне региона или без дуги машины нужного направления")
+    # Правило привязки пересчитывается по координатам (допуск 1 м на округление до см): узел — ближайший узел основной
+    # компоненты не дальше building_node_max_cm, а если основная компонента дальше — ближайший пригодный узел внутри региона.
+    tolerance = 100.0
+    limit = float(t["mobility"]["building_node_max_cm"][0])
+    points = np.column_stack((b["x_cm"], b["y_cm"])).astype(np.float64)
+    node_xy = np.column_stack((n["x_cm"], n["y_cm"])).astype(np.float64)
+    main_nodes = np.nonzero(n["car_main"] == 1)[0]
+    main_distance = cKDTree(node_xy[main_nodes]).query(points)[0] if len(main_nodes) else np.full(len(points), np.inf)
+    for column, usable in (("road_node_depart", has_out), ("road_node_arrive", has_in)):
+        node = b[column].astype(np.int64)
+        bound = node != mtab.NONE["u32"]
+        candidates = np.nonzero(usable & (n["inside"] == 1))[0]
+        fallback_distance = cKDTree(node_xy[candidates]).query(points)[0] if len(candidates) else np.full(len(points), np.inf)
+        distance = np.full(len(points), np.inf)
+        distance[bound] = np.hypot(*(points[bound] - node_xy[node[bound]]).T)
+        near_main = (distance <= limit + tolerance) & (distance <= main_distance + tolerance)
+        fallback = (main_distance >= limit - tolerance) & (distance <= fallback_distance + tolerance)
+        _expect(((near_main | fallback) & bound | ~bound & ~np.isfinite(fallback_distance)).all(),
+                f"buildings.{column}: узел не по правилу привязки (ближайший узел основной компоненты или запасной)")
     # Куски маршрутов: не меньше двух остановок, у последней остановки куска расстояние 0, номера кусков маршрута подряд.
     r = t["route_pieces"]
     stop_offset = r["stop_offset"].astype(np.int64)
@@ -940,6 +968,8 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     piece_mode = np.repeat(r["mode"].astype(np.int64), np.diff(stop_offset))
     _expect(((t["stops"]["modes"][r["stops"]].astype(np.int64) >> piece_mode) & 1 == 1).all(), "stops.modes: у остановки нет вида транспорта её куска маршрута")
     route = r["route_osm_id"].astype(np.int64)
+    # Вид транспорта — свойство отношения маршрута: у всех его кусков один вид.
+    _expect(len(np.unique(np.column_stack((route, r["mode"].astype(np.int64))), axis=0)) == len(np.unique(route)), "route_pieces.mode: разные виды у кусков одного маршрута")
     piece = r["piece"].astype(np.int64)
     starts = np.r_[True, route[1:] != route[:-1]] if len(route) else np.array([], dtype=bool)
     _expect(((piece == 0) == starts).all() and (piece[~starts] == piece[np.nonzero(~starts)[0] - 1] + 1).all(),
