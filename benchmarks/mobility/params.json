@@ -1,0 +1,32 @@
+{
+  "note": "Параметры прототипа поездок (#35). Все числа — игровые настройки (game_setting) или оценки (estimated) с методом; наблюдений среди них нет. Значения — предложение исполнителя.",
+  "seed": 20261014,
+  "car_speed_kmh": {
+    "kind": "game_setting",
+    "comment": "средняя скорость по классу дороги с учётом перекрёстков, без пробок (пробки — после MVP); pedestrian закрыт для автомобиля",
+    "value": {"service": 12, "pedestrian": 0, "residential": 20, "tertiary": 28, "secondary": 33, "primary": 38, "trunk": 50, "motorway": 70}
+  },
+  "car_park_s": {"value": 180, "kind": "game_setting", "comment": "время от машины до двери на каждом конце поездки"},
+  "walk_speed_mps": {"value": 1.2, "kind": "game_setting", "comment": "как transfer_walk_speed_mps конфигурации сборки"},
+  "walk_detour": {"value": 1.3, "kind": "estimated", "method": "отношение пути к прямой для подходов к остановке и дорожному узлу", "uncertainty": "1,2–1,5 в плотной застройке"},
+  "transit_speed_kmh": {
+    "kind": "game_setting",
+    "comment": "скорость между остановками по прямой, с учётом стоянок; отрезки в пакете — по прямой",
+    "value": {"bus": 16, "share_taxi": 20, "trolleybus": 15, "tram": 16, "light_rail": 25, "monorail": 20, "train": 45, "subway": 38}
+  },
+  "vehicle_capacity": {
+    "kind": "game_setting",
+    "comment": "вместимость одного модельного рейса и число вагонов (подгрупп контактов) в нём",
+    "value": {"bus": [90, 1], "share_taxi": [15, 1], "trolleybus": [90, 1], "tram": [180, 1], "light_rail": [250, 2], "monorail": [200, 4], "train": [1500, 10], "subway": [1600, 8]}
+  },
+  "access_radius_m": {"value": 1000, "kind": "game_setting", "comment": "остановки дальше по прямой от здания или центра зоны не используются как подход"},
+  "access_stops_max": {"value": 8, "kind": "game_setting", "comment": "сколько ближайших остановок берётся для подхода к зданию"},
+  "transfer_radius_m": {"value": 250, "kind": "game_setting", "comment": "пешая пересадка между разными остановками ближе этого, кроме stop_area пакета"},
+  "board_penalty_s": {"value": 180, "kind": "game_setting", "comment": "штраф выбора маршрута за каждую посадку; на время поездки не влияет"},
+  "max_wait_s": {"value": 1800, "kind": "game_setting", "comment": "после стольких секунд в очереди переполненного транспорта житель выбирает другой путь или отменяет поездку"},
+  "origin_cell_m": {"value": 250, "kind": "game_setting", "comment": "размер ячейки начала пути (делитель 1000): дерево транспорта строится на ячейку, путь с начальной остановкой дальше access_radius_m от дома отклоняется"},
+  "crowding_penalty": {"value": 1.0, "kind": "game_setting", "comment": "штраф выбора пути за перегон с ожидаемой загрузкой x > 1 провозной способности пика: время × (1 + штраф × (x − 1))"},
+  "crowding_iterations": {"value": 3, "kind": "game_setting", "comment": "итерации выбора пути с учётом ожидаемой загрузки при старте"},
+  "walk_only_max_s": {"value": 2400, "kind": "game_setting", "comment": "пешая поездка не длиннее этого, если она не медленнее транспорта"},
+  "departure": {"value": {"mean_s": 28800, "sd_s": 2700}, "kind": "game_setting", "comment": "желаемое прибытие утром: нормальное, среднее 8:00; заменяется шаблонами расписаний #43"}
+}

@@ -29,6 +29,8 @@ benchmarks/population_gen/run.sh data/packages/moscow-2021-0.5.0 build/bench/pop
 benchmarks/population_gen/run.sh build/bench/population_gen/mini-pkg build/bench/population_gen/mini
 ```
 
+`gen <вход> --dump <каталог>` после прогона записывает колонки населения (дом, семья, место, возраст, роль, флаги, профиль) сырыми массивами. Их читает прототип поездок [benchmarks/mobility](../mobility/README.md).
+
 ## Результаты
 
 ### 13 октября 2026, эталонный Mac
