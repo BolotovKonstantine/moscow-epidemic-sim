@@ -910,6 +910,7 @@ def _cross_checks(t, codes, zone_cell_m, origin):
         positive = step[np.arange(len(step)), first] > 0
         _expect(((step != 0).any(axis=1) & positive).all(), "road_arcs: дуги не упорядочены по (узел, конечный узел, путь, участок, обратная)")
     _expect((a["car"][a["road_class"] == codes["road_class"].index("pedestrian")] == 0).all(), "road_arcs.car: машина по пешеходной дороге")
+
     # Длина дуги не меньше прямой между её узлами (допуск 20 см: координаты до см, длины пакета до 0,1 м).
     straight = np.hypot(n["x_cm"][a["to"]].astype(np.int64) - n["x_cm"][source].astype(np.int64),
                         n["y_cm"][a["to"]].astype(np.int64) - n["y_cm"][source].astype(np.int64))
@@ -1057,6 +1058,15 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     arc_of = g["arc"][rows].astype(np.int64)
     _expect((a["road_class"][arc_of] == g["road_class"][rows]).all() and (a["internal"][arc_of] == 0).all(), "gateways: класс или внутренний флаг дуги дорожного входа не совпадает")
     _expect((a["reverse"][arc_of] == 0).all(), "gateways: arc дорожного входа — не прямая дуга ребра")
+    # Если внутри оба конца ребра, внутренний узел — ближайший к точке входа (допуск 1 м на округление до см).
+    ends = np.column_stack((source[arc_of], a["to"][arc_of].astype(np.int64)))
+    both = (n["inside"][ends] == 1).all(axis=1)
+    gxy = np.column_stack((g["x_cm"][rows], g["y_cm"][rows])).astype(np.float64)
+    end_distance = np.hypot(n["x_cm"][ends] - gxy[:, :1], n["y_cm"][ends] - gxy[:, 1:])
+    gnode = g["inside_node"][rows].astype(np.int64)
+    chosen = np.where(gnode == ends[:, 0], end_distance[:, 0], end_distance[:, 1])
+    other = np.where(gnode == ends[:, 0], end_distance[:, 1], end_distance[:, 0])
+    _expect((~both | (chosen <= other + 100)).all(), "gateways: inside_node — не ближайший к точке входа конец ребра")
     # Обратное условие internal: дуга с обоими концами внутри не внутренняя только если её ребро — дорожный вход.
     both_inside = (n["inside"][source] == 1) & (n["inside"][a["to"]] == 1)
     gateway_edges = np.unique(np.column_stack((a["way_id"][arc_of].astype(np.int64), a["way_part"][arc_of].astype(np.int64))), axis=0)
@@ -1087,6 +1097,21 @@ def _cross_checks(t, codes, zone_cell_m, origin):
                      np.repeat(pieces["mode"], counts)[outside_next | outside_prev].tolist()))
     _expect(all(key in border for key in zip(g["route_osm_id"][transit].tolist(), g["stop"][transit].tolist(), g["mode"][transit].tolist())),
             "gateways: у остановки транспортного входа нет соседней внешней остановки на куске маршрута")
+
+
+def _car_weights(t, codes):
+    """Проезд и веса автомобильного графа; вызывается после сверок, когда пары дуг by_edge уже проверены."""
+    a, speed = t["road_arcs"], t["road_classes"]["car_speed_mm_s"].astype(np.int64)
+    # Непешеходное ребро проезжаемо хотя бы в одну сторону (oneway даёт прямое, обратное или оба направления).
+    pair = a["by_edge"].astype(np.int64)
+    first, second = pair[0::2], pair[1::2]
+    nonped = a["road_class"][first] != codes["road_class"].index("pedestrian")
+    _expect(not (nonped & (a["car"][first] == 0) & (a["car"][second] == 0)).any(), "road_arcs.car: непешеходное ребро закрыто для машины в обе стороны")
+    # Веса — децисекунды u32, как в прототипе #35: сумма по графу помещается в u32.
+    arc_speed = speed[np.minimum(a["road_class"].astype(np.int64), len(speed) - 1)]
+    car = (a["car"] == 1) & (a["internal"] == 1) & (arc_speed > 0)
+    weight = (a["length_cm"][car].astype(np.int64) * 100 + arc_speed[car] - 1) // arc_speed[car]
+    _expect(int(weight.sum()) < (1 << 32), f"road_arcs: сумма весов автомобильного графа {int(weight.sum())} дс не помещается в u32")
 
 
 def read_table(path: Path, entry: dict, package_id: str, package_version: str):
@@ -1147,6 +1172,7 @@ def validate_sim_dir(sim_dir: Path, package_id: str, package_version: str, *, ki
             _check_column_values(name, column, dtype, tables[name][column], checks, sizes, codes)
         _unique(name, tables[name], spec["unique"])
     _cross_checks(tables, codes, index["zone_cell_m"], index["plane"]["origin_metric"])
+    _car_weights(tables, codes)
     return len(entries)
 
 
@@ -1158,6 +1184,7 @@ def validate_sim_index(path: Path, manifest: dict, asset_id: str) -> int:
     map_asset = next((a for a in manifest["assets"] if a["role"] == "map"), None)
     _expect(map_asset is not None, f"{asset_id}: роль sim требует участков карты (role map) — плоскость таблиц общая с картой")
     sim_asset = next(a for a in manifest["assets"] if a["asset_id"] == asset_id)
+
     # Индекс — производный файл со смешанными таблицами: в паспорте он estimated с описанием оценки.
     _expect(sim_asset["data_kind"] == "estimated" and "estimation" in sim_asset, f"{asset_id}: файл роли sim должен быть estimated с методом и неопределённостью")
     _expect(sim_asset["path"] == f"sim/{INDEX_NAME}", f"{asset_id}: путь индекса расчётных таблиц должен быть sim/{INDEX_NAME}")
@@ -1171,7 +1198,12 @@ def validate_sim_index(path: Path, manifest: dict, asset_id: str) -> int:
     _expect(isinstance(origin, list) and len(origin) == 2 and all(type(v) in (int, float) for v in origin),
             f"{asset_id}: plane.origin_metric карты {map_asset['path']} — не два числа")
     try:
-        return validate_sim_dir(path.parent, manifest["package_id"], manifest["package_version"], kind=manifest["kind"],
-                                plane=(origin, manifest["region"]["metric_crs"]), manifest_sources=sources)
+        count = validate_sim_dir(path.parent, manifest["package_id"], manifest["package_version"], kind=manifest["kind"],
+                                 plane=(origin, manifest["region"]["metric_crs"]), manifest_sources=sources)
+        # Происхождение на уровне паспорта: источники файла роли sim — ровно объединение источников его таблиц.
+        index = parse_json_bytes(path.read_bytes(), path)
+        table_sources = sorted({source for entry in index["tables"] for source in entry["source_ids"]})
+        _expect(sorted(sim_asset["source_ids"]) == table_sources, f"источники файла роли sim {sorted(sim_asset['source_ids'])} не совпадают с источниками таблиц {table_sources}")
+        return count
     except SimError as error:
         raise SimError(f"{asset_id}: {error}") from error

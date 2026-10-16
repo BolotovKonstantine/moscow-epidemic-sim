@@ -647,6 +647,37 @@ class SimValidationTests(unittest.TestCase):
             with self.subTest(table=name, message=message):
                 self.assert_rejected(self.rewrite(name, change), message)
 
+    def test_thirteenth_review_round_checks(self):
+        arcs = mtab.decode_table((self.out / "sim" / "road_arcs.mtab").read_bytes(), "road_arcs").columns
+        by_edge = arcs["by_edge"][1].astype(np.int64)
+        nonped = [k for k in range(0, len(by_edge), 2) if arcs["road_class"][1][by_edge[k]] != 1]
+        edge = (int(by_edge[nonped[0]]), int(by_edge[nonped[0] + 1]))
+
+        def close_both(columns, rows):
+            return [(n, d, np.where(np.isin(np.arange(len(v)), edge), 0, v) if n == "car" else v) for n, d, v in columns], rows
+
+        def huge_length(columns, rows):
+            return [(n, d, np.where(np.isin(np.arange(len(v)), edge), mtab.UNKNOWN["u32"] - 1, v) if n == "length_cm" else v) for n, d, v in columns], rows
+
+        self.assert_rejected(self.rewrite("road_arcs", close_both), "закрыто для машины|car_main|road_node")
+        # Огромная длина ребра и малая скорость его класса в одном пакете: вес в децисекундах не помещается в u32.
+        package = self.rewrite("road_arcs", huge_length)
+        path = package / "sim" / "road_classes.mtab"
+        decoded = mtab.decode_table(path.read_bytes(), "road_classes")
+        speeds = np.array(decoded.columns["car_speed_mm_s"][1])
+        speeds[int(arcs["road_class"][1][edge[0]])] = 3
+        path.write_bytes(mtab.encode_table("road_classes", decoded.schema_version, decoded.rows, decoded.package_id, decoded.package_version,
+                                           [("car_speed_mm_s", "u32", speeds)]))
+        self.reseal_index(package)
+        self.assert_rejected(package, "сумма весов|car_main|road_node")
+        package = self.copy()
+        manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+        asset = next(a for a in manifest["assets"] if a["role"] == "sim")
+        asset["source_ids"] = []
+        (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        with self.assertRaises(ManifestError):   # пустой список отклоняет схема, частичный — сверка с таблицами
+            validate_manifest(package / "manifest.json")
+
     def test_sim_metadata_is_checked_without_files(self):
         for edit, message in ((lambda a: a.update(data_kind="game_setting"), "должен быть estimated"),
                               (lambda a: a.update(path="sim2/index.json"), "должен быть sim/index.json")):
