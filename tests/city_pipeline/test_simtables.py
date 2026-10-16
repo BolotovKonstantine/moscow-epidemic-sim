@@ -395,7 +395,8 @@ class SimValidationTests(unittest.TestCase):
             ("buildings", self.set_value("osm_id", 1, None), "повторяющиеся ключи"),
             ("road_nodes", self.set_value("arc_offset", 1, 10 ** 6), "CSR"),
             ("road_arcs", self.set_value("by_edge", 0, 1), "перестановка"),
-            ("stops", self.set_value("modes", 0, 255), None),   # 8 видов — маска u8 занята целиком, 255 допустимо
+            # 8 видов — маска u8 занята целиком: 255 структурно допустимо, но расходится с повторным экспортом файлов пакета.
+            ("stops", self.set_value("modes", 0, 255), "повторным экспортом"),
             ("zones", self.set_value("moscow_share", 0, 10_001), "больше 10000"),
             ("facilities", self.set_value("capacity", 0, 0), "все значения должны быть"),
             ("buildings", self.set_value("osm_id", 0, mtab.NONE["u64"]), "osm_id: значение больше"),
@@ -677,6 +678,30 @@ class SimValidationTests(unittest.TestCase):
         (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
         with self.assertRaises(ManifestError):   # пустой список отклоняет схема, частичный — сверка с таблицами
             validate_manifest(package / "manifest.json")
+
+    def test_fourteenth_review_round_checks(self):
+        arcs = mtab.decode_table((self.out / "sim" / "road_arcs.mtab").read_bytes(), "road_arcs").columns
+        by_edge = arcs["by_edge"][1].astype(np.int64)
+        car = arcs["car"][1]
+        oneway = next(k for k in range(0, len(by_edge), 2) if car[by_edge[k]] != car[by_edge[k + 1]])
+        edge = (int(by_edge[oneway]), int(by_edge[oneway + 1]))
+
+        def swap_direction(columns, rows):   # одностороннее ребро разрешено в обратную сторону
+            return [(n, d, np.where(np.arange(len(v)) == edge[0], v[edge[1]], np.where(np.arange(len(v)) == edge[1], v[edge[0]], v)) if n == "car" else v)
+                    for n, d, v in columns], rows
+
+        cases = [
+            ("road_arcs", swap_direction, "повторным экспортом|car_main|road_node"),
+            ("census_household_children", self.set_value("with_2_children", 0, 1), "больше, чем позволяет размер"),
+            ("transit_modes", self.set_value("speed_mm_s", 0, 1), "дольше 7 суток|повторным экспортом"),
+        ]
+        for name, change, message in cases:
+            with self.subTest(table=name, message=message):
+                self.assert_rejected(self.rewrite(name, change), message)
+        # Источники двух таблиц переписи поменялись местами: объединение то же, но роли build_config.json — другие.
+        package = self.copy()
+        self.reseal_index(package, lambda i: next(e for e in i["tables"] if e["name"] == "census_age").update(source_ids=["build-config-synthetic-mini-city"]))
+        self.assert_rejected(package, "повторным экспортом|источники")
 
     def test_sim_metadata_is_checked_without_files(self):
         for edit, message in ((lambda a: a.update(data_kind="game_setting"), "должен быть estimated"),

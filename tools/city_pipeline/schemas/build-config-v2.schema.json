@@ -114,7 +114,7 @@
             "transit_speed_kmh": {
               "type": "object",
               "required": ["bus", "share_taxi", "trolleybus", "tram", "light_rail", "monorail", "train", "subway"],
-              "additionalProperties": {"type": "number", "minimum": 0.01, "maximum": 360},
+              "additionalProperties": {"type": "number", "minimum": 1, "maximum": 360},
               "propertyNames": {"$ref": "#/$defs/mode"}
             },
             "vehicle_capacity": {

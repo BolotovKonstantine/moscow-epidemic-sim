@@ -186,6 +186,8 @@ def mini_city_config():
     config = json.loads((ROOT / "data" / "manifests" / "moscow-2021.json").read_text(encoding="utf-8"))
     config = copy.deepcopy(config)
     config["package_id"] = "synthetic-mini-city"
+    # Все роли источников — синтетический источник теста (как SOURCE_ROLES): повторный экспорт sim/ берёт роли из конфигурации.
+    config["sources"] = {role: "synthetic-mini-city" for role in config["sources"]}
     config["description"] = "Синтетический мини-город для теста сборки; не карта Москвы."
     config["boundary"]["mkad_area_km2_range"] = [10, 30]
     config["quality"]["manual_sample_size"] = 4

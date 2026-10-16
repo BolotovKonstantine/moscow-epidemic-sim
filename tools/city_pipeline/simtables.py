@@ -354,20 +354,21 @@ def _plane_origin(package_dir: Path):
     return [float(value) for value in index["plane"]["origin_metric"]]
 
 
-def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: str, source_roles: dict, log=print):
+def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: str, source_roles: dict, log=print, out_dir: Path | None = None, check: bool = True):
     """Записать `sim/` из файлов пакета. Возвращает сводку для отчёта качества."""
     package_id, package_version = config["package_id"], config["package_version"]
     try:
         mtab.check_package(package_id, package_version)
     except mtab.TableError as error:
         raise SimError(str(error)) from error
-    out = package_dir / "sim"
+    out = package_dir / "sim" if out_dir is None else out_dir
     out.mkdir(parents=True, exist_ok=False)
     projector = Projector(config["metric_crs"])
     x0, y0 = _plane_origin(package_dir)
     mobility = config["model_assumptions"]["mobility"]
     headways = config["model_assumptions"]["headway_minutes"]
-    periods = list(headways["periods"])
+    # Коды периодов — по времени начала, а не по порядку ключей JSON: экспорт не зависит от того, как записана конфигурация.
+    periods = sorted(headways["periods"], key=lambda name: (_clock_seconds(headways["periods"][name][0]), name))
     # Пешие параметры округляются один раз: те же целые значения идут и в таблицы, и в расчёт времени пересадок.
     walk_speed_mm_s = round(config["model_assumptions"]["transfer_walk_speed_mps"] * 1000)
     transfer_overhead_s = round(config["model_assumptions"]["transfer_overhead_s"])
@@ -710,7 +711,8 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
         "codes": codes, "tables": entries,
     }
     write_json(out / INDEX_NAME, index)
-    validate_sim_dir(out, package_id, package_version, kind=kind, plane=([x0, y0], config["metric_crs"]))
+    if check:
+        validate_sim_dir(out, package_id, package_version, kind=kind, plane=([x0, y0], config["metric_crs"]))
     return {
         "tables": len(entries), "bytes": sum(e["size_bytes"] for e in entries),
         "rows": {e["name"]: e["rows"] for e in entries},
@@ -981,6 +983,9 @@ def _cross_checks(t, codes, zone_cell_m, origin):
         _expect((r["segment_cm"][stop_offset[1:] - 1] == 0).all(), "route_pieces.segment_cm: у последней остановки куска должно быть 0")
     piece_mode = np.repeat(r["mode"].astype(np.int64), np.diff(stop_offset))
     _expect(((t["stops"]["modes"][r["stops"]].astype(np.int64) >> piece_mode) & 1 == 1).all(), "stops.modes: у остановки нет вида транспорта её куска маршрута")
+    speed_of = t["transit_modes"]["speed_mm_s"].astype(np.int64)[np.minimum(r["mode"].astype(np.int64), len(t["transit_modes"]["speed_mm_s"]) - 1)]
+    piece_cm = np.add.reduceat(r["segment_cm"].astype(np.int64), stop_offset[:-1]) if len(stop_offset) > 1 else np.zeros(0, dtype=np.int64)
+    _expect((piece_cm * 10 <= 7 * 86_400 * speed_of).all(), "route_pieces: кусок маршрута идёт дольше 7 суток (глубина расписания)")
     route = r["route_osm_id"].astype(np.int64)
     # Вид транспорта — свойство отношения маршрута: у всех его кусков один вид.
     _expect(len(np.unique(np.column_stack((route, r["mode"].astype(np.int64))), axis=0)) == len(np.unique(route)), "route_pieces.mode: разные виды у кусков одного маршрута")
@@ -1021,6 +1026,12 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     k = t["census_household_children"]
     with_children = k["with_1_child"].astype(np.int64) + k["with_2_children"].astype(np.int64) + k["with_3_plus_children"].astype(np.int64)
     _expect((with_children <= k["households"].astype(np.int64)).all(), "census_household_children: домохозяйств с детьми больше, чем домохозяйств")
+    # В семье есть взрослый: детей не больше (размер − 1) × домохозяйства для размеров 2–5, невозможные категории пусты.
+    hh_size = k["size"].astype(np.int64)
+    kids = k["with_1_child"].astype(np.int64) + 2 * k["with_2_children"].astype(np.int64) + k["children_in_3_plus"].astype(np.int64)
+    _expect(((hh_size == 6) | (kids <= (hh_size - 1) * k["households"].astype(np.int64))).all()
+            and not ((hh_size == 2) & ((k["with_2_children"] > 0) | (k["with_3_plus_children"] > 0)) | (hh_size == 3) & (k["with_3_plus_children"] > 0)).any(),
+            "census_household_children: детей больше, чем позволяет размер домохозяйства")
     # В категории 3+ в среднем не меньше трёх детей; нет таких домохозяйств — нет и детей.
     three, kids3 = k["with_3_plus_children"].astype(np.int64), k["children_in_3_plus"].astype(np.int64)
     _expect(((three > 0) & (kids3 >= 3 * three) | (three == 0) & (kids3 == 0)).all(), "census_household_children: детей в домохозяйствах 3+ меньше трёх на домохозяйство")
@@ -1114,6 +1125,63 @@ def _car_weights(t, codes):
     _expect(int(weight.sum()) < (1 << 32), f"road_arcs: сумма весов автомобильного графа {int(weight.sum())} дс не помещается в u32")
 
 
+def census_from_tables(sim_dir: Path) -> dict:
+    """Итоги переписи в формате census.read_census, восстановленные из таблиц census_*: сырых xlsx в пакете нет."""
+    def columns(name):
+        return {c: v.astype(np.int64).tolist() for c, (_, v) in mtab.decode_table((sim_dir / f"{name}.mtab").read_bytes(), name).columns.items()}
+    tables = {name: columns(name) for name in CENSUS_TABLES}
+    result = {}
+    for region_code, region in enumerate(CENSUS_REGIONS):
+        def rows(name):
+            c = tables[name]
+            return [i for i, r in enumerate(c["region"]) if r == region_code]
+
+        def pick(name, column):
+            return [tables[name][column][i] for i in rows(name)]
+        age_rows, size_rows = rows("census_age"), rows("census_household_size")
+        persons = pick("census_age", "persons")
+        households, size_persons, sizes = pick("census_household_size", "households"), pick("census_household_size", "persons"), pick("census_household_size", "size")
+        bins = lambda name: [[low, high] for low, high in zip(pick(name, "age_low"), pick(name, "age_high"))]
+        result[region] = {
+            "age": {"bins": bins("census_age"), "persons": persons, "total": sum(persons)},
+            "household_size": {"households": sum(households), "persons": sum(size_persons),
+                               "by_size_1_to_5": [h for h, s in zip(households, sizes) if s < 6],
+                               "size_6_plus": {"households": households[sizes.index(6)], "persons": size_persons[sizes.index(6)]}},
+            "household_children": {"sizes": pick("census_household_children", "size"), "households": pick("census_household_children", "households"),
+                                   **{c: pick("census_household_children", c) for c in ("with_1_child", "with_2_children", "with_3_plus_children", "children_in_3_plus")}},
+            "labour": {"bins": bins("census_labour"), **{c: pick("census_labour", c) for c in ("total", "status_indicated", "employed")}},
+            "study": {"bins": bins("census_study"), **{c: pick("census_study", c) for c in ("total", "not_indicated", "preschool", "general", "professional")}},
+        }
+    return result
+
+
+def _matches_reexport(sim_dir: Path, manifest: dict):
+    """sim/ — ровно детерминированный экспорт файлов пакета: таблицы пересобираются во временный каталог и сверяются побайтно.
+
+    Так проверяется связь с промежуточными файлами (oneway и флаги car, точки входов, привязка, источники таблиц по ролям
+    build_config.json), которую не выразить правилами одной таблицы. Перепись берётся из её же таблиц (xlsx в пакете нет),
+    поэтому для census_* эта сверка подтверждает только формат."""
+    import tempfile
+    package_dir = sim_dir.parent
+    config_asset = next((a for a in manifest["assets"] if a["role"] == "config"), None)
+    _expect(config_asset is not None, "роль sim требует build_config.json (роль config) для сверки с файлами пакета")
+    config = parse_json_bytes((package_dir / config_asset["path"]).read_bytes(), package_dir / config_asset["path"])
+    _expect(isinstance(config, dict) and config.get("config_version") == 2, "build_config.json пакета с ролью sim должен быть версии 2")
+    source_roles = dict(config["sources"], config=f"build-config-{config['package_id']}")
+    try:
+        census = census_from_tables(sim_dir)
+    except (KeyError, ValueError, IndexError) as error:
+        raise SimError(f"не удалось восстановить перепись из таблиц census_*: {error}") from error
+    with tempfile.TemporaryDirectory() as temporary:
+        out = Path(temporary) / "sim"
+        try:
+            export_sim_tables(package_dir, config, census, kind=manifest["kind"], source_roles=source_roles, log=lambda *_: None, out_dir=out, check=False)
+        except (SimError, KeyError, ValueError, IndexError, OSError) as error:
+            raise SimError(f"повторный экспорт sim/ из файлов пакета не удался: {error}") from error
+        different = sorted(path.name for path in out.iterdir() if (sim_dir / path.name).read_bytes() != path.read_bytes())
+        _expect(not different, f"sim/ не совпадает с повторным экспортом из файлов пакета: {', '.join(different)}")
+
+
 def read_table(path: Path, entry: dict, package_id: str, package_version: str):
     """Прочитать таблицу, проверив размер и SHA256 по индексу, заголовок и колонки по схеме."""
     name = entry["name"]
@@ -1200,6 +1268,7 @@ def validate_sim_index(path: Path, manifest: dict, asset_id: str) -> int:
     try:
         count = validate_sim_dir(path.parent, manifest["package_id"], manifest["package_version"], kind=manifest["kind"],
                                  plane=(origin, manifest["region"]["metric_crs"]), manifest_sources=sources)
+        _matches_reexport(path.parent, manifest)
         # Происхождение на уровне паспорта: источники файла роли sim — ровно объединение источников его таблиц.
         index = parse_json_bytes(path.read_bytes(), path)
         table_sources = sorted({source for entry in index["tables"] for source in entry["source_ids"]})
