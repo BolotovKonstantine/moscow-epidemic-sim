@@ -1030,15 +1030,15 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     order = np.argsort(starts_s, kind="stable")
     _expect(np.array_equal((starts_s[order] + lengths[order]) % 86_400, np.roll(starts_s[order], -1)), "transit_periods: периоды идут не встык")
     h = t["transit_headways"]
-    # Модельных рейсов за сутки меньше 2³¹: ID рейса — 2³¹ + номер рейса за сутки (sim-core.md). Оценка сверху — на каждый
-    # кусок и период с движением ⌊длина периода / интервал⌋ + 1.
+    # ID рейса — 2³¹ + номер рейса (sim-core.md), а окно расписания держит рейсы текущих и 7 прошлых суток (mobility.md):
+    # все они нумеруются в одном диапазоне. Оценка сверху — 8 суток × на каждый кусок и период ⌊длина периода / интервал⌋ + 1.
     period_length = (p["end_s"].astype(np.int64) - p["start_s"].astype(np.int64)) % 86_400
     headway = h["headway_s"].astype(np.int64).reshape(len(codes["mode"]), len(codes["period"])) if len(h["headway_s"]) == len(codes["mode"]) * len(codes["period"]) else None
     if headway is not None:
         served = headway != mtab.NONE["u32"]
         trips_per_mode = np.where(served, period_length[None, :] // np.where(served, headway, 1) + 1, 0).sum(axis=1)
         pieces_per_mode = np.bincount(t["route_pieces"]["mode"].astype(np.int64), minlength=len(codes["mode"]))
-        _expect(int((trips_per_mode * pieces_per_mode[:len(trips_per_mode)]).sum()) < (1 << 31), "transit_headways: модельных рейсов за сутки не меньше 2³¹ — не хватит ID рейсов")
+        _expect(8 * int((trips_per_mode * pieces_per_mode[:len(trips_per_mode)]).sum()) < (1 << 31), "transit_headways: модельных рейсов окна расписания (8 суток) не меньше 2³¹ — не хватит ID рейсов")
     grid = [(m, q) for m in range(len(codes["mode"])) for q in range(len(codes["period"]))]
     _expect(list(zip(h["mode"].tolist(), h["period"].tolist())) == grid, "transit_headways: строка на каждую пару (вид, период) в порядке кодов")
     # Перепись: возрастные группы — ровно группы таблиц Росстата (census.py) для каждого региона по порядку.
@@ -1047,6 +1047,10 @@ def _cross_checks(t, codes, zone_cell_m, origin):
         expected = [(region, low, high) for region in range(len(codes["census_region"])) for low, high in bins]
         _expect(list(zip(c["region"].tolist(), c["age_low"].tolist(), c["age_high"].tolist())) == expected,
                 f"{name}: возрастные группы должны быть ровно {bins} для каждого региона")
+    # Возрастное распределение каждого региона не пустое: генератор нормирует по его сумме.
+    age = t["census_age"]
+    for region in range(len(codes["census_region"])):
+        _expect(int(age["persons"][age["region"] == region].astype(np.int64).sum()) > 0, f"census_age: нулевое население региона {codes['census_region'][region]}")
     # Вложенные итоги: работающие ⊂ указавших статус ⊂ всех; части обучения не больше итога.
     lab = {c: v.astype(np.int64) for c, v in t["census_labour"].items()}
     _expect(((lab["employed"] <= lab["status_indicated"]) & (lab["status_indicated"] <= lab["total"])).all(), "census_labour: нужно employed ≤ status_indicated ≤ total")

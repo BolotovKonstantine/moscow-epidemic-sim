@@ -744,7 +744,8 @@ class SimValidationTests(unittest.TestCase):
         cases = [
             ("census_household_children", self.set_value("children_in_3_plus", stop_six, 10 ** 6), "6\\+|позволяет размер|не больше"),
             ("route_pieces", self.set_value("stops", 1, int(pieces["stops"][1][0])), "дважды подряд|длина перегона"),
-            ("transit_headways", self.set_value("headway_s", 0, 1), "рейсов за сутки|повторным экспортом"),
+            ("transit_headways", self.set_value("headway_s", 0, 1), "рейсов окна расписания|повторным экспортом"),
+            ("census_age", lambda columns, rows: ([(n, d, np.where(columns[0][2] == 1, 0, v) if n == "persons" else v) for n, d, v in columns], rows), "нулевое население региона"),
         ]
         for name, change, message in cases:
             with self.subTest(table=name):
@@ -776,6 +777,7 @@ class SimValidationTests(unittest.TestCase):
 
     def test_sim_metadata_is_checked_without_files(self):
         for edit, message in ((lambda a: a.update(data_kind="game_setting"), "должен быть estimated"),
+                              (lambda a: a.update(format="csv"), "должен быть mesim-sim-index"),
                               (lambda a: a.update(path="sim2/index.json"), "должен быть sim/index.json")):
             with self.subTest(message=message):
                 package = self.copy()

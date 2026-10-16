@@ -135,6 +135,8 @@ def validate_manifest(path: Path, *, check_files: bool = True) -> dict:
         except mtab.TableError as error:
             raise ManifestError(f"{sim_assets[0]['asset_id']}: {error}") from error
         sim = sim_assets[0]
+        if sim["format"] != "mesim-sim-index":
+            raise ManifestError(f"{sim['asset_id']}: формат файла роли sim должен быть mesim-sim-index")
         if sim["path"] != "sim/index.json":
             raise ManifestError(f"{sim['asset_id']}: путь индекса расчётных таблиц должен быть sim/index.json")
         if sim["data_kind"] != "estimated" or "estimation" not in sim:
