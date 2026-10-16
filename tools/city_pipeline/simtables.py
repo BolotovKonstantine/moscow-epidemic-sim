@@ -522,6 +522,8 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
             raise SimError(f"population: здание {row['building_id']} отсутствует в building_attributes")
         if row["building_id"] in seen:
             raise SimError(f"population: здание {row['building_id']} указано дважды")
+        if row["zone_id"] != attrs[building_index[row["building_id"]]]["zone_id"]:
+            raise SimError(f"population: зона здания {row['building_id']} не совпадает с building_attributes")
         seen.add(row["building_id"])
         residents[building_index[row["building_id"]]] = int(row["residents"])
     bx, by, building_x, building_y = plane([a["lon"] for a in attrs], [a["lat"] for a in attrs])
@@ -577,7 +579,10 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
     ]
     routes = _read_csv(package_dir / "transit_routes.csv.gz")
     segments = {}
+    route_mode = {r["route_id"]: r["mode"] for r in routes}
     for sg in _read_csv(package_dir / "transit_segments.csv.gz"):
+        if sg["mode"] != route_mode.get(sg["route_id"]):   # вид куска берётся из маршрута: отрезок обязан с ним совпадать
+            raise SimError(f"transit_segments: вид отрезка {sg['route_id']}:{sg['sequence']} не совпадает с видом маршрута")
         segments.setdefault(sg["route_id"], []).append((int(sg["sequence"]), stop_index[sg["from_stop"]], stop_index[sg["to_stop"]], float(sg["distance_m"])))
     piece_route, piece_number, piece_mode, stop_offset, pool_stops, pool_segment = [], [], [], [0], [], []
     without_pieces = []

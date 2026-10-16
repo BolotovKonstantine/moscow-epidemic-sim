@@ -824,6 +824,25 @@ class SimValidationTests(unittest.TestCase):
         (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
         self.assert_rejected(package, "metric_crs карты")
 
+    def test_population_zone_must_match_building(self):
+        package = self.copy()
+        path = package / "population.csv.gz"
+        rows = list(csv.DictReader(gzip.decompress(path.read_bytes()).decode("utf-8").splitlines()))
+        other = next(r["zone_id"] for r in rows if r["zone_id"] != rows[0]["zone_id"])
+        rows[0]["zone_id"] = other
+        text = ",".join(rows[0].keys()) + "\n" + "".join(",".join(r.values()) + "\n" for r in rows)
+        path.write_bytes(gzip.compress(text.encode("utf-8"), mtime=0))
+        self.reseal_asset(package, "population", "population.csv.gz")
+        self.assert_rejected(package, "зона здания")
+
+    def test_sim_dependencies_without_files(self):
+        package = self.copy()
+        manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+        manifest["assets"] = [a for a in manifest["assets"] if a["role"] != "map"]
+        (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        with self.assertRaisesRegex(ManifestError, "требует ровно один файл роли map"):
+            validate_manifest(package / "manifest.json", check_files=False)
+
     def test_duplicate_population_row_is_rejected(self):
         package = self.copy()
         path = package / "population.csv.gz"

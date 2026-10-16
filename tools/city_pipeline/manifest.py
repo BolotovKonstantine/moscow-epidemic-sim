@@ -141,6 +141,14 @@ def validate_manifest(path: Path, *, check_files: bool = True) -> dict:
             raise ManifestError(f"{sim['asset_id']}: путь индекса расчётных таблиц должен быть sim/index.json")
         if sim["data_kind"] != "estimated" or "estimation" not in sim:
             raise ManifestError(f"{sim['asset_id']}: файл роли sim должен быть estimated с методом и неопределённостью")
+        # Зависимости роли sim — и без открытия файлов: плоскость берётся из карты, сверка — по build_config.json и его карточке.
+        roles = [asset["role"] for asset in manifest["assets"]]
+        if roles.count("map") != 1 or roles.count("config") != 1:
+            raise ManifestError(f"{sim['asset_id']}: роль sim требует ровно один файл роли map и один роли config")
+        card_id = f"build-config-{manifest['package_id']}"
+        config = next(asset for asset in manifest["assets"] if asset["role"] == "config")
+        if not any(source["source_id"] == card_id for source in manifest["sources"]) or card_id not in config["source_ids"]:
+            raise ManifestError(f"{sim['asset_id']}: роль sim требует карточку {card_id}, на которую ссылается файл роли config")
 
     known_sources = set(source_ids)
     synthetic_sources = {source["source_id"] for source in manifest["sources"] if source["source_type"] == "synthetic"}
