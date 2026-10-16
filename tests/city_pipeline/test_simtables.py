@@ -719,6 +719,25 @@ class SimValidationTests(unittest.TestCase):
         self.reseal_index(package, lambda i: next(e for e in i["tables"] if e["name"] == "census_age").update(source_ids=["build-config-synthetic-mini-city"]))
         self.assert_rejected(package, "повторным экспортом|источники")
 
+    def test_seventeenth_review_round_checks(self):
+        cases = [
+            ("census_household_children", self.set_value("children_in_3_plus", 2, 10 ** 6), "не больше|помещается|позволяет размер"),
+            ("route_pieces", self.set_value("segment_cm", 0, 10 ** 9), "длина перегона|дольше 7 суток"),
+        ]
+        for name, change, message in cases:
+            with self.subTest(table=name):
+                self.assert_rejected(self.rewrite(name, change), message)
+        # build_config.json изменён и переподписан в паспорте, а карточка источника осталась прежней.
+        package = self.copy()
+        config_path = package / "build_config.json"
+        config_path.write_bytes(config_path.read_bytes() + b" ")
+        manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+        asset = next(a for a in manifest["assets"] if a["role"] == "config")
+        data = config_path.read_bytes()
+        asset["size_bytes"], asset["sha256"] = len(data), hashlib.sha256(data).hexdigest()
+        (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        self.assert_rejected(package, "не совпадает с карточкой источника")
+
     def test_broken_embedded_config_is_a_package_error(self):
         package = self.copy()
         config_path = package / "build_config.json"
@@ -729,6 +748,7 @@ class SimValidationTests(unittest.TestCase):
         asset = next(a for a in manifest["assets"] if a["role"] == "config")
         data = config_path.read_bytes()
         asset["size_bytes"], asset["sha256"] = len(data), hashlib.sha256(data).hexdigest()
+        next(s for s in manifest["sources"] if s["source_id"].startswith("build-config-"))["sha256"] = asset["sha256"]   # карточка тоже переписана
         (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
         self.assert_rejected(package, "не соответствует конфигурации версии 2")
 

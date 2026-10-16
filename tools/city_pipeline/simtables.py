@@ -47,6 +47,7 @@ FIXED_CODES = {
     "gateway_kind": GATEWAY_KINDS, "census_region": CENSUS_REGIONS,
 }
 SHARE_ONE = 10_000   # доли — u16 в 1/10 000
+MIN_RIDE_S = 30      # минимальное время перегона у загрузчика прототипа #35
 
 
 def _col(name, dtype, length="rows", *checks):
@@ -993,9 +994,16 @@ def _cross_checks(t, codes, zone_cell_m, origin):
         _expect((r["segment_cm"][stop_offset[1:] - 1] == 0).all(), "route_pieces.segment_cm: у последней остановки куска должно быть 0")
     piece_mode = np.repeat(r["mode"].astype(np.int64), np.diff(stop_offset))
     _expect(((t["stops"]["modes"][r["stops"]].astype(np.int64) >> piece_mode) & 1 == 1).all(), "stops.modes: у остановки нет вида транспорта её куска маршрута")
-    speed_of = t["transit_modes"]["speed_mm_s"].astype(np.int64)[np.minimum(r["mode"].astype(np.int64), len(t["transit_modes"]["speed_mm_s"]) - 1)]
-    piece_cm = np.add.reduceat(r["segment_cm"].astype(np.int64), stop_offset[:-1]) if len(stop_offset) > 1 else np.zeros(0, dtype=np.int64)
-    _expect((piece_cm * 10 <= 7 * 86_400 * speed_of).all(), "route_pieces: кусок маршрута идёт дольше 7 суток (глубина расписания)")
+    # Позиция в пути у ядра — u8 (прототип #35): в куске не больше 255 остановок.
+    _expect(not (np.diff(stop_offset) > 255).any(), "route_pieces: в куске маршрута больше 255 остановок")
+    # Время куска — сумма перегонов, как у загрузчика прототипа: каждый перегон round(длина / скорость), не меньше 30 с;
+    # весь кусок — не дольше 7 суток (глубина расписания).
+    speeds = t["transit_modes"]["speed_mm_s"].astype(np.int64)
+    pool_mode = np.repeat(np.minimum(r["mode"].astype(np.int64), len(speeds) - 1), np.diff(stop_offset))
+    ride = np.maximum(MIN_RIDE_S, np.rint(r["segment_cm"].astype(np.int64) * 10 / speeds[pool_mode]).astype(np.int64))
+    ride[stop_offset[1:] - 1] = 0   # у последней остановки куска перегона нет
+    piece_s = np.add.reduceat(ride, stop_offset[:-1]) if len(stop_offset) > 1 else np.zeros(0, dtype=np.int64)
+    _expect((piece_s <= 7 * 86_400).all(), "route_pieces: кусок маршрута идёт дольше 7 суток (глубина расписания)")
     route = r["route_osm_id"].astype(np.int64)
     # Вид транспорта — свойство отношения маршрута: у всех его кусков один вид.
     _expect(len(np.unique(np.column_stack((route, r["mode"].astype(np.int64))), axis=0)) == len(np.unique(route)), "route_pieces.mode: разные виды у кусков одного маршрута")
@@ -1042,6 +1050,10 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     _expect(((hh_size == 6) | (kids <= (hh_size - 1) * k["households"].astype(np.int64))).all()
             and not ((hh_size == 2) & ((k["with_2_children"] > 0) | (k["with_3_plus_children"] > 0)) | (hh_size == 3) & (k["with_3_plus_children"] > 0)).any(),
             "census_household_children: детей больше, чем позволяет размер домохозяйства")
+    # Дети категории 3+ помещаются в свои домохозяйства: не больше (размер − 1) на домохозяйство для размеров 4–5.
+    small = (hh_size >= 4) & (hh_size <= 5)
+    _expect((k["children_in_3_plus"][small].astype(np.int64) <= (hh_size[small] - 1) * k["with_3_plus_children"][small].astype(np.int64)).all(),
+            "census_household_children: детей 3+ больше, чем помещается в такие домохозяйства")
     # В категории 3+ в среднем не меньше трёх детей; нет таких домохозяйств — нет и детей.
     three, kids3 = k["with_3_plus_children"].astype(np.int64), k["children_in_3_plus"].astype(np.int64)
     _expect(((three > 0) & (kids3 >= 3 * three) | (three == 0) & (kids3 == 0)).all(), "census_household_children: детей в домохозяйствах 3+ меньше трёх на домохозяйство")
@@ -1277,6 +1289,11 @@ def validate_sim_index(path: Path, manifest: dict, asset_id: str) -> int:
     map_asset = next((a for a in manifest["assets"] if a["role"] == "map"), None)
     _expect(map_asset is not None, f"{asset_id}: роль sim требует участков карты (role map) — плоскость таблиц общая с картой")
     sim_asset = next(a for a in manifest["assets"] if a["asset_id"] == asset_id)
+    # Конфигурация — источник игровых настроек таблиц: её файл в пакете совпадает с карточкой build-config-<package_id>.
+    card = next((s for s in manifest["sources"] if s["source_id"] == f"build-config-{manifest['package_id']}"), None)
+    config_asset = next((a for a in manifest["assets"] if a["role"] == "config"), None)
+    _expect(card is not None and config_asset is not None and card["source_id"] in config_asset["source_ids"]
+            and config_asset["sha256"] == card["sha256"], f"{asset_id}: build_config.json не совпадает с карточкой источника build-config-{manifest['package_id']}")
 
     # Индекс — производный файл со смешанными таблицами: в паспорте он estimated с описанием оценки.
     _expect(sim_asset["data_kind"] == "estimated" and "estimation" in sim_asset, f"{asset_id}: файл роли sim должен быть estimated с методом и неопределённостью")
