@@ -135,6 +135,7 @@ class CarGraphTests(unittest.TestCase):
         from tools.city_pipeline import simtables
         self.assertEqual([simtables.round_half_away(v) for v in (2.5, 100.5, 3.4999, 0.5)], [3, 101, 3, 1])   # не к чётному
         self.assertEqual(simtables.transfer_walk_s(500, 2.0, 0, 1.0), 3)   # 2,5 с → 3 с, как std::lround
+        self.assertEqual(simtables.round_half_away(0.5), 1)   # надбавка 0,5 с — 1 с, как и время пересадки
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "big.csv.gz"
             with gzip.open(path, "wb") as stream:
@@ -768,7 +769,7 @@ class SimValidationTests(unittest.TestCase):
         data = config_path.read_bytes()
         asset["size_bytes"], asset["sha256"] = len(data), hashlib.sha256(data).hexdigest()
         (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
-        self.assert_rejected(package, "не совпадает с карточкой источника")
+        self.assert_rejected(package, "не совпадает с карточкой")
 
     def test_eighteenth_review_round_checks(self):
         pieces = mtab.decode_table((self.out / "sim" / "route_pieces.mtab").read_bytes(), "route_pieces").columns
@@ -842,6 +843,18 @@ class SimValidationTests(unittest.TestCase):
         (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
         with self.assertRaisesRegex(ManifestError, "требует ровно один файл роли map"):
             validate_manifest(package / "manifest.json", check_files=False)
+
+    def test_dependency_paths_and_card_hash_without_files(self):
+        for edit, message in ((lambda m: next(a for a in m["assets"] if a["role"] == "config").update(sha256="0" * 64), "не совпадает с карточкой"),
+                              (lambda m: next(a for a in m["assets"] if a["role"] == "map").update(path="../outside/index.json"), "Некорректный относительный путь")):
+            with self.subTest(message=message):
+                package = self.copy()
+                manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+                edit(manifest)
+                manifest["assets"].sort(key=lambda a: a["role"] != "sim")
+                (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+                with self.assertRaisesRegex(ManifestError, message):
+                    validate_manifest(package / "manifest.json")
 
     def test_duplicate_population_row_is_rejected(self):
         package = self.copy()

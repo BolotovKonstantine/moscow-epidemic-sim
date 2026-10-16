@@ -149,6 +149,9 @@ def validate_manifest(path: Path, *, check_files: bool = True) -> dict:
         config = next(asset for asset in manifest["assets"] if asset["role"] == "config")
         if not any(source["source_id"] == card_id for source in manifest["sources"]) or card_id not in config["source_ids"]:
             raise ManifestError(f"{sim['asset_id']}: роль sim требует карточку {card_id}, на которую ссылается файл роли config")
+        card = next(source for source in manifest["sources"] if source["source_id"] == card_id)
+        if config["sha256"] != card["sha256"]:
+            raise ManifestError(f"{sim['asset_id']}: SHA256 файла роли config не совпадает с карточкой {card_id}")
 
     known_sources = set(source_ids)
     synthetic_sources = {source["source_id"] for source in manifest["sources"] if source["source_type"] == "synthetic"}

@@ -24,7 +24,7 @@ from scipy.spatial import cKDTree
 from . import mtab
 from .buildings import FUNCTIONS
 from .geo import Projector
-from .manifest import MAP_INDEX_MAX_BYTES, ManifestError, parse_json_bytes
+from .manifest import MAP_INDEX_MAX_BYTES, ManifestError, _asset_path, parse_json_bytes
 from .census import AGE_BINS, LABOUR_BINS, STUDY_BINS
 from .maptiles import BUILDING_CLASSES, FACILITY_CLASSES, HIGHWAY_CLASS, STOP_CLASSES, STOP_MODES
 from .writers import write_json
@@ -427,7 +427,7 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
     periods = sorted(headways["periods"], key=lambda name: (_clock_seconds(headways["periods"][name][0]), name))
     # Пешие параметры округляются один раз: те же целые значения идут и в таблицы, и в расчёт времени пересадок.
     walk_speed_mm_s = round(config["model_assumptions"]["transfer_walk_speed_mps"] * 1000)
-    transfer_overhead_s = round(config["model_assumptions"]["transfer_overhead_s"])
+    transfer_overhead_s = round_half_away(config["model_assumptions"]["transfer_overhead_s"])   # как и итоговое время пересадки
     walk_detour = round(mobility["walk_detour"] * SHARE_ONE)
     codes = {name: list(values) for name, values in FIXED_CODES.items()}
     codes["period"] = periods
@@ -1319,7 +1319,8 @@ def _matches_reexport(sim_dir: Path, manifest: dict):
     package_dir = sim_dir.parent
     config_asset = next((a for a in manifest["assets"] if a["role"] == "config"), None)
     _expect(config_asset is not None, "роль sim требует build_config.json (роль config) для сверки с файлами пакета")
-    config_path = package_dir / config_asset["path"]
+    config_path = _asset_path(package_dir, config_asset["path"])   # путь — внутри пакета, обычный файл
+    _expect(config_path.is_file(), f"{config_asset['path']}: файл роли config отсутствует или не является обычным файлом")
     _expect(config_asset["size_bytes"] <= MAX_INDEX_BYTES and config_path.stat().st_size <= MAX_INDEX_BYTES,
             f"build_config.json больше {MAX_INDEX_BYTES} байт")   # размер — до чтения
     config = parse_json_bytes(config_path.read_bytes(), config_path)
@@ -1433,7 +1434,8 @@ def validate_sim_index(path: Path, manifest: dict, asset_id: str) -> int:
     # Индекс — производный файл со смешанными таблицами: в паспорте он estimated с описанием оценки.
     _expect(sim_asset["data_kind"] == "estimated" and "estimation" in sim_asset, f"{asset_id}: файл роли sim должен быть estimated с методом и неопределённостью")
     _expect(sim_asset["path"] == f"sim/{INDEX_NAME}", f"{asset_id}: путь индекса расчётных таблиц должен быть sim/{INDEX_NAME}")
-    map_index_path = path.parent.parent / map_asset["path"]   # path — <пакет>/sim/index.json
+    map_index_path = _asset_path(path.parent.parent, map_asset["path"])   # path — <пакет>/sim/index.json; путь карты — внутри пакета
+    _expect(map_index_path.is_file(), f"{asset_id}: индекс карты {map_asset['path']} отсутствует или не является обычным файлом")
     try:
         # Предел индекса карты — тот же, что у validate_map_index: порядок файлов в паспорте не должен его обходить.
         _expect(map_index_path.stat().st_size <= MAP_INDEX_MAX_BYTES, f"{asset_id}: индекс карты больше {MAP_INDEX_MAX_BYTES} байт")
