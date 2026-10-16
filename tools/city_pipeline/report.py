@@ -146,6 +146,13 @@ def build_report(context):
                              f"(тоннели {tiles['road_edges_tunnel']} не рисуются), каждая из {tiles['zones']} зон 1 км задевает участки 8 и 2 км; "
                              f"в обзоре {tiles['stops']} остановок и {tiles['facilities']} учреждений (вне региона и не на карте: "
                              f"{tiles['stops_outside_region']} остановок, {tiles['facilities_outside_region']} учреждений), линий маршрутов {sum(tiles['transit_lines'].values())}"))
+    sim = context.get("sim")
+    if sim is not None:
+        # Экспорт сам проверяет таблицы валидатором; здесь — итоги привязки и маршрутов для отчёта.
+        checks.append(_check("sim_buildings_snap_to_car_graph", sim["buildings_without_road_node"] == 0,
+                             f"{sim['tables']} расчётных таблиц, {sim['bytes']} байт; зданий без узла автомобильного графа: "
+                             f"{sim['buildings_without_road_node']}, дальше {context['config']['model_assumptions']['mobility']['building_node_max_m']} м "
+                             f"от основной компоненты: {sim['buildings_far_from_main_graph']}; маршрутов без кусков с двумя остановками: {sim['routes_without_pieces']}"))
     if population.allocated_total != int(residents.sum()) or zone_total != int(residents.sum()):
         raise ReportError("Нарушено сохранение населения между зданиями и зонами")
 
@@ -242,13 +249,15 @@ def build_report(context):
             "Пассажиропотоки и матрица поездок — будут модельными (этап 3)",
             "Расписания — заменены модельными интервалами",
             "Вместимость учреждений и число рабочих мест",
-            "Возрастная структура и домохозяйства — нужны таблицы Мосстата или иной источник",
+            "Возраст и домохозяйства отдельных жителей — пакет содержит только итоги переписи по территориям (sim/census_*); жителей создаёт ядро (#38)",
             "Входы зданий",
         ],
         "manual_sample": {"status": "не проверено вручную", "items": _manual_sample(context)},
     }
     if tiles is not None:
         report["map"] = tiles
+    if sim is not None:
+        report["sim"] = sim
     return report
 
 
@@ -259,7 +268,7 @@ def write_markdown(path, report):
     lines += [f"| {c['check']} | {c['status']} | {c['detail']} |" for c in report["checks"]]
     lines += ["", "## Источники", "", "| ID | Владелец | Лицензия | Дата данных |", "| --- | --- | --- | --- |"]
     lines += [f"| {s['source_id']} | {s['owner']} | {s['license']} | {s['data_date'] or 'не указана'} |" for s in report["sources"]]
-    for section in ("boundary", "buildings", "population", "roads", "reachability", "transit", "facilities", "zones", "map"):
+    for section in ("boundary", "buildings", "population", "roads", "reachability", "transit", "facilities", "zones", "map", "sim"):
         if section not in report:
             continue
         lines += ["", f"## {section}", "", "```json"]

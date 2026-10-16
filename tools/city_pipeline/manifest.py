@@ -123,6 +123,18 @@ def validate_manifest(path: Path, *, check_files: bool = True) -> dict:
     if boundary is None or boundary["role"] != "boundary":
         raise ManifestError("region.boundary_asset_id должен ссылаться на файл с ролью boundary")
 
+    # Роль sim (расчётные таблицы, docs/sim-core.md): одна на пакет и только с ID и версией, которые
+    # помещаются в заголовок таблицы; проверяется и без открытия файлов.
+    sim_assets = [asset for asset in manifest["assets"] if asset["role"] == "sim"]
+    if len(sim_assets) > 1:
+        raise ManifestError("В пакете может быть только один файл с ролью sim")
+    if sim_assets:
+        from . import mtab
+        try:
+            mtab.check_package(manifest["package_id"], manifest["package_version"])
+        except mtab.TableError as error:
+            raise ManifestError(f"{sim_assets[0]['asset_id']}: {error}") from error
+
     known_sources = set(source_ids)
     synthetic_sources = {source["source_id"] for source in manifest["sources"] if source["source_type"] == "synthetic"}
     for asset in manifest["assets"]:
@@ -145,6 +157,9 @@ def validate_manifest(path: Path, *, check_files: bool = True) -> dict:
             raise ManifestError(f"{asset['asset_id']}: ошибка чтения файла: {error}") from error
         if asset["role"] == "map":
             validate_map_index(target, manifest, asset["asset_id"])
+        if asset["role"] == "sim":
+            from .simtables import validate_sim_index
+            validate_sim_index(target, manifest, asset["asset_id"])
     return manifest
 
 

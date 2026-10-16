@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from tests.city_pipeline.synthetic_city import build_city, mini_city_config, synthetic_sources  # noqa: E402
+from tests.city_pipeline.synthetic_city import SOURCE_ROLES, build_city, mini_city_config, synthetic_census, synthetic_sources  # noqa: E402
 from tools.city_pipeline.build import build_package, make_boundary  # noqa: E402
 from tools.city_pipeline.geo import Projector  # noqa: E402
 
@@ -19,8 +19,8 @@ def main(out_dir: Path):
         osm, raster = build_city(Path(temporary))
         config = mini_city_config()
         parts = make_boundary(config, osm, Projector(config["metric_crs"]))
-        build_package(config, sources=synthetic_sources(), source_roles={"osm": "synthetic-mini-city", "population": "synthetic-mini-city"},
-                      kind="fixture", region_parts=parts, region_osm=osm, raster=raster, out_dir=out_dir,
+        build_package(config, sources=synthetic_sources(), source_roles=SOURCE_ROLES,
+                      kind="fixture", region_parts=parts, region_osm=osm, raster=raster, census=synthetic_census(), out_dir=out_dir,
                       created_at="2026-10-06T00:00:00Z", log=lambda *_: None)
 
 

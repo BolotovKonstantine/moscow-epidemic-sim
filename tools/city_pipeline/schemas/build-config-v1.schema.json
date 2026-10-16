@@ -10,8 +10,14 @@
     "package_version": {"type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z.+_-]*$"},
     "description": {"$ref": "#/$defs/text"},
     "sources": {
-      "type": "object", "additionalProperties": false, "required": ["osm", "population"],
-      "properties": {"osm": {"$ref": "#/$defs/text"}, "population": {"$ref": "#/$defs/text"}}
+      "type": "object", "additionalProperties": false,
+      "required": ["osm", "population", "census_age", "census_household_size", "census_household_children", "census_labour", "census_study"],
+      "properties": {
+        "osm": {"$ref": "#/$defs/text"}, "population": {"$ref": "#/$defs/text"},
+        "census_age": {"$ref": "#/$defs/text"}, "census_household_size": {"$ref": "#/$defs/text"},
+        "census_household_children": {"$ref": "#/$defs/text"}, "census_labour": {"$ref": "#/$defs/text"},
+        "census_study": {"$ref": "#/$defs/text"}
+      }
     },
     "metric_crs": {"$ref": "#/$defs/text"},
     "boundary": {
@@ -81,7 +87,7 @@
     },
     "model_assumptions": {
       "type": "object", "additionalProperties": false,
-      "required": ["transfer_walk_speed_mps", "transfer_overhead_s", "headway_minutes"],
+      "required": ["transfer_walk_speed_mps", "transfer_overhead_s", "headway_minutes", "mobility"],
       "properties": {
         "note": {"type": "string"},
         "transfer_walk_speed_mps": {"type": "number", "minimum": 0.1, "maximum": 10},
@@ -90,7 +96,48 @@
           "type": "object", "additionalProperties": false, "required": ["periods", "by_mode"],
           "properties": {
             "periods": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"}}},
-            "by_mode": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"type": ["number", "null"], "exclusiveMinimum": 0}}}
+            "by_mode": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 1440}}}
+          }
+        },
+        "mobility": {
+          "type": "object", "additionalProperties": false,
+          "required": ["car_speed_kmh", "transit_speed_kmh", "vehicle_capacity", "car_park_s", "walk_detour", "access_radius_m", "access_stops_max",
+                       "transfer_radius_m", "board_penalty_s", "max_wait_s", "walk_only_max_s", "origin_cell_m", "crowding_penalty", "crowding_iterations", "building_node_max_m"],
+          "properties": {
+            "note": {"type": "string"},
+            "car_speed_kmh": {
+              "type": "object",
+              "required": ["service", "pedestrian", "residential", "tertiary", "secondary", "primary", "trunk", "motorway"],
+              "additionalProperties": {"type": "number", "minimum": 0, "maximum": 360},
+              "propertyNames": {"enum": ["service", "pedestrian", "residential", "tertiary", "secondary", "primary", "trunk", "motorway"]}
+            },
+            "transit_speed_kmh": {
+              "type": "object",
+              "required": ["bus", "share_taxi", "trolleybus", "tram", "light_rail", "monorail", "train", "subway"],
+              "additionalProperties": {"type": "number", "exclusiveMinimum": 0, "maximum": 360},
+              "propertyNames": {"$ref": "#/$defs/mode"}
+            },
+            "vehicle_capacity": {
+              "type": "object",
+              "required": ["bus", "share_taxi", "trolleybus", "tram", "light_rail", "monorail", "train", "subway"],
+              "additionalProperties": {
+                "type": "object", "additionalProperties": false, "required": ["capacity", "wagons"],
+                "properties": {"capacity": {"type": "integer", "minimum": 1, "maximum": 100000}, "wagons": {"type": "integer", "minimum": 1, "maximum": 1000}}
+              },
+              "propertyNames": {"$ref": "#/$defs/mode"}
+            },
+            "car_park_s": {"type": "integer", "minimum": 0, "maximum": 3600},
+            "walk_detour": {"type": "number", "minimum": 1, "maximum": 6},
+            "access_radius_m": {"type": "number", "exclusiveMinimum": 0, "maximum": 10000},
+            "access_stops_max": {"type": "integer", "minimum": 1, "maximum": 64},
+            "transfer_radius_m": {"type": "number", "minimum": 0, "maximum": 10000},
+            "board_penalty_s": {"type": "integer", "minimum": 0, "maximum": 3600},
+            "max_wait_s": {"type": "integer", "minimum": 1, "maximum": 86400},
+            "walk_only_max_s": {"type": "integer", "minimum": 0, "maximum": 86400},
+            "origin_cell_m": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000},
+            "crowding_penalty": {"type": "number", "minimum": 0, "maximum": 6},
+            "crowding_iterations": {"type": "integer", "minimum": 0, "maximum": 100},
+            "building_node_max_m": {"type": "number", "minimum": 0, "maximum": 10000}
           }
         }
       }
@@ -110,6 +157,7 @@
     "text": {"type": "string", "minLength": 1, "pattern": "\\S"},
     "strings": {"type": "array", "items": {"$ref": "#/$defs/text"}},
     "positive": {"type": "number", "exclusiveMinimum": 0},
+    "mode": {"enum": ["bus", "share_taxi", "trolleybus", "tram", "light_rail", "monorail", "train", "subway"]},
     "function": {"enum": ["residential", "work", "retail", "education", "medical", "transport", "control", "other"]}
   }
 }

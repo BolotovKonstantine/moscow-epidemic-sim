@@ -137,7 +137,9 @@ def command_validate(args) -> int:
     return 0
 
 
-ROLE_FORMATS = {"osm": "osm-pbf", "population": "geotiff-in-zip"}   # формат карточки реестра для роли
+ROLE_FORMATS = {"osm": "osm-pbf", "population": "geotiff-in-zip",   # формат карточки реестра для роли
+                "census_age": "xlsx", "census_household_size": "xlsx", "census_household_children": "xlsx",
+                "census_labour": "xlsx", "census_study": "xlsx"}
 
 
 def _selected_sources(config, registry):
@@ -226,6 +228,8 @@ def command_build(args) -> int:
     osm = verify(selected["osm"], args.raw)
     raster_zip = verify(selected["population"], args.raw)
     raster = population_raster(raster_zip)   # архив и растр проверяются до границы и вырезки
+    from .census import ROLES as CENSUS_ROLES, read_census
+    census = read_census({role: verify(selected[role], args.raw) for role in CENSUS_ROLES})   # таблицы переписи — тоже до тяжёлых этапов
     work.mkdir(parents=True, exist_ok=True)
     # Одинаковые сборки, запущенные одновременно, ждут друг друга, а не пишут одни файлы.
     lock = (work / ".lock").open("w")
@@ -249,7 +253,7 @@ def command_build(args) -> int:
     sources = [manifest_source(selected[role], processing) for role in sorted(selected)]
     manifest, report = build_package(
         config, sources=sources, source_roles={role: source["source_id"] for role, source in selected.items()},
-        kind="city_data", region_parts=parts, region_osm=region_osm, raster=raster, out_dir=out, created_at=_created_at(),
+        kind="city_data", region_parts=parts, region_osm=region_osm, raster=raster, census=census, out_dir=out, created_at=_created_at(),
         config_path=args.config, config_bytes=config_bytes,
     )
     failed = [check["check"] for check in report["checks"] if check["status"] != "pass"]

@@ -11,7 +11,7 @@ import numpy as np
 import shapely
 
 from tests.city_pipeline.map_fixture import FIXTURE_DIR, STREAM_DIR, write_fixture, write_stream_fixture
-from tests.city_pipeline.synthetic_city import CENTER, OsmBuilder, build_city, mini_city_config, synthetic_sources
+from tests.city_pipeline.synthetic_city import CENTER, SOURCE_ROLES, OsmBuilder, build_city, mini_city_config, synthetic_census, synthetic_sources
 from tools.city_pipeline import maplabels as ml
 from tools.city_pipeline import maptiles as mt
 from tools.city_pipeline.build import build_package, make_boundary
@@ -446,8 +446,8 @@ class ExportTests(unittest.TestCase):
         projector = Projector(config["metric_crs"])
         parts = make_boundary(config, osm, projector)
         cls.package = root / "package"
-        build_package(config, sources=synthetic_sources(), source_roles={"osm": "synthetic-mini-city", "population": "synthetic-mini-city"},
-                      kind="fixture", region_parts=parts, region_osm=osm, raster=raster, out_dir=cls.package,
+        build_package(config, sources=synthetic_sources(), source_roles=SOURCE_ROLES,
+                      kind="fixture", region_parts=parts, region_osm=osm, raster=raster, census=synthetic_census(), out_dir=cls.package,
                       created_at="2026-10-06T00:00:00Z", log=lambda *_: None)
         lon, lat = CENTER
         base = OsmBuilder()
