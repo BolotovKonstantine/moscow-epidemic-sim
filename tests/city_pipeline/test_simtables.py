@@ -503,9 +503,35 @@ class SimValidationTests(unittest.TestCase):
             ("road_nodes", self.set_value("inside", home_node, 0), "внутренняя дуга с концом вне региона"),
             ("mobility", self.set_value("origin_cell_cm", 0, 33_300), "не делит зону"),
         ]
+        stops = mtab.decode_table((self.out / "sim" / "stops.mtab").read_bytes(), "stops").columns
+        pieces = mtab.decode_table((self.out / "sim" / "route_pieces.mtab").read_bytes(), "route_pieces").columns
+        first_stop, first_mode = int(pieces["stops"][1][0]), int(pieces["mode"][1][0])
+        road = int(np.nonzero((gateways["kind"][1] == 0) & (gateways["arc"][1] != mtab.NONE["u32"]))[0][0])
+        arcs = mtab.decode_table((self.out / "sim" / "road_arcs.mtab").read_bytes(), "road_arcs").columns
+        arc = int(gateways["arc"][1][road])
+        offsets = nodes["arc_offset"][1].astype(np.int64)
+        ends = {int(np.searchsorted(offsets, arc, side="right") - 1), int(arcs["to"][1][arc])}
+        not_end = next(i for i in range(len(offsets) - 1) if i not in ends)
+        cases += [
+            ("census_age", self.set_value("persons", 0, mtab.NONE["u32"]), "persons: значение больше"),
+            ("census_labour", self.set_value("employed", 0, 10 ** 9), "employed ≤ status_indicated"),
+            ("stops", self.set_value("modes", first_stop, int(stops["modes"][1][first_stop]) & ~(1 << first_mode)), "нет вида транспорта её куска"),
+            ("gateways", self.set_value("road_class", road, (int(gateways["road_class"][1][road]) + 1) % 8), "класс или внутренний флаг"),
+            ("gateways", self.set_value("inside_node", road, not_end), "inside_node не является концом"),
+            ("road_arcs", self.set_value("way_id", 0, 1 << 63), "way_id: значение больше"),
+        ]
         for name, change, message in cases:
             with self.subTest(table=name, message=message):
                 self.assert_rejected(self.rewrite(name, change), message)
+
+    def test_table_symlink_outside_sim_is_rejected(self):
+        package = self.copy()
+        table = package / "sim" / "zones.mtab"
+        outside = self.root / f"outside-{self.count}.mtab"
+        shutil.copyfile(table, outside)
+        table.unlink()
+        table.symlink_to(outside)
+        self.assert_rejected(package, "не ссылкой")
 
     def test_household_sizes_must_be_complete(self):
         def drop_last(columns, rows):

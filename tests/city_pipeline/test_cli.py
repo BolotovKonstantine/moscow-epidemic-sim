@@ -115,6 +115,14 @@ class ConfigTests(unittest.TestCase):
                 with self.subTest(section=section), self.assertRaisesRegex(ManifestError, f"mobility.{section}.{key}"):
                     load_config(path)
             broken = json.loads(real.read_text(encoding="utf-8"))
+            headways = broken["model_assumptions"]["headway_minutes"]
+            headways["periods"][""] = headways["periods"].pop("early")   # пустое имя периода не попадёт в коды sim/
+            for by_period in headways["by_mode"].values():
+                by_period[""] = by_period.pop("early")
+            path.write_text(json.dumps(broken))
+            with self.assertRaisesRegex(ManifestError, "headway_minutes.periods"):
+                load_config(path)
+            broken = json.loads(real.read_text(encoding="utf-8"))
             broken["model_assumptions"]["mobility"]["origin_cell_m"] = 333   # не делит зону 1000 м
             path.write_text(json.dumps(broken))
             with self.assertRaisesRegex(ManifestError, "origin_cell_m 333 не делит зону"):

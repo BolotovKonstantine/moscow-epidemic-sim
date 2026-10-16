@@ -100,7 +100,7 @@ SCHEMA = {
         _col("bridge", "u8", "rows", ("bool",)),
         _col("tunnel", "u8", "rows", ("bool",)),
         _col("layer", "i8"),
-        _col("way_id", "u64", "rows", ("min", 1), ("max", mtab.UNKNOWN["u64"] - 1)),
+        _col("way_id", "u64", "rows", ("min", 1), ("max", (1 << 63) - 1)),   # OSM ID < 2⁶³: порядок не зависит от знака
         _col("way_part", "u16", "rows", ("max", mtab.UNKNOWN["u16"] - 1)),
         _col("reverse", "u8", "rows", ("bool",)),
         _col("by_edge", "u32", "rows", ("ref", "road_arcs", False)),
@@ -188,28 +188,28 @@ SCHEMA = {
     "census_age": {"version": 1, "kind": "observed", "unique": ["region", "age_low"], "columns": [
         _col("region", "u8", "rows", ("code", "census_region", False)),
         _col("age_low", "u8", "rows", ("max", 120)), _col("age_high", "u8", "rows", ("max", 120)),
-        _col("persons", "u32"),
+        _col("persons", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)),
     ]},
     "census_household_size": {"version": 1, "kind": "observed", "unique": ["region", "size"], "columns": [
         _col("region", "u8", "rows", ("code", "census_region", False)),
         _col("size", "u8", "rows", ("min", 1), ("max", 6)),
-        _col("households", "u32"), _col("persons", "u32"),
+        _col("households", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)), _col("persons", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)),
     ]},
     "census_household_children": {"version": 1, "kind": "observed", "unique": ["region", "size"], "columns": [
         _col("region", "u8", "rows", ("code", "census_region", False)),
         _col("size", "u8", "rows", ("min", 2), ("max", 6)),
-        _col("households", "u32"), _col("with_1_child", "u32"), _col("with_2_children", "u32"),
-        _col("with_3_plus_children", "u32"), _col("children_in_3_plus", "u32"),
+        _col("households", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)), _col("with_1_child", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)), _col("with_2_children", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)),
+        _col("with_3_plus_children", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)), _col("children_in_3_plus", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)),
     ]},
     "census_labour": {"version": 1, "kind": "observed", "unique": ["region", "age_low"], "columns": [
         _col("region", "u8", "rows", ("code", "census_region", False)),
         _col("age_low", "u8", "rows", ("max", 120)), _col("age_high", "u8", "rows", ("max", 120)),
-        _col("total", "u32"), _col("status_indicated", "u32"), _col("employed", "u32"),
+        _col("total", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)), _col("status_indicated", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)), _col("employed", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)),
     ]},
     "census_study": {"version": 1, "kind": "observed", "unique": ["region", "age_low"], "columns": [
         _col("region", "u8", "rows", ("code", "census_region", False)),
         _col("age_low", "u8", "rows", ("max", 120)), _col("age_high", "u8", "rows", ("max", 120)),
-        _col("total", "u32"), _col("not_indicated", "u32"), _col("preschool", "u32"), _col("general", "u32"), _col("professional", "u32"),
+        _col("total", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)), _col("not_indicated", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)), _col("preschool", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)), _col("general", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)), _col("professional", "u32", "rows", ("max", mtab.UNKNOWN["u32"] - 1)),
     ]},
 }
 CENSUS_TABLES = {"census_age": "census_age", "census_household_size": "census_household_size",
@@ -898,6 +898,8 @@ def _cross_checks(t, codes, zone_cell_m):
     _expect(not (np.diff(stop_offset) < 2).any(), "route_pieces: кусок маршрута короче двух остановок")
     if len(stop_offset) > 1:
         _expect((r["segment_cm"][stop_offset[1:] - 1] == 0).all(), "route_pieces.segment_cm: у последней остановки куска должно быть 0")
+    piece_mode = np.repeat(r["mode"].astype(np.int64), np.diff(stop_offset))
+    _expect(((t["stops"]["modes"][r["stops"]].astype(np.int64) >> piece_mode) & 1 == 1).all(), "stops.modes: у остановки нет вида транспорта её куска маршрута")
     route = r["route_osm_id"].astype(np.int64)
     piece = r["piece"].astype(np.int64)
     starts = np.r_[True, route[1:] != route[:-1]] if len(route) else np.array([], dtype=bool)
@@ -920,6 +922,11 @@ def _cross_checks(t, codes, zone_cell_m):
         expected = [(region, low, high) for region in range(len(codes["census_region"])) for low, high in bins]
         _expect(list(zip(c["region"].tolist(), c["age_low"].tolist(), c["age_high"].tolist())) == expected,
                 f"{name}: возрастные группы должны быть ровно {bins} для каждого региона")
+    # Вложенные итоги: работающие ⊂ указавших статус ⊂ всех; части обучения не больше итога.
+    lab = {c: v.astype(np.int64) for c, v in t["census_labour"].items()}
+    _expect(((lab["employed"] <= lab["status_indicated"]) & (lab["status_indicated"] <= lab["total"])).all(), "census_labour: нужно employed ≤ status_indicated ≤ total")
+    st = {c: v.astype(np.int64) for c, v in t["census_study"].items()}
+    _expect(((st["not_indicated"] <= st["total"]) & (st["preschool"] + st["general"] + st["professional"] <= st["total"])).all(), "census_study: части больше итога")
     # Жители по размеру домохозяйства: для 1–5 — размер × число, для 6+ — не меньше 6 × число.
     s = t["census_household_size"]
     size, households, persons = (s[c].astype(np.int64) for c in ("size", "households", "persons"))
@@ -945,6 +952,12 @@ def _cross_checks(t, codes, zone_cell_m):
     stops_of = g["stop"][transit].astype(np.int64)
     _expect((t["stops"]["inside"][stops_of] == 1).all(), "gateways: остановка транспортного входа вне региона")
     _expect(np.isin(g["route_osm_id"][transit], t["route_pieces"]["route_osm_id"]).all(), "gateways: маршрут транспортного входа отсутствует в route_pieces")
+    # Дорожный вход: дуга с тем же классом, не внутренняя; внутренний узел — один из её концов.
+    rows = np.nonzero(road & (g["arc"] != none["u32"]))[0]
+    arc_of = g["arc"][rows].astype(np.int64)
+    _expect((a["road_class"][arc_of] == g["road_class"][rows]).all() and (a["internal"][arc_of] == 0).all(), "gateways: класс или внутренний флаг дуги дорожного входа не совпадает")
+    node = g["inside_node"][rows].astype(np.int64)
+    _expect(((node == none["u32"]) | (node == source[arc_of]) | (node == a["to"][arc_of].astype(np.int64))).all(), "gateways: inside_node не является концом дуги входа")
     # Остановка входа стоит на одном из кусков своего маршрута того же вида транспорта.
     pieces = t["route_pieces"]
     counts = np.diff(pieces["stop_offset"].astype(np.int64))
@@ -957,6 +970,7 @@ def read_table(path: Path, entry: dict, package_id: str, package_version: str):
     """Прочитать таблицу, проверив размер и SHA256 по индексу, заголовок и колонки по схеме."""
     name = entry["name"]
     spec = SCHEMA[name]
+    _expect(not path.is_symlink() and path.resolve().parent == path.parent.resolve(), f"sim/{entry['path']}: таблица должна быть файлом внутри sim/, не ссылкой")
     _expect(path.is_file(), f"sim/{entry['path']}: файл отсутствует")
     # Размер — до чтения: огромный файл под маленьким size_bytes не должен загружаться в память.
     _expect(path.stat().st_size == entry["size_bytes"], f"sim/{entry['path']}: размер {path.stat().st_size} не совпадает с индексом {entry['size_bytes']}")
