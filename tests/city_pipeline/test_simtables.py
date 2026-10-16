@@ -810,6 +810,20 @@ class SimValidationTests(unittest.TestCase):
                     next(s for s in manifest["sources"] if s["source_id"].startswith("build-config-"))["sha256"] = asset["sha256"]
         (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
 
+    def test_map_crs_must_match_manifest(self):
+        package = self.copy()
+        map_index = package / "map" / "index.json"
+        index = json.loads(map_index.read_text(encoding="utf-8"))
+        index["metric_crs"] = "EPSG:3857"
+        map_index.write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
+        manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+        manifest["assets"].sort(key=lambda a: a["role"] != "sim")   # sim раньше map: проверка карты ещё не дошла
+        asset = next(a for a in manifest["assets"] if a["role"] == "map")
+        data = map_index.read_bytes()
+        asset["size_bytes"], asset["sha256"] = len(data), hashlib.sha256(data).hexdigest()
+        (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        self.assert_rejected(package, "metric_crs карты")
+
     def test_duplicate_population_row_is_rejected(self):
         package = self.copy()
         path = package / "population.csv.gz"

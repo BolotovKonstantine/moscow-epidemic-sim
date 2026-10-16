@@ -1263,8 +1263,15 @@ def _car_weights(t, codes):
     # Веса — децисекунды u32, как в прототипе #35: сумма по графу помещается в u32.
     arc_speed = speed[np.minimum(a["road_class"].astype(np.int64), len(speed) - 1)]
     car = (a["car"] == 1) & (a["internal"] == 1) & (arc_speed > 0)
-    weight = np.maximum(1, (a["length_cm"][car].astype(np.int64) * 100 + arc_speed[car] - 1) // arc_speed[car])   # как max(1, …) загрузчика
+    # Вес — max(1, lround(длина / скорость)) в дс, как у загрузчика: (2·n + d) // (2·d) при n = длина × 100, d = скорость (мм/с).
+    numerator = a["length_cm"][car].astype(np.int64) * 100
+    weight = np.maximum(1, (2 * numerator + arc_speed[car]) // (2 * arc_speed[car]))
     _expect(int(weight.sum()) < (1 << 32), f"road_arcs: сумма весов автомобильного графа {int(weight.sum())} дс не помещается в u32")
+    # Пеший граф загрузчика: обе стороны внутренних рёбер ниже trunk со скоростью пешехода — та же граница u32.
+    walk_speed = int(t["mobility"]["walk_speed_mm_s"][0])
+    walk = (a["internal"] == 1) & (a["road_class"].astype(np.int64) < codes["road_class"].index("trunk"))
+    walk_weight = np.maximum(1, (2 * a["length_cm"][walk].astype(np.int64) * 100 + walk_speed) // (2 * walk_speed))
+    _expect(int(walk_weight.sum()) < (1 << 32), f"road_arcs: сумма весов пешего графа {int(walk_weight.sum())} дс не помещается в u32")
 
 
 def census_from_tables(sim_dir: Path) -> dict:
@@ -1425,14 +1432,17 @@ def validate_sim_index(path: Path, manifest: dict, asset_id: str) -> int:
     try:
         # Предел индекса карты — тот же, что у validate_map_index: порядок файлов в паспорте не должен его обходить.
         _expect(map_index_path.stat().st_size <= MAP_INDEX_MAX_BYTES, f"{asset_id}: индекс карты больше {MAP_INDEX_MAX_BYTES} байт")
-        origin = parse_json_bytes(map_index_path.read_bytes(), map_index_path)["plane"]["origin_metric"]
+        map_index = parse_json_bytes(map_index_path.read_bytes(), map_index_path)
+        origin, map_crs = map_index["plane"]["origin_metric"], map_index["metric_crs"]
     except (OSError, KeyError, TypeError) as error:
         raise SimError(f"{asset_id}: не удалось прочитать плоскость карты {map_asset['path']}: {error}") from error
     _expect(isinstance(origin, list) and len(origin) == 2 and all(type(v) in (int, float) for v in origin),
             f"{asset_id}: plane.origin_metric карты {map_asset['path']} — не два числа")
+    # Общая плоскость: проекция карты совпадает с проекцией паспорта, а с ней сверяется и индекс sim.
+    _expect(map_crs == manifest["region"]["metric_crs"], f"{asset_id}: metric_crs карты {map_crs!r} не совпадает с паспортом {manifest['region']['metric_crs']!r}")
     try:
         count = validate_sim_dir(path.parent, manifest["package_id"], manifest["package_version"], kind=manifest["kind"],
-                                 plane=(origin, manifest["region"]["metric_crs"]), manifest_sources=sources)
+                                 plane=(origin, map_crs), manifest_sources=sources)
         _matches_reexport(path.parent, manifest)
         # Происхождение на уровне паспорта: источники файла роли sim — ровно объединение источников его таблиц.
         index = parse_json_bytes(path.read_bytes(), path)
