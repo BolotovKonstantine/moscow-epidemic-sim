@@ -124,6 +124,13 @@ class CarGraphTests(unittest.TestCase):
             node, _ = _nearest(points, np.array(order), np.array([[1.0, 0.0]]))
             self.assertEqual(int(node[0]), 3)
 
+    def test_nearest_tie_beyond_candidate_limit(self):
+        from tools.city_pipeline.simtables import _nearest
+        # 12 узлов в одной точке (больше TIE_CANDIDATES): выбирается наименьший номер 0 при любом порядке.
+        order = np.array([11, 5, 9, 3, 7, 1, 10, 4, 8, 2, 6, 0])
+        node, _ = _nearest(np.zeros((12, 2)), order, np.array([[1.0, 1.0]]))
+        self.assertEqual(int(node[0]), 0)
+
     def test_one_way_only_node_is_not_main(self):
         # Только дуга 1→2: ни у одного узла нет и исходящей, и входящей дуги — к основной компоненте нельзя и приехать, и уехать.
         _, main, _, _ = car_graph(3, np.array([1]), np.array([2]), np.array([True]))

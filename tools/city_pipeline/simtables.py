@@ -351,14 +351,22 @@ def _nearest(tree_points, tree_index, query, max_distance=np.inf):
     if len(tree_points) == 0 or len(query) == 0:
         return result, np.full(len(query), np.inf)
     # Несколько ближайших: при равной дистанции выбирается узел с меньшим номером, а не тот, что первым вернул обход KD-дерева.
+    tree_index = np.asarray(tree_index, dtype=np.int64)
+    tree = cKDTree(tree_points)
     k = min(TIE_CANDIDATES, len(tree_points))
-    distances, positions = cKDTree(tree_points).query(query, k=k, distance_upper_bound=max_distance)
+    distances, positions = tree.query(query, k=k, distance_upper_bound=max_distance)
     distances, positions = distances.reshape(len(query), k), positions.reshape(len(query), k)
     distance = distances[:, 0]
     found = np.isfinite(distance)
     tied = (distances == distance[:, None]) & np.isfinite(distances)
-    candidates = np.where(tied, np.asarray(tree_index, dtype=np.int64)[np.minimum(positions, len(tree_points) - 1)], np.iinfo(np.int64).max)
+    candidates = np.where(tied, tree_index[np.minimum(positions, len(tree_points) - 1)], np.iinfo(np.int64).max)
     result[found] = candidates.min(axis=1)[found]
+    # Все k кандидатов на одной дистанции — равноудалённых может быть больше: берутся все точки на этой дистанции.
+    crowded = np.nonzero(found & tied.all(axis=1) & (k < len(tree_points)))[0]
+    for row in crowded:
+        around = tree.query_ball_point(query[row], distance[row])
+        at_distance = [i for i in around if np.hypot(*(tree_points[i] - query[row])) <= distance[row]]
+        result[row] = int(tree_index[at_distance].min())
     return result, distance
 
 
