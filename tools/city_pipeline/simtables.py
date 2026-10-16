@@ -48,6 +48,8 @@ FIXED_CODES = {
 }
 SHARE_ONE = 10_000   # доли — u16 в 1/10 000
 MIN_RIDE_S = 30      # минимальное время перегона у загрузчика прототипа #35
+TIE_CANDIDATES = 8   # сколько ближайших узлов просматривается для разрешения ничьей по номеру
+ADULT_AGE = 18       # как kAdult генератора жителей (#34): моложе — дети
 
 
 def _col(name, dtype, length="rows", *checks):
@@ -348,9 +350,15 @@ def _nearest(tree_points, tree_index, query, max_distance=np.inf):
     result = np.full(len(query), mtab.NONE["u32"], dtype=np.int64)
     if len(tree_points) == 0 or len(query) == 0:
         return result, np.full(len(query), np.inf)
-    distance, position = cKDTree(tree_points).query(query, k=1, distance_upper_bound=max_distance)
+    # Несколько ближайших: при равной дистанции выбирается узел с меньшим номером, а не тот, что первым вернул обход KD-дерева.
+    k = min(TIE_CANDIDATES, len(tree_points))
+    distances, positions = cKDTree(tree_points).query(query, k=k, distance_upper_bound=max_distance)
+    distances, positions = distances.reshape(len(query), k), positions.reshape(len(query), k)
+    distance = distances[:, 0]
     found = np.isfinite(distance)
-    result[found] = tree_index[position[found]]
+    tied = (distances == distance[:, None]) & np.isfinite(distances)
+    candidates = np.where(tied, np.asarray(tree_index, dtype=np.int64)[np.minimum(positions, len(tree_points) - 1)], np.iinfo(np.int64).max)
+    result[found] = candidates.min(axis=1)[found]
     return result, distance
 
 
@@ -1038,7 +1046,9 @@ def _cross_checks(t, codes, zone_cell_m, origin):
         served = headway != mtab.NONE["u32"]
         trips_per_mode = np.where(served, period_length[None, :] // np.where(served, headway, 1) + 1, 0).sum(axis=1)
         pieces_per_mode = np.bincount(t["route_pieces"]["mode"].astype(np.int64), minlength=len(codes["mode"]))
-        _expect(8 * int((trips_per_mode * pieces_per_mode[:len(trips_per_mode)]).sum()) < (1 << 31), "transit_headways: модельных рейсов окна расписания (8 суток) не меньше 2³¹ — не хватит ID рейсов")
+        # Тот же диапазон [2³¹, 2³²) делят рейсы и учреждения (sim-core.md): в границу входят и те, и другие.
+        events = 8 * int((trips_per_mode * pieces_per_mode[:len(trips_per_mode)]).sum()) + len(t["facilities"]["kind"])
+        _expect(events < (1 << 31), "transit_headways: рейсов окна расписания (8 суток) и учреждений вместе не меньше 2³¹ — не хватит ID событий")
     grid = [(m, q) for m in range(len(codes["mode"])) for q in range(len(codes["period"]))]
     _expect(list(zip(h["mode"].tolist(), h["period"].tolist())) == grid, "transit_headways: строка на каждую пару (вид, период) в порядке кодов")
     # Перепись: возрастные группы — ровно группы таблиц Росстата (census.py) для каждого региона по порядку.
@@ -1050,7 +1060,18 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     # Возрастное распределение каждого региона не пустое: генератор нормирует по его сумме.
     age = t["census_age"]
     for region in range(len(codes["census_region"])):
-        _expect(int(age["persons"][age["region"] == region].astype(np.int64).sum()) > 0, f"census_age: нулевое население региона {codes['census_region'][region]}")
+        rows = age["region"] == region
+        _expect(int(age["persons"][rows].astype(np.int64).sum()) > 0, f"census_age: нулевое население региона {codes['census_region'][region]}")
+        # Калибровка генератора делит отдельно на детей и взрослых: обе части возрастной цели не пустые. Группа делится по
+        # годам поровну, 85+ — на 85–99, как в генераторе.
+        kids = adults = 0.0
+        for low, high, persons in zip(age["age_low"][rows].tolist(), age["age_high"][rows].tolist(), age["persons"][rows].tolist()):
+            high = min(high, 99)
+            years = high - low + 1
+            young = max(0, min(high, ADULT_AGE - 1) - low + 1)
+            kids += persons * young / years
+            adults += persons * (years - young) / years
+        _expect(kids > 0 and adults > 0, f"census_age: в регионе {codes['census_region'][region]} нет детей или взрослых")
     # Вложенные итоги: работающие ⊂ указавших статус ⊂ всех; части обучения не больше итога.
     lab = {c: v.astype(np.int64) for c, v in t["census_labour"].items()}
     _expect(((lab["employed"] <= lab["status_indicated"]) & (lab["status_indicated"] <= lab["total"])).all(), "census_labour: нужно employed ≤ status_indicated ≤ total")

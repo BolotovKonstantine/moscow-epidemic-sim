@@ -116,6 +116,14 @@ class CarGraphTests(unittest.TestCase):
         self.assertEqual(main.tolist(), [False, True, True])
         self.assertFalse(has_out[0])
 
+    def test_nearest_tie_takes_smaller_index(self):
+        from tools.city_pipeline.simtables import _nearest
+        # Точка ровно посередине между узлами 7 и 3: выбирается 3 при любом порядке узлов в дереве.
+        for order in ([7, 3], [3, 7]):
+            points = np.array([[0.0, 0.0] if i == 7 else [2.0, 0.0] for i in order])
+            node, _ = _nearest(points, np.array(order), np.array([[1.0, 0.0]]))
+            self.assertEqual(int(node[0]), 3)
+
     def test_one_way_only_node_is_not_main(self):
         # Только дуга 1→2: ни у одного узла нет и исходящей, и входящей дуги — к основной компоненте нельзя и приехать, и уехать.
         _, main, _, _ = car_graph(3, np.array([1]), np.array([2]), np.array([True]))
@@ -746,6 +754,7 @@ class SimValidationTests(unittest.TestCase):
             ("route_pieces", self.set_value("stops", 1, int(pieces["stops"][1][0])), "дважды подряд|длина перегона"),
             ("transit_headways", self.set_value("headway_s", 0, 1), "рейсов окна расписания|повторным экспортом"),
             ("census_age", lambda columns, rows: ([(n, d, np.where(columns[0][2] == 1, 0, v) if n == "persons" else v) for n, d, v in columns], rows), "нулевое население региона"),
+            ("census_age", lambda columns, rows: ([(n, d, np.where((columns[0][2] == 0) & (columns[1][2] < 18), 0, v) if n == "persons" else v) for n, d, v in columns], rows), "нет детей или взрослых"),
         ]
         for name, change, message in cases:
             with self.subTest(table=name):
