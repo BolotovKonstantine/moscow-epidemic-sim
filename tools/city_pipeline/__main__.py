@@ -93,6 +93,12 @@ def load_config(path: Path, data: bytes | None = None) -> dict:
         Projector(config["metric_crs"])
     except Exception as error:   # неизвестная CRS (pyproj) или не метрическая (GeoError)
         raise ManifestError(f"{path}: metric_crs {config['metric_crs']!r} не подходит: {error}") from error
+    # Пакет пишет расчётные таблицы sim/, их заголовок строже схемы конфигурации: проверяем до тяжёлой сборки.
+    from .mtab import TableError, check_package
+    try:
+        check_package(config["package_id"], config["package_version"])
+    except TableError as error:
+        raise ManifestError(f"{path}: {error}") from error
     problem = _check_day_partition(config["model_assumptions"]["headway_minutes"]["periods"])
     if problem:
         raise ManifestError(f"{path}: model_assumptions.headway_minutes.periods: {problem}")

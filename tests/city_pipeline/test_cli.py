@@ -97,6 +97,13 @@ class ConfigTests(unittest.TestCase):
             path.write_text(json.dumps(broken))
             with self.assertRaisesRegex(ManifestError, "quality.sample_seed"):
                 load_config(path)
+            # Заголовок расчётной таблицы строже схемы: такой ID отклоняется до тяжёлой сборки, а не на экспорте sim/.
+            for key, value, message in (("package_id", "custom_city", "package_id"), ("package_version", "1.0.0-very-long-version", "package_version")):
+                broken = json.loads(real.read_text(encoding="utf-8"))
+                broken[key] = value
+                path.write_text(json.dumps(broken))
+                with self.subTest(key=key), self.assertRaisesRegex(ManifestError, message):
+                    load_config(path)
 
 
 

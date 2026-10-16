@@ -678,7 +678,7 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
         "codes": codes, "tables": entries,
     }
     write_json(out / INDEX_NAME, index)
-    validate_sim_dir(out, package_id, package_version)
+    validate_sim_dir(out, package_id, package_version, kind=kind, plane=([x0, y0], config["metric_crs"]))
     return {
         "tables": len(entries), "bytes": sum(e["size_bytes"] for e in entries),
         "rows": {e["name"]: e["rows"] for e in entries},
@@ -709,7 +709,7 @@ def _int(value, what, low=None, high=None):
     return value
 
 
-def _check_index(index, package_id, package_version, manifest_sources=None):
+def _check_index(index, package_id, package_version, kind, plane_expected, manifest_sources=None):
     _keys(index, ["format", "format_version", "package_id", "package_version", "plane", "zone_cell_m", "sentinels", "codes", "tables"], what="sim/index.json")
     _expect(index["format"] == INDEX_FORMAT, f"sim/index.json: формат {index['format']!r}, ожидается {INDEX_FORMAT}")
     _expect(type(index["format_version"]) is int and index["format_version"] == INDEX_VERSION, f"sim/index.json: версия формата {index['format_version']!r}, поддерживается {INDEX_VERSION}")
@@ -724,6 +724,10 @@ def _check_index(index, package_id, package_version, manifest_sources=None):
     origin = plane["origin_metric"]
     _expect(isinstance(origin, list) and len(origin) == 2 and all(type(v) in (int, float) and abs(v) <= 1e8 for v in origin), "sim/index.json: plane.origin_metric — два конечных числа")
     _expect(plane["units"] == "cm" and plane["y_axis"] == "down" and isinstance(plane["metric_crs"], str), "sim/index.json: плоскость — сантиметры, ось Y вниз")
+    # Плоскость обязана совпадать с картой пакета: иначе позиции ядра сместились бы относительно зданий на экране.
+    origin_expected, crs_expected = plane_expected
+    _expect([float(v) for v in origin] == [float(v) for v in origin_expected] and plane["metric_crs"] == crs_expected,
+            f"sim/index.json: плоскость {origin} {plane['metric_crs']} не совпадает с картой пакета {origin_expected} {crs_expected}")
     _int(index["zone_cell_m"], "sim/index.json zone_cell_m", 1, 100_000)
     _expect(index["sentinels"] == {"none": dict(mtab.NONE), "unknown": dict(mtab.UNKNOWN)}, "sim/index.json: метки none/unknown не совпадают с форматом")
     codes = index["codes"]
@@ -746,7 +750,8 @@ def _check_index(index, package_id, package_version, manifest_sources=None):
         _int(entry["size_bytes"], f"sim/index.json {name} size_bytes", mtab.HEADER_FIXED, MAX_TABLE_BYTES)
         _expect(isinstance(entry["sha256"], str) and len(entry["sha256"]) == 64 and all(c in "0123456789abcdef" for c in entry["sha256"]), f"sim/index.json {name}: sha256")
         expected_kind = SCHEMA[name]["kind"]
-        _expect(entry["data_kind"] == expected_kind or (expected_kind == "observed" and entry["data_kind"] == "game_setting"),
+        # observed → game_setting допускается только в синтетическом пакете (fixture), как делает экспорт.
+        _expect(entry["data_kind"] == expected_kind or (kind == "fixture" and expected_kind == "observed" and entry["data_kind"] == "game_setting"),
                 f"sim/index.json {name}: вид данных {entry['data_kind']!r}, ожидается {expected_kind}")
         estimation = entry.get("estimation")
         if entry["data_kind"] == "estimated":
@@ -880,8 +885,11 @@ def _cross_checks(t, codes):
             _expect(rows.any(), f"{name}: нет строк территории {codes['territory'][territory]}")
             low, high = c["age_low"][rows].astype(np.int64), c["age_high"][rows].astype(np.int64)
             _expect((low[1:] == high[:-1] + 1).all(), f"{name}: возрастные группы {codes['territory'][territory]} не идут встык")
-    for name in ("census_household_size", "census_household_children"):
-        _expect(set(t[name]["territory"].tolist()) == set(range(len(codes["territory"]))), f"{name}: нужны строки обеих территорий")
+    # Размеры домохозяйств — полная сетка: 1–6 и 2–6 (6 — шесть и более) для каждой территории, по порядку.
+    for name, sizes in (("census_household_size", range(1, 7)), ("census_household_children", range(2, 7))):
+        expected = [(territory, size) for territory in range(len(codes["territory"])) for size in sizes]
+        _expect(list(zip(t[name]["territory"].tolist(), t[name]["size"].tolist())) == expected,
+                f"{name}: нужны строки (территория, размер) {expected[0]}…{expected[-1]} подряд, без пропусков")
     g = t["gateways"]
     road, transit = g["kind"] == GATEWAY_KINDS.index("road"), g["kind"] == GATEWAY_KINDS.index("transit")
     none = mtab.NONE
@@ -896,6 +904,8 @@ def read_table(path: Path, entry: dict, package_id: str, package_version: str):
     name = entry["name"]
     spec = SCHEMA[name]
     _expect(path.is_file(), f"sim/{entry['path']}: файл отсутствует")
+    # Размер — до чтения: огромный файл под маленьким size_bytes не должен загружаться в память.
+    _expect(path.stat().st_size == entry["size_bytes"], f"sim/{entry['path']}: размер {path.stat().st_size} не совпадает с индексом {entry['size_bytes']}")
     data = path.read_bytes()
     _expect(len(data) == entry["size_bytes"], f"sim/{entry['path']}: размер {len(data)} не совпадает с индексом {entry['size_bytes']}")
     _expect(hashlib.sha256(data).hexdigest() == entry["sha256"], f"sim/{entry['path']}: SHA256 не совпадает с индексом")
@@ -926,12 +936,13 @@ def read_table(path: Path, entry: dict, package_id: str, package_version: str):
     return columns
 
 
-def validate_sim_dir(sim_dir: Path, package_id: str, package_version: str, manifest_sources=None) -> int:
-    """Проверить каталог `sim/` целиком; возвращает число таблиц."""
+def validate_sim_dir(sim_dir: Path, package_id: str, package_version: str, *, kind: str, plane, manifest_sources=None) -> int:
+    """Проверить каталог `sim/` целиком; возвращает число таблиц. kind — вид пакета (fixture/city_data),
+    plane — ожидаемые (origin_metric, metric_crs) плоскости карты."""
     index_path = sim_dir / INDEX_NAME
     _expect(index_path.is_file(), f"{index_path}: индекс расчётных таблиц отсутствует")
     index = parse_json_bytes(index_path.read_bytes(), index_path)
-    entries = _check_index(index, package_id, package_version, manifest_sources)
+    entries = _check_index(index, package_id, package_version, kind, plane, manifest_sources)
     codes = index["codes"]
     tables = {name: read_table(sim_dir / entry["path"], entry, package_id, package_version) for name, entry in entries.items()}
     sizes = {name: entry["rows"] for name, entry in entries.items()}
@@ -949,7 +960,18 @@ def validate_sim_index(path: Path, manifest: dict, asset_id: str) -> int:
     """Проверка файла роли `sim` из паспорта: path — sim/index.json пакета."""
     _expect(path.name == INDEX_NAME, f"{asset_id}: файл роли sim должен называться {INDEX_NAME}")
     sources = {s["source_id"]: s["source_type"] for s in manifest["sources"]}
+    # Общая с картой плоскость: начало — из индекса карты этого же пакета, проекция — из паспорта.
+    map_asset = next((a for a in manifest["assets"] if a["role"] == "map"), None)
+    _expect(map_asset is not None, f"{asset_id}: роль sim требует участков карты (role map) — плоскость таблиц общая с картой")
+    sim_asset = next(a for a in manifest["assets"] if a["asset_id"] == asset_id)
+    _expect(sim_asset["path"] == f"sim/{INDEX_NAME}", f"{asset_id}: путь индекса расчётных таблиц должен быть sim/{INDEX_NAME}")
+    map_index_path = path.parent.parent / map_asset["path"]   # path — <пакет>/sim/index.json
     try:
-        return validate_sim_dir(path.parent, manifest["package_id"], manifest["package_version"], sources)
+        origin = parse_json_bytes(map_index_path.read_bytes(), map_index_path)["plane"]["origin_metric"]
+    except (OSError, KeyError, TypeError) as error:
+        raise SimError(f"{asset_id}: не удалось прочитать плоскость карты {map_asset['path']}: {error}") from error
+    try:
+        return validate_sim_dir(path.parent, manifest["package_id"], manifest["package_version"], kind=manifest["kind"],
+                                plane=(origin, manifest["region"]["metric_crs"]), manifest_sources=sources)
     except SimError as error:
         raise SimError(f"{asset_id}: {error}") from error

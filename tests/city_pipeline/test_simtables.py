@@ -140,7 +140,8 @@ class SimTablesTests(unittest.TestCase):
         self.assertEqual(kinds["mobility"], "game_setting")
         self.assertEqual(kinds["mobility_estimates"], "estimated")
         self.assertEqual(self.index["plane"]["origin_metric"], json.loads((self.out / "map" / "index.json").read_text(encoding="utf-8"))["plane"]["origin_metric"])
-        self.assertEqual(validate_sim_dir(self.sim, "synthetic-mini-city", self.config["package_version"]), len(SCHEMA))
+        self.assertEqual(validate_sim_dir(self.sim, "synthetic-mini-city", self.config["package_version"], kind="fixture",
+                                          plane=(self.index["plane"]["origin_metric"], self.config["metric_crs"])), len(SCHEMA))
         self.assertIn("## sim", (self.out / "quality_report.md").read_text(encoding="utf-8"))
 
     def test_tables_match_intermediate_files(self):
@@ -282,6 +283,7 @@ class SimValidationTests(unittest.TestCase):
         for entry in index["tables"]:
             data = (package / "sim" / entry["path"]).read_bytes()
             entry["size_bytes"], entry["sha256"] = len(data), hashlib.sha256(data).hexdigest()
+            entry["rows"] = struct.unpack_from("<Q", data, 56)[0]
         if edit:
             edit(index)
         index_path.write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
@@ -401,6 +403,34 @@ class SimValidationTests(unittest.TestCase):
                     validate_manifest(package / "manifest.json")
                 else:
                     self.assert_rejected(package, message)
+
+    def test_oversized_file_is_rejected_before_reading(self):
+        package = self.copy()
+        with (package / "sim" / "zones.mtab").open("ab") as stream:
+            stream.write(b"\0" * 4096)
+        self.assert_rejected(package, "размер .* не совпадает с индексом")
+
+    def test_plane_must_match_map(self):
+        for edit, message in ((lambda i: i["plane"].update(origin_metric=[0.0, 0.0]), "не совпадает с картой"),
+                              (lambda i: i["plane"].update(metric_crs="EPSG:3857"), "не совпадает с картой")):
+            with self.subTest(edit=edit):
+                package = self.copy()
+                self.reseal_index(package, edit)
+                self.assert_rejected(package, message)
+
+    def test_observed_tables_may_be_game_setting_only_in_fixture(self):
+        package = self.copy()
+        manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+        manifest["kind"] = "city_data"
+        (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        self.assert_rejected(package, "census_age: вид данных 'game_setting', ожидается observed")
+
+    def test_household_sizes_must_be_complete(self):
+        def drop_last(columns, rows):
+            return [(name, dtype, values[:-1]) for name, dtype, values in columns], rows - 1
+        for name in ("census_household_size", "census_household_children"):
+            with self.subTest(table=name):
+                self.assert_rejected(self.rewrite(name, drop_last), f"{name}: нужны строки")
 
     def test_sim_role_requires_short_package_version(self):
         package = self.copy()
