@@ -799,6 +799,25 @@ class SimValidationTests(unittest.TestCase):
         (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
         self.assert_rejected(package, "build_config.json больше")
 
+    @staticmethod
+    def reseal_asset(package, role, path):
+        manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+        data = (package / path).read_bytes()
+        for asset in manifest["assets"]:
+            if asset["path"] == path:
+                asset["size_bytes"], asset["sha256"] = len(data), hashlib.sha256(data).hexdigest()
+                if role == "config":
+                    next(s for s in manifest["sources"] if s["source_id"].startswith("build-config-"))["sha256"] = asset["sha256"]
+        (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+    def test_duplicate_population_row_is_rejected(self):
+        package = self.copy()
+        path = package / "population.csv.gz"
+        lines = gzip.decompress(path.read_bytes()).decode("utf-8").splitlines(keepends=True)
+        path.write_bytes(gzip.compress("".join(lines + [lines[1]]).encode("utf-8"), mtime=0))
+        self.reseal_asset(package, "population", "population.csv.gz")
+        self.assert_rejected(package, "указано дважды")
+
     def test_broken_embedded_config_is_a_package_error(self):
         package = self.copy()
         config_path = package / "build_config.json"

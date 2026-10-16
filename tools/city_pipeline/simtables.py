@@ -516,9 +516,13 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
     building_osm = [_osm(a["building_id"], "building_attributes") for a in attrs]
     building_index = {a["building_id"]: i for i, a in enumerate(attrs)}
     residents = np.zeros(len(attrs), dtype=np.int64)
+    seen = set()
     for row in _read_csv(package_dir / "population.csv.gz"):
         if row["building_id"] not in building_index:
             raise SimError(f"population: здание {row['building_id']} отсутствует в building_attributes")
+        if row["building_id"] in seen:
+            raise SimError(f"population: здание {row['building_id']} указано дважды")
+        seen.add(row["building_id"])
         residents[building_index[row["building_id"]]] = int(row["residents"])
     bx, by, building_x, building_y = plane([a["lon"] for a in attrs], [a["lat"] for a in attrs])
     points = np.column_stack((bx, by))
@@ -1259,7 +1263,7 @@ def _car_weights(t, codes):
     # Веса — децисекунды u32, как в прототипе #35: сумма по графу помещается в u32.
     arc_speed = speed[np.minimum(a["road_class"].astype(np.int64), len(speed) - 1)]
     car = (a["car"] == 1) & (a["internal"] == 1) & (arc_speed > 0)
-    weight = (a["length_cm"][car].astype(np.int64) * 100 + arc_speed[car] - 1) // arc_speed[car]
+    weight = np.maximum(1, (a["length_cm"][car].astype(np.int64) * 100 + arc_speed[car] - 1) // arc_speed[car])   # как max(1, …) загрузчика
     _expect(int(weight.sum()) < (1 << 32), f"road_arcs: сумма весов автомобильного графа {int(weight.sum())} дс не помещается в u32")
 
 
@@ -1316,6 +1320,14 @@ def _matches_reexport(sim_dir: Path, manifest: dict):
     except ManifestError as error:
         raise SimError(f"build_config.json пакета не соответствует конфигурации версии 2: {error}") from error
     source_roles = dict(config["sources"], config=f"build-config-{config['package_id']}")
+    # Роль источника соответствует формату его карточки, как при сборке (_selected_sources): перепись — xlsx, OSM — pbf и т. д.
+    from .__main__ import ROLE_FORMATS
+    cards = {s["source_id"]: s for s in manifest["sources"]}
+    for role, source_id in config["sources"].items():
+        card = cards.get(source_id)
+        _expect(card is not None, f"build_config.json: источник {source_id} роли {role} отсутствует в паспорте")
+        if card["source_type"] == "external":
+            _expect(card["format"] == ROLE_FORMATS[role], f"источник {source_id} роли {role} имеет формат {card['format']}, нужен {ROLE_FORMATS[role]}")
     try:
         census = census_from_tables(sim_dir)
     except (KeyError, ValueError, IndexError) as error:
