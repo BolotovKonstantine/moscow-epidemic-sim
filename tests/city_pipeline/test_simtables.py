@@ -108,6 +108,14 @@ class CarGraphTests(unittest.TestCase):
         _, main, _, _ = car_graph(5, np.array([1, 3, 4]), np.array([2, 4, 3]), np.ones(3, dtype=bool))
         self.assertEqual(main.tolist(), [False, False, False, True, True])
 
+    def test_loop_is_not_a_car_connection(self):
+        # Петля 0→0 и цикл 1⇄2: петля не делает узел 0 пригодным — основная компонента {1, 2}.
+        arcs = np.array([(0, 0), (0, 0), (1, 2), (2, 1)])
+        ok = arcs[:, 0] != arcs[:, 1]
+        _, main, has_out, _ = car_graph(3, arcs[:, 0], arcs[:, 1], ok)
+        self.assertEqual(main.tolist(), [False, True, True])
+        self.assertFalse(has_out[0])
+
     def test_one_way_only_node_is_not_main(self):
         # Только дуга 1→2: ни у одного узла нет и исходящей, и входящей дуги — к основной компоненте нельзя и приехать, и уехать.
         _, main, _, _ = car_graph(3, np.array([1]), np.array([2]), np.array([True]))
@@ -697,6 +705,8 @@ class SimValidationTests(unittest.TestCase):
 
         cases = [
             ("census_household_children", self.set_value("households", 0, 10 ** 6), "число домохозяйств не совпадает"),
+            ("census_labour", self.set_value("status_indicated", 0, 0), "status_indicated|указавших статус"),
+            ("buildings", self.set_value("residents", 0, (1 << 31)), "residents: значение больше|жителей больше 2³¹|жители зданий по зонам"),
             ("road_arcs", swap_direction, "повторным экспортом|car_main|road_node"),
             ("census_household_children", self.set_value("with_2_children", 0, 1), "больше, чем позволяет размер"),
             ("transit_modes", self.set_value("speed_mm_s", 0, 1), "дольше 7 суток|повторным экспортом"),
@@ -720,7 +730,7 @@ class SimValidationTests(unittest.TestCase):
         data = config_path.read_bytes()
         asset["size_bytes"], asset["sha256"] = len(data), hashlib.sha256(data).hexdigest()
         (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
-        self.assert_rejected(package, "не соответствует схеме v2")
+        self.assert_rejected(package, "не соответствует конфигурации версии 2")
 
     def test_sim_metadata_is_checked_without_files(self):
         for edit, message in ((lambda a: a.update(data_kind="game_setting"), "должен быть estimated"),

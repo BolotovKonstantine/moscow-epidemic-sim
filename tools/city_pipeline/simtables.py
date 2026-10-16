@@ -439,7 +439,8 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
     arc_offset = np.searchsorted(arc_from, np.arange(len(nodes) + 1), side="left")
     by_edge = np.lexsort((arc[:, 11], arc[:, 9], arc[:, 8]))
     forward_arc = {(int(arc[i, 8]), int(arc[i, 9])): int(i) for i in np.nonzero(arc[:, 11] == 0)[0]}
-    car_ok = (arc[:, 10] == 1) & (arc[:, 4] == 1) & (np.array(car_speed)[arc[:, 3]] > 0)
+    # Петля (замкнутый путь без общего узла) никуда не ведёт: как в CSR прототипа #35, в граф машины она не входит.
+    car_ok = (arc[:, 10] == 1) & (arc[:, 4] == 1) & (np.array(car_speed)[arc[:, 3]] > 0) & (arc_from != arc_to)
     _, car_main, car_out, car_in = car_graph(len(nodes), arc_from, arc_to, car_ok)
     tables["road_nodes"] = [
         ("osm_id", "u64", node_osm), ("x_cm", "i32", node_x), ("y_cm", "i32", node_y),
@@ -884,6 +885,8 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     b, z = t["buildings"], t["zones"]
     in_zone = b["zone"] != mtab.NONE["u32"]
     _expect((b["residents"][~in_zone] == 0).all(), "buildings: жители у здания вне зон")
+    # ID жителей — [0, 2³¹) (sim-core.md): всё население помещается в это пространство.
+    _expect(int(b["residents"].astype(np.int64).sum()) < (1 << 31), "buildings: жителей больше 2³¹ — не хватит ID жителей")
     # Ссылка на зону согласована с координатами: точка в квадрате своей зоны (допуск 1 м — точки входов на границе региона).
     x0, y0 = origin
     for name in ("buildings", "road_nodes", "stops", "facilities", "gateways"):
@@ -942,7 +945,7 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     # car_main пересчитывается тем же правилом, что в экспорте (наибольшая компонента с исходящей дугой, ничья — меньший
     # номер узла), и должен совпасть целиком: иначе «основных» компонент могло бы оказаться несколько.
     speed = t["road_classes"]["car_speed_mm_s"]
-    car_arc = (a["car"] == 1) & (a["internal"] == 1) & (speed[np.minimum(a["road_class"], len(speed) - 1)] > 0)
+    car_arc = (a["car"] == 1) & (a["internal"] == 1) & (speed[np.minimum(a["road_class"], len(speed) - 1)] > 0) & (source != a["to"].astype(np.int64))
     _, expected_main, _, _ = car_graph(len(offsets) - 1, source, a["to"].astype(np.int64), car_arc)
     _expect(np.array_equal(n["car_main"].astype(bool), expected_main), "road_nodes.car_main: не совпадает с основной компонентой сильной связности машины")
     # Внутренняя дуга соединяет узлы внутри региона: граница пересекается только через внешние входы.
@@ -1047,6 +1050,9 @@ def _cross_checks(t, codes, zone_cell_m, origin):
         expected = [(region, size) for region in range(len(codes["census_region"])) for size in sizes]
         _expect(list(zip(t[name]["region"].tolist(), t[name]["size"].tolist())) == expected,
                 f"{name}: нужны строки (регион, размер) {expected[0]}…{expected[-1]} подряд, без пропусков")
+    # Знаменатели генератора жителей положительны: домохозяйства каждого размера и указавшие статус занятости.
+    _expect((t["census_household_size"]["households"] > 0).all() and (k["households"] > 0).all(), "census_household_*: нулевое число домохозяйств размера")
+    _expect((t["census_labour"]["status_indicated"] > 0).all(), "census_labour: нулевое число указавших статус занятости")
     # Все домохозяйства размера 2–6 в таблице детей — те же, что в таблице размеров (знаменатель долей детей).
     size_rows = t["census_household_size"]
     by_size = {(int(r), int(s)): int(h) for r, s, h in zip(size_rows["region"], size_rows["size"], size_rows["households"])}
@@ -1180,11 +1186,12 @@ def _matches_reexport(sim_dir: Path, manifest: dict):
     config = parse_json_bytes((package_dir / config_asset["path"]).read_bytes(), package_dir / config_asset["path"])
     _expect(isinstance(config, dict) and config.get("config_version") == 2, "build_config.json пакета с ролью sim должен быть версии 2")
     # Встроенная конфигурация проверяется той же схемой v2, что у build: ошибка структуры — сообщение, а не KeyError.
-    from jsonschema import Draft202012Validator
-    schema = parse_json_bytes((Path(__file__).parent / "schemas" / "build-config-v2.schema.json").read_bytes(), "build-config-v2.schema.json")
-    errors = sorted(Draft202012Validator(schema).iter_errors(config), key=lambda error: list(error.absolute_path))
-    _expect(not errors, "build_config.json пакета не соответствует схеме v2: " + "; ".join(
-        f"{'.'.join(map(str, e.absolute_path)) or '$'}: {e.message}" for e in errors[:5]))
+    # Те же правила, что у build и map-tile (строгие целые, связи полей), а не только схема.
+    from .__main__ import load_config
+    try:
+        load_config(package_dir / config_asset["path"], versions=(2,))
+    except ManifestError as error:
+        raise SimError(f"build_config.json пакета не соответствует конфигурации версии 2: {error}") from error
     source_roles = dict(config["sources"], config=f"build-config-{config['package_id']}")
     try:
         census = census_from_tables(sim_dir)

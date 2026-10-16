@@ -137,6 +137,7 @@ class ConfigTests(unittest.TestCase):
                 load_config(path)
             for edit, message in ((lambda c: c["zones"].update(cell_size_m=10000), "zones.cell_size_m"),   # площадь зоны в дм² — u32
                                   (lambda c: c["transit"]["route_modes"].append("ferry"), "transit.route_modes"),   # нет кода в sim/
+                                  (lambda c: c["model_assumptions"]["headway_minutes"]["by_mode"].update(buss=c["model_assumptions"]["headway_minutes"]["by_mode"]["bus"]), "by_mode"),
                                   (lambda c: c["model_assumptions"]["mobility"]["vehicle_capacity"]["train"].update(wagons=17), "wagons")):
                 broken = json.loads(real.read_text(encoding="utf-8"))
                 edit(broken)
