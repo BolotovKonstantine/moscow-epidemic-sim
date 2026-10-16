@@ -166,7 +166,10 @@ def read_census(paths: dict) -> dict:
         raise ManifestError(f"нет таблиц переписи для ролей {missing}")
     result = {territory: {} for territory in REGIONS}
     for role, key in ROLES.items():
-        rows = rows_of(paths[role])
+        try:
+            rows = rows_of(paths[role])
+        except (IndexError, AttributeError, ValueError, TypeError) as error:   # испорченная структура листа: ссылки ячеек, sharedStrings
+            raise ManifestError(f"{paths[role]}: некорректная структура листа xlsx: {error!r}") from error
         for territory, region in REGIONS.items():
             try:
                 result[territory][key] = READERS[key](rows, region)

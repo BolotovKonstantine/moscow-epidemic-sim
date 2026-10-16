@@ -99,6 +99,10 @@ def load_config(path: Path, data: bytes | None = None) -> dict:
         check_package(config["package_id"], config["package_version"])
     except TableError as error:
         raise ManifestError(f"{path}: {error}") from error
+    from .simtables import origin_cell_fits
+    origin_cell = config["model_assumptions"]["mobility"]["origin_cell_m"]
+    if not origin_cell_fits(config["zones"]["cell_size_m"], round(origin_cell * 100)):
+        raise ManifestError(f"{path}: model_assumptions.mobility.origin_cell_m {origin_cell} не делит зону {config['zones']['cell_size_m']} м на 1–16 ячеек по стороне")
     problem = _check_day_partition(config["model_assumptions"]["headway_minutes"]["periods"])
     if problem:
         raise ManifestError(f"{path}: model_assumptions.headway_minutes.periods: {problem}")

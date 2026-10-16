@@ -114,6 +114,11 @@ class ConfigTests(unittest.TestCase):
                 path.write_text(json.dumps(broken))
                 with self.subTest(section=section), self.assertRaisesRegex(ManifestError, f"mobility.{section}.{key}"):
                     load_config(path)
+            broken = json.loads(real.read_text(encoding="utf-8"))
+            broken["model_assumptions"]["mobility"]["origin_cell_m"] = 333   # не делит зону 1000 м
+            path.write_text(json.dumps(broken))
+            with self.assertRaisesRegex(ManifestError, "origin_cell_m 333 не делит зону"):
+                load_config(path)
             for key, value, message in (("package_id", "custom_city", "package_id"), ("package_version", "1.0.0-very-long-version", "package_version")):
                 broken = json.loads(real.read_text(encoding="utf-8"))
                 broken[key] = value
@@ -338,3 +343,18 @@ class ConfigSnapshotTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CensusTests(unittest.TestCase):
+    def test_broken_sheet_structure_is_a_data_error(self):
+        import zipfile
+        from tools.city_pipeline.census import ROLES, read_census
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "broken.xlsx"
+            ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("xl/sharedStrings.xml", f'<sst xmlns="{ns}"></sst>')
+                # Ссылка на строку 5 общего списка, которого нет: IndexError → ManifestError.
+                archive.writestr("xl/worksheets/sheet1.xml", f'<worksheet xmlns="{ns}"><sheetData><row><c r="A1" t="s"><v>5</v></c></row></sheetData></worksheet>')
+            with self.assertRaisesRegex(ManifestError, "некорректная структура листа"):
+                read_census({role: path for role in ROLES})

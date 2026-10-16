@@ -22,6 +22,7 @@ from . import mtab
 from .buildings import FUNCTIONS
 from .geo import Projector
 from .manifest import MAP_INDEX_MAX_BYTES, ManifestError, parse_json_bytes
+from .census import AGE_BINS, LABOUR_BINS, STUDY_BINS
 from .maptiles import BUILDING_CLASSES, FACILITY_CLASSES, HIGHWAY_CLASS, STOP_CLASSES, STOP_MODES
 from .writers import write_json
 
@@ -304,6 +305,12 @@ def _clock_seconds(clock: str) -> int:
 
 def _mm_s_from_kmh(value) -> int:
     return int(round(value * 1_000_000 / 3600))
+
+
+def origin_cell_fits(zone_cell_m: int, origin_cell_cm: int) -> bool:
+    """Ячейка начала пути делит сторону зоны без остатка, ячеек по стороне — от 1 до 16 (ключ кеша путей)."""
+    zone_cm = zone_cell_m * 100
+    return origin_cell_cm > 0 and zone_cm % origin_cell_cm == 0 and 1 <= zone_cm // origin_cell_cm <= 16
 
 
 def car_graph(node_count, arc_from, arc_to, arc_ok):
@@ -820,15 +827,31 @@ def _unique(table_name, columns, keys):
     _expect(len(np.unique(stacked, axis=0)) == len(stacked), f"{table_name}: повторяющиеся ключи {keys}")
 
 
-def _cross_checks(t, codes):
+def _cross_checks(t, codes, zone_cell_m):
     """Сверки между колонками и таблицами, которые не выразить проверками отдельной колонки."""
+    # Числа строк таблиц-справочников — до любых обращений к ним по кодам.
+    _expect(len(t["road_classes"]["car_speed_mm_s"]) == len(codes["road_class"]), "road_classes: строка на каждый класс дороги")
+    _expect(len(t["transit_modes"]["speed_mm_s"]) == len(codes["mode"]), "transit_modes: строка на каждый вид транспорта")
+    for name in ("mobility", "mobility_estimates"):
+        _expect(len(next(iter(t[name].values()))) == 1, f"{name}: ровно одна строка")
+    # Ячейка начала пути (кеш путей #42) делит сторону зоны без остатка, не больше 16 ячеек по стороне — как в прототипе #35.
+    cell = int(t["mobility"]["origin_cell_cm"][0])
+    _expect(origin_cell_fits(zone_cell_m, cell), f"mobility.origin_cell_cm {cell} не делит зону {zone_cell_m} м на 1–16 ячеек по стороне")
     # Жители зданий по зонам равны жителям зон (здания вне зон в сумму не входят).
     b, z = t["buildings"], t["zones"]
     in_zone = b["zone"] != mtab.NONE["u32"]
     by_zone = np.bincount(b["zone"][in_zone].astype(np.int64), weights=b["residents"][in_zone].astype(np.float64), minlength=len(z["residents"]))
     _expect(np.array_equal(by_zone.astype(np.int64), z["residents"].astype(np.int64)), "buildings/zones: жители зданий по зонам не совпадают с жителями зон")
-    for column in ("road_node_depart", "road_node_arrive"):
-        _expect(np.array_equal(b[column] == mtab.NONE["u32"], b["road_node_depart"] == mtab.NONE["u32"]), "buildings: привязка к узлу задана только для одного направления")
+    _expect(np.array_equal(b["road_node_arrive"] == mtab.NONE["u32"], b["road_node_depart"] == mtab.NONE["u32"]), "buildings: привязка к узлу задана только для одного направления")
+    # Доли функций: у неизвестной функции все нули, иначе сумма — единица с допуском на округление долей пакета
+    # (8 долей по 0,001 → не больше ±40), а доминирующая функция — с наибольшей долей.
+    shares = np.stack([b[f"share_{name}"].astype(np.int64) for name in FUNCTIONS], axis=1)
+    total = shares.sum(axis=1)
+    known = b["function"] != 0
+    _expect((total[~known] == 0).all(), "buildings: у здания с неизвестной функцией ненулевые доли")
+    _expect((np.abs(total[known] - SHARE_ONE) <= 40).all(), "buildings: сумма долей функций не равна единице")
+    rows = np.nonzero(known)[0]
+    _expect((shares[rows, b["function"][rows].astype(np.int64) - 1] == shares[rows].max(axis=1)).all(), "buildings: доминирующая функция не имеет наибольшей доли")
     # Дуги: порядок CSR (исходный, конечный, путь, участок, обратная) строго возрастает; by_edge — перестановка
     # в порядке (путь, участок, обратная); у каждого ребра ровно две дуги, прямая и обратная, с общими атрибутами.
     n, a = t["road_nodes"], t["road_arcs"]
@@ -861,6 +884,14 @@ def _cross_checks(t, codes):
     car_arc = (a["car"] == 1) & (a["internal"] == 1) & (speed[np.minimum(a["road_class"], len(speed) - 1)] > 0)
     _, expected_main, _, _ = car_graph(len(offsets) - 1, source, a["to"].astype(np.int64), car_arc)
     _expect(np.array_equal(n["car_main"].astype(bool), expected_main), "road_nodes.car_main: не совпадает с основной компонентой сильной связности машины")
+    # Внутренняя дуга соединяет узлы внутри региона: граница пересекается только через внешние входы.
+    _expect(((n["inside"][source] == 1) & (n["inside"][a["to"]] == 1) | (a["internal"] == 0)).all(), "road_arcs.internal: внутренняя дуга с концом вне региона")
+    # Узел привязки здания пригоден для поездки: внутри региона, с исходящей (отправление) или входящей (прибытие) дугой машины.
+    has_out = np.bincount(source[car_arc], minlength=len(offsets) - 1) > 0
+    has_in = np.bincount(a["to"][car_arc].astype(np.int64), minlength=len(offsets) - 1) > 0
+    for column, usable in (("road_node_depart", has_out), ("road_node_arrive", has_in)):
+        node = b[column][b[column] != mtab.NONE["u32"]].astype(np.int64)
+        _expect(((n["inside"][node] == 1) & usable[node]).all(), f"buildings.{column}: узел вне региона или без дуги машины нужного направления")
     # Куски маршрутов: не меньше двух остановок, у последней остановки куска расстояние 0, номера кусков маршрута подряд.
     r = t["route_pieces"]
     stop_offset = r["stop_offset"].astype(np.int64)
@@ -873,8 +904,6 @@ def _cross_checks(t, codes):
     _expect(((piece == 0) == starts).all() and (piece[~starts] == piece[np.nonzero(~starts)[0] - 1] + 1).all(),
             "route_pieces: куски маршрута должны идти подряд с номерами 0, 1, 2…")
     # Модельные таблицы: строка на класс дороги и вид транспорта, период — разбиение суток, интервалы на каждую пару.
-    _expect(len(t["road_classes"]["car_speed_mm_s"]) == len(codes["road_class"]), "road_classes: строка на каждый класс дороги")
-    _expect(len(t["transit_modes"]["speed_mm_s"]) == len(codes["mode"]), "transit_modes: строка на каждый вид транспорта")
     p = t["transit_periods"]
     _expect(len(p["start_s"]) == len(codes["period"]), "transit_periods: строка на каждый период")
     starts_s, ends_s = p["start_s"].astype(np.int64), p["end_s"].astype(np.int64)
@@ -885,17 +914,17 @@ def _cross_checks(t, codes):
     h = t["transit_headways"]
     grid = [(m, q) for m in range(len(codes["mode"])) for q in range(len(codes["period"]))]
     _expect(list(zip(h["mode"].tolist(), h["period"].tolist())) == grid, "transit_headways: строка на каждую пару (вид, период) в порядке кодов")
-    for name in ("mobility", "mobility_estimates"):
-        _expect(len(next(iter(t[name].values()))) == 1, f"{name}: ровно одна строка")
-    # Перепись: возрастные группы по возрастанию, без пересечений; обе территории.
-    for name in ("census_age", "census_labour", "census_study"):
+    # Перепись: возрастные группы — ровно группы таблиц Росстата (census.py) для каждого региона по порядку.
+    for name, bins in (("census_age", AGE_BINS), ("census_labour", LABOUR_BINS), ("census_study", STUDY_BINS)):
         c = t[name]
-        _expect((c["age_low"] <= c["age_high"]).all(), f"{name}: нижняя граница возраста больше верхней")
-        for region in range(len(codes["census_region"])):
-            rows = c["region"] == region
-            _expect(rows.any(), f"{name}: нет строк региона {codes['census_region'][region]}")
-            low, high = c["age_low"][rows].astype(np.int64), c["age_high"][rows].astype(np.int64)
-            _expect((low[1:] == high[:-1] + 1).all(), f"{name}: возрастные группы {codes['census_region'][region]} не идут встык")
+        expected = [(region, low, high) for region in range(len(codes["census_region"])) for low, high in bins]
+        _expect(list(zip(c["region"].tolist(), c["age_low"].tolist(), c["age_high"].tolist())) == expected,
+                f"{name}: возрастные группы должны быть ровно {bins} для каждого региона")
+    # Жители по размеру домохозяйства: для 1–5 — размер × число, для 6+ — не меньше 6 × число.
+    s = t["census_household_size"]
+    size, households, persons = (s[c].astype(np.int64) for c in ("size", "households", "persons"))
+    _expect(((size < 6) & (persons == size * households) | (size == 6) & (persons >= 6 * households)).all(),
+            "census_household_size: жители не согласованы с размером и числом домохозяйств")
     # Категории по числу детей взаимоисключающие: их сумма не больше числа домохозяйств (иначе доля без детей отрицательна).
     k = t["census_household_children"]
     with_children = k["with_1_child"].astype(np.int64) + k["with_2_children"].astype(np.int64) + k["with_3_plus_children"].astype(np.int64)
@@ -916,6 +945,12 @@ def _cross_checks(t, codes):
     stops_of = g["stop"][transit].astype(np.int64)
     _expect((t["stops"]["inside"][stops_of] == 1).all(), "gateways: остановка транспортного входа вне региона")
     _expect(np.isin(g["route_osm_id"][transit], t["route_pieces"]["route_osm_id"]).all(), "gateways: маршрут транспортного входа отсутствует в route_pieces")
+    # Остановка входа стоит на одном из кусков своего маршрута того же вида транспорта.
+    pieces = t["route_pieces"]
+    counts = np.diff(pieces["stop_offset"].astype(np.int64))
+    served = set(zip(np.repeat(pieces["route_osm_id"], counts).tolist(), pieces["stops"].tolist(), np.repeat(pieces["mode"], counts).tolist()))
+    _expect(all(key in served for key in zip(g["route_osm_id"][transit].tolist(), g["stop"][transit].tolist(), g["mode"][transit].tolist())),
+            "gateways: остановка транспортного входа не стоит на куске своего маршрута того же вида")
 
 
 def read_table(path: Path, entry: dict, package_id: str, package_version: str):
@@ -974,7 +1009,7 @@ def validate_sim_dir(sim_dir: Path, package_id: str, package_version: str, *, ki
         for column, dtype, _, checks in spec["columns"]:
             _check_column_values(name, column, dtype, tables[name][column], checks, sizes, codes)
         _unique(name, tables[name], spec["unique"])
-    _cross_checks(tables, codes)
+    _cross_checks(tables, codes, index["zone_cell_m"])
     return len(entries)
 
 

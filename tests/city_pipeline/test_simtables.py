@@ -484,6 +484,29 @@ class SimValidationTests(unittest.TestCase):
         (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
         self.assert_rejected(package, "не два числа")
 
+    def test_fifth_review_round_checks(self):
+        nodes = mtab.decode_table((self.out / "sim" / "road_nodes.mtab").read_bytes(), "road_nodes").columns
+        buildings = mtab.decode_table((self.out / "sim" / "buildings.mtab").read_bytes(), "buildings").columns
+        gateways = mtab.decode_table((self.out / "sim" / "gateways.mtab").read_bytes(), "gateways").columns
+        outside_node = int(np.nonzero(nodes["inside"][1] == 0)[0][0])
+        home_node = int(buildings["road_node_depart"][1][0])
+        transit = int(np.nonzero(gateways["kind"][1] == 1)[0][0])
+        other_mode = (int(gateways["mode"][1][transit]) + 1) % 8
+        known = int(np.nonzero(buildings["function"][1] != 0)[0][0])
+        cases = [
+            ("road_classes", lambda columns, rows: ([(n, d, v[:0]) for n, d, v in columns], 0), "строка на каждый класс"),
+            ("gateways", self.set_value("mode", transit, other_mode), "не стоит на куске своего маршрута"),
+            ("census_age", self.set_value("age_low", 0, 1), "возрастные группы должны быть"),
+            ("census_household_size", self.set_value("persons", 5, 0), "не согласованы с размером"),
+            ("buildings", self.set_value("share_other", known, 10_000), "сумма долей"),
+            ("buildings", self.set_value("road_node_depart", 0, outside_node), "road_node_depart: узел вне региона"),
+            ("road_nodes", self.set_value("inside", home_node, 0), "внутренняя дуга с концом вне региона"),
+            ("mobility", self.set_value("origin_cell_cm", 0, 33_300), "не делит зону"),
+        ]
+        for name, change, message in cases:
+            with self.subTest(table=name, message=message):
+                self.assert_rejected(self.rewrite(name, change), message)
+
     def test_household_sizes_must_be_complete(self):
         def drop_last(columns, rows):
             return [(name, dtype, values[:-1]) for name, dtype, values in columns], rows - 1
