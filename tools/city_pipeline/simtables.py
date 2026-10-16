@@ -10,7 +10,10 @@ docs/city-package.md#расчётные-таблицы. Экспорт чита�
 import csv
 import gzip
 import hashlib
+import io
 import json
+import math
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +34,7 @@ INDEX_VERSION = 1
 INDEX_NAME = "index.json"
 MAX_TABLE_BYTES = 1 << 30   # 1 ГиБ: больший файл ядро не читает целиком в память
 MAX_INDEX_BYTES = 1 << 20   # 1 МиБ: индекс — десятки КБ; больший не читается
+MAX_DECOMPRESSED_BYTES = 2 << 30   # 2 ГиБ на распакованный входной файл пакета (moscow-2021 — до 188 МБ)
 MAX_TOTAL_BYTES = 4 << 30   # 4 ГиБ на все таблицы: ядро держит их в памяти целиком (полный пакет — 76 МБ)
 OSM_TYPES = ("n", "w", "r")
 TERRITORIES = ("moscow", "buffer")
@@ -265,13 +269,38 @@ class SimError(ManifestError):
 
 # ---------------------------------------------------------------------------- экспорт
 
+class _LimitedReader(io.RawIOBase):
+    """Распакованный поток с пределом: маленький gzip не может развернуться в гигабайты при проверке пакета."""
+
+    def __init__(self, raw, limit, path):
+        self.raw, self.left, self.path = raw, limit, path
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        data = self.raw.read(min(len(buffer), self.left + 1))
+        self.left -= len(data)
+        if self.left < 0:
+            raise SimError(f"{self.path}: распакованный размер больше {MAX_DECOMPRESSED_BYTES} байт")
+        buffer[:len(data)] = data
+        return len(data)
+
+
+@contextmanager
+def _open_text(path: Path, newline=None):
+    with gzip.open(path, "rb") as raw:
+        with io.TextIOWrapper(io.BufferedReader(_LimitedReader(raw, MAX_DECOMPRESSED_BYTES, path)), encoding="utf-8", newline=newline) as stream:
+            yield stream
+
+
 def _read_csv(path: Path):
-    with gzip.open(path, "rt", encoding="utf-8", newline="") as stream:
+    with _open_text(path, newline="") as stream:
         return list(csv.DictReader(stream))
 
 
 def _read_geojsonl_properties(path: Path):
-    with gzip.open(path, "rt", encoding="utf-8") as stream:
+    with _open_text(path) as stream:
         return [json.loads(line)["properties"] for line in stream]
 
 
@@ -313,7 +342,13 @@ def _mm_s_from_kmh(value) -> int:
 
 def transfer_walk_s(distance_cm: int, speed_mps: float, overhead_s: float, detour: float) -> int:
     """Время пешей пересадки: прямая × walk_detour / скорость + надбавка, не меньше 1 с."""
-    return max(1, round(distance_cm / 100 * detour / speed_mps + overhead_s))
+    return max(1, round_half_away(distance_cm / 100 * detour / speed_mps + overhead_s))
+
+
+def round_half_away(value: float) -> int:
+    """Округление половин от нуля, как std::lround загрузчика (Python round — к чётному)."""
+    whole = math.floor(value)
+    return whole + 1 if value - whole >= 0.5 else whole
 
 
 def origin_cell_fits(zone_cell_m: int, origin_cell_cm: int) -> bool:
@@ -436,7 +471,7 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
     gateway_edges = {g["ref"] for g in gateways if g["kind"] == "road"}
     arcs = []
     car_speed = [_mm_s_from_kmh(mobility["car_speed_kmh"][name]) for name in ROAD_CLASSES]
-    with gzip.open(package_dir / "roads.geojsonl.gz", "rt", encoding="utf-8") as stream:
+    with _open_text(package_dir / "roads.geojsonl.gz") as stream:
         for line in stream:
             p = json.loads(line)["properties"]
             a, b = node_position[p["from_node"]], node_position[p["to_node"]]
@@ -558,8 +593,10 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
             chain, lengths, count = [], [], count + 1
         # Разрыв — пропуск номера отрезка или несовпадение концов: прямой поездки через него нет.
         for sequence, a, b, distance in sorted(segments.get(route["route_id"], [])):
-            if a == b and chain and chain[-1] == a and sequence == previous + 1:
-                previous = sequence   # отрезок на месте (одна остановка дважды подряд) — загрузчик всё равно схлопнул бы его
+            if a == b:   # отрезок на месте (одна остановка дважды подряд) — загрузчик всё равно схлопнул бы его
+                if chain and (chain[-1] != a or sequence != previous + 1):
+                    close()   # разрыв перед ним закрывает кусок, как у обычного отрезка
+                previous = sequence
                 continue
             if chain and (chain[-1] != a or sequence != previous + 1):
                 close()
@@ -578,7 +615,8 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
     ]
     # Пересадка снаружи региона не разрешена моделью: пары с внешней остановкой не экспортируются.
     transfers = [row for row in _read_csv(package_dir / "transit_transfers.csv.gz")
-                 if stops[stop_index[row["from_stop"]]]["inside"] == "1" and stops[stop_index[row["to_stop"]]]["inside"] == "1"]
+                 if stops[stop_index[row["from_stop"]]]["inside"] == "1" and stops[stop_index[row["to_stop"]]]["inside"] == "1"
+                 and row["from_stop"] != row["to_stop"]]   # пересадка на ту же остановку загрузчику не нужна
     tables["transfers"] = [
         ("stop_area_osm_id", "u64", [_relation(t["stop_area_id"], "transit_transfers") for t in transfers]),
         ("from_stop", "u32", [stop_index[t["from_stop"]] for t in transfers]),
@@ -663,7 +701,7 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
         for p, period in enumerate(periods):
             minutes = by_period.get(period)
             h_mode.append(m); h_period.append(p)
-            h_value.append(none["u32"] if minutes is None else int(round(minutes * 60)))
+            h_value.append(none["u32"] if minutes is None else round_half_away(minutes * 60))
     tables["transit_headways"] = [("mode", "u8", h_mode), ("period", "u8", h_period), ("headway_s", "u32", h_value)]
     tables["mobility"] = [
         ("walk_speed_mm_s", "u32", [walk_speed_mm_s]),
@@ -889,8 +927,8 @@ def _cross_checks(t, codes, zone_cell_m, origin):
         ids = [OSM_TYPES[kind] + str(number) for kind, number in zip(t[name]["osm_type"].tolist(), t[name]["osm_id"].tolist())]
         _expect(all(x < y for x, y in zip(ids, ids[1:])), f"{name}: строки не в порядке стабильных ID")
     _expect(not (np.diff(t["road_nodes"]["osm_id"].astype(np.int64)) <= 0).any(), "road_nodes: строки не в порядке ID узлов")
-    zone_ids = [f"g{x}_{y}" for x, y in zip(t["zones"]["ix"].tolist(), t["zones"]["iy"].tolist())]
-    _expect(all(x < y for x, y in zip(zone_ids, zone_ids[1:])), "zones: строки не в порядке ID зон")
+    zone_keys = list(zip(t["zones"]["ix"].tolist(), t["zones"]["iy"].tolist()))   # как в zones.py: численно по (ix, iy)
+    _expect(all(x < y for x, y in zip(zone_keys, zone_keys[1:])), "zones: строки не в порядке (ix, iy)")
     route_ids = [(f"r{route}", piece) for route, piece in zip(t["route_pieces"]["route_osm_id"].tolist(), t["route_pieces"]["piece"].tolist())]
     _expect(all(x < y for x, y in zip(route_ids, route_ids[1:])), "route_pieces: куски не в порядке ID маршрутов")
     # Числа строк таблиц-справочников — до любых обращений к ним по кодам.
@@ -1109,6 +1147,10 @@ def _cross_checks(t, codes, zone_cell_m, origin):
         if size == 6 and region in six:   # нет строки 6+ — её отсутствие отклонит проверка полной сетки размеров ниже
             persons, households = six[region]
             _expect(children <= persons - households, "census_household_children: детей в домохозяйствах 6+ больше, чем лиц без взрослых")
+            # Остальные семьи 6+ занимают не меньше 6 лиц каждая: дети 3+ помещаются в оставшиеся места своих семей.
+            row = np.nonzero((k["region"] == region) & (hh_size == 6))[0][0]
+            _expect(int(k["children_in_3_plus"][row]) <= persons - 6 * households + 5 * int(k["with_3_plus_children"][row]),
+                    "census_household_children: детей 3+ в домохозяйствах 6+ больше, чем помещается в такие семьи")
     # Дети категории 3+ помещаются в свои домохозяйства: не больше (размер − 1) на домохозяйство для размеров 4–5.
     small = (hh_size >= 4) & (hh_size <= 5)
     _expect((k["children_in_3_plus"][small].astype(np.int64) <= (hh_size[small] - 1) * k["with_3_plus_children"][small].astype(np.int64)).all(),
@@ -1145,6 +1187,7 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     mob, est, tr = t["mobility"], t["mobility_estimates"], t["transfers"]
     # Пересадка — только между остановками внутри региона: снаружи житель не пересаживается (mobility.md).
     _expect(((t["stops"]["inside"][tr["from_stop"]] == 1) & (t["stops"]["inside"][tr["to_stop"]] == 1)).all(), "transfers: пересадка с остановкой вне региона")
+    _expect(not (tr["from_stop"] == tr["to_stop"]).any(), "transfers: пересадка с остановки на неё же")
     expected_walk = np.array([transfer_walk_s(int(d), int(mob["walk_speed_mm_s"][0]) / 1000, int(mob["transfer_overhead_s"][0]), int(est["walk_detour"][0]) / SHARE_ONE)
                               for d in tr["distance_cm"]], dtype=np.int64)
     _expect(np.array_equal(tr["walk_s"].astype(np.int64), expected_walk), "transfers.walk_s: не согласовано с расстоянием, скоростью, надбавкой и walk_detour")

@@ -131,6 +131,22 @@ class CarGraphTests(unittest.TestCase):
         node, _ = _nearest(np.zeros((12, 2)), order, np.array([[1.0, 1.0]]))
         self.assertEqual(int(node[0]), 0)
 
+    def test_rounding_and_input_limits(self):
+        from tools.city_pipeline import simtables
+        self.assertEqual([simtables.round_half_away(v) for v in (2.5, 100.5, 3.4999, 0.5)], [3, 101, 3, 1])   # не к чётному
+        self.assertEqual(simtables.transfer_walk_s(500, 2.0, 0, 1.0), 3)   # 2,5 с → 3 с, как std::lround
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "big.csv.gz"
+            with gzip.open(path, "wb") as stream:
+                stream.write(b"a\n" + b"0" * 4096)
+            limit = simtables.MAX_DECOMPRESSED_BYTES
+            simtables.MAX_DECOMPRESSED_BYTES = 1024
+            try:
+                with self.assertRaisesRegex(simtables.SimError, "распакованный размер"):
+                    simtables._read_csv(path)
+            finally:
+                simtables.MAX_DECOMPRESSED_BYTES = limit
+
     def test_one_way_only_node_is_not_main(self):
         # Только дуга 1→2: ни у одного узла нет и исходящей, и входящей дуги — к основной компоненте нельзя и приехать, и уехать.
         _, main, _, _ = car_graph(3, np.array([1]), np.array([2]), np.array([True]))
@@ -760,6 +776,9 @@ class SimValidationTests(unittest.TestCase):
             ("census_household_children", self.set_value("children_in_3_plus", stop_six, 10 ** 6), "6\\+|позволяет размер|не больше"),
             ("route_pieces", self.set_value("stops", 1, int(pieces["stops"][1][0])), "дважды подряд|длина перегона"),
             ("transit_headways", self.set_value("headway_s", 0, 1), "рейсов окна расписания|повторным экспортом"),
+            ("transfers", lambda columns, rows: ([(n, d, (v.copy() if n != "to_stop" else np.where(np.arange(len(v)) == 0, columns[1][2][0], v))) for n, d, v in columns], rows),
+             "на неё же|walk_s|distance_cm|повторным экспортом"),
+            ("census_household_children", self.set_value("children_in_3_plus", 4, 10 ** 4), "6\\+|позволяет размер|не больше"),
             ("census_age", lambda columns, rows: ([(n, d, np.where(columns[0][2] == 1, 0, v) if n == "persons" else v) for n, d, v in columns], rows), "нулевое население региона"),
             ("census_age", lambda columns, rows: ([(n, d, np.where((columns[0][2] == 0) & (columns[1][2] < 18), 0, v) if n == "persons" else v) for n, d, v in columns], rows), "нет детей или взрослых"),
         ]

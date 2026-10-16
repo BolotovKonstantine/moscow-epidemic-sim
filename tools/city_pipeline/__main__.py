@@ -134,9 +134,10 @@ def load_config(path: Path, data: bytes | None = None, *, versions=tuple(CONFIG_
             problems.append(f"нет интервалов для вида {mode}")
         elif set(by_period) != periods:
             problems.append(f"{mode}: периоды {sorted(set(by_period))} не совпадают с {sorted(periods)}")
+    from .simtables import round_half_away
     if version >= 2:   # в sim/ интервал пишется целыми секундами (для всех видов из by_mode): округляющийся до 0 с отклоняется сразу
         problems += [f"{mode}.{period}: {value} мин меньше секунды" for mode, by_period in sorted(headways["by_mode"].items())
-                     for period, value in sorted(by_period.items()) if value is not None and round(value * 60) < 1]
+                     for period, value in sorted(by_period.items()) if value is not None and round_half_away(value * 60) < 1]
     if problems:
         raise ManifestError(f"{path}: model_assumptions.headway_minutes: " + "; ".join(problems))
     return config
