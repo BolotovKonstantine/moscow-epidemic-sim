@@ -1118,6 +1118,10 @@ def _cross_checks(t, codes, zone_cell_m, origin):
             kids += persons * young / years
             adults += persons * (years - young) / years
         _expect(kids > 0 and adults > 0, f"census_age: в регионе {codes['census_region'][region]} нет детей или взрослых")
+        # Раз дети есть в возрастах, в регионе есть и домохозяйства с детьми.
+        k_rows = t["census_household_children"]["region"] == region
+        families = sum(int(t["census_household_children"][c][k_rows].astype(np.int64).sum()) for c in ("with_1_child", "with_2_children", "with_3_plus_children"))
+        _expect(families > 0, f"census_household_children: в регионе {codes['census_region'][region]} нет домохозяйств с детьми")
     # Вложенные итоги: работающие ⊂ указавших статус ⊂ всех; части обучения не больше итога.
     lab = {c: v.astype(np.int64) for c, v in t["census_labour"].items()}
     _expect(((lab["employed"] <= lab["status_indicated"]) & (lab["status_indicated"] <= lab["total"])).all(), "census_labour: нужно employed ≤ status_indicated ≤ total")
@@ -1210,6 +1214,8 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     chosen = np.where(gnode == ends[:, 0], end_distance[:, 0], end_distance[:, 1])
     other = np.where(gnode == ends[:, 0], end_distance[:, 1], end_distance[:, 0])
     _expect((~both | (chosen <= other + 100)).all(), "gateways: inside_node — не ближайший к точке входа конец ребра")
+    # Точка входа лежит на ребре: сумма прямых до концов не больше длины ломаной (допуск 20 см на округление).
+    _expect((end_distance.sum(axis=1) <= a["length_cm"][arc_of].astype(np.int64) + 20).all(), "gateways: точка дорожного входа не лежит на его ребре")
     # Обратное условие internal: дуга с обоими концами внутри не внутренняя только если её ребро — дорожный вход.
     both_inside = (n["inside"][source] == 1) & (n["inside"][a["to"]] == 1)
     gateway_edges = np.unique(np.column_stack((a["way_id"][arc_of].astype(np.int64), a["way_part"][arc_of].astype(np.int64))), axis=0)

@@ -683,6 +683,7 @@ class SimValidationTests(unittest.TestCase):
 
         cases = [
             ("gateways", self.set_value("arc", road, reverse_arc), "не прямая дуга ребра"),
+            ("gateways", self.set_value("x_cm", road, int(gateways["x_cm"][1][road]) + 10 ** 7), "не лежит на его ребре|точка вне квадрата"),
             ("road_arcs", flip_internal, "помечено внешним|car_main|road_node_depart|road_node_arrive"),
             ("zones", swap_rows, "строки не в порядке|жители зданий по зонам|точка вне квадрата"),
         ]
@@ -779,6 +780,8 @@ class SimValidationTests(unittest.TestCase):
             ("transfers", lambda columns, rows: ([(n, d, (v.copy() if n != "to_stop" else np.where(np.arange(len(v)) == 0, columns[1][2][0], v))) for n, d, v in columns], rows),
              "на неё же|walk_s|distance_cm|повторным экспортом"),
             ("census_household_children", self.set_value("children_in_3_plus", 4, 10 ** 4), "6\\+|позволяет размер|не больше"),
+            ("census_household_children", lambda columns, rows: ([(n, d, np.where(columns[0][2] == 0, 0, v) if n in ("with_1_child", "with_2_children", "with_3_plus_children", "children_in_3_plus") else v)
+                                                                 for n, d, v in columns], rows), "нет домохозяйств с детьми"),
             ("census_age", lambda columns, rows: ([(n, d, np.where(columns[0][2] == 1, 0, v) if n == "persons" else v) for n, d, v in columns], rows), "нулевое население региона"),
             ("census_age", lambda columns, rows: ([(n, d, np.where((columns[0][2] == 0) & (columns[1][2] < 18), 0, v) if n == "persons" else v) for n, d, v in columns], rows), "нет детей или взрослых"),
         ]
