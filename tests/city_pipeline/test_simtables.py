@@ -738,6 +738,28 @@ class SimValidationTests(unittest.TestCase):
         (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
         self.assert_rejected(package, "не совпадает с карточкой источника")
 
+    def test_eighteenth_review_round_checks(self):
+        pieces = mtab.decode_table((self.out / "sim" / "route_pieces.mtab").read_bytes(), "route_pieces").columns
+        stop_six = 4   # строка (moscow, 6) в census_household_children
+        cases = [
+            ("census_household_children", self.set_value("children_in_3_plus", stop_six, 10 ** 6), "6\\+|позволяет размер|не больше"),
+            ("route_pieces", self.set_value("stops", 1, int(pieces["stops"][1][0])), "дважды подряд|длина перегона"),
+            ("transit_headways", self.set_value("headway_s", 0, 1), "рейсов за сутки|повторным экспортом"),
+        ]
+        for name, change, message in cases:
+            with self.subTest(table=name):
+                self.assert_rejected(self.rewrite(name, change), message)
+        package = self.copy()
+        config_path = package / "build_config.json"
+        config_path.write_bytes(config_path.read_bytes() + b" " * (2 << 20))
+        manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+        asset = next(a for a in manifest["assets"] if a["role"] == "config")
+        data = config_path.read_bytes()
+        asset["size_bytes"], asset["sha256"] = len(data), hashlib.sha256(data).hexdigest()
+        next(s for s in manifest["sources"] if s["source_id"].startswith("build-config-"))["sha256"] = asset["sha256"]
+        (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        self.assert_rejected(package, "build_config.json больше")
+
     def test_broken_embedded_config_is_a_package_error(self):
         package = self.copy()
         config_path = package / "build_config.json"

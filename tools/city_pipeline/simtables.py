@@ -542,6 +542,9 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
             chain, lengths, count = [], [], count + 1
         # Разрыв — пропуск номера отрезка или несовпадение концов: прямой поездки через него нет.
         for sequence, a, b, distance in sorted(segments.get(route["route_id"], [])):
+            if a == b and chain and chain[-1] == a and sequence == previous + 1:
+                previous = sequence   # отрезок на месте (одна остановка дважды подряд) — загрузчик всё равно схлопнул бы его
+                continue
             if chain and (chain[-1] != a or sequence != previous + 1):
                 close()
             if not chain:
@@ -982,6 +985,11 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     r = t["route_pieces"]
     stop_offset = r["stop_offset"].astype(np.int64)
     _expect(not (np.diff(stop_offset) < 2).any(), "route_pieces: кусок маршрута короче двух остановок")
+    # Соседние остановки куска различаются: загрузчик схлопывает повторы, и кусок мог бы исчезнуть.
+    pool_stops = r["stops"].astype(np.int64)
+    inner_pair = np.ones(max(len(pool_stops) - 1, 0), dtype=bool)
+    inner_pair[stop_offset[1:-1] - 1] = False
+    _expect(not ((pool_stops[1:] == pool_stops[:-1]) & inner_pair).any(), "route_pieces: одна остановка дважды подряд в куске")
     # Длина перегона — прямая между остановками (допуск 10 см: округление координат до см и расстояний пакета до 0,1 м).
     last = np.zeros(len(r["stops"]), dtype=bool)
     last[stop_offset[1:] - 1] = True
@@ -1000,7 +1008,9 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     # весь кусок — не дольше 7 суток (глубина расписания).
     speeds = t["transit_modes"]["speed_mm_s"].astype(np.int64)
     pool_mode = np.repeat(np.minimum(r["mode"].astype(np.int64), len(speeds) - 1), np.diff(stop_offset))
-    ride = np.maximum(MIN_RIDE_S, np.rint(r["segment_cm"].astype(np.int64) * 10 / speeds[pool_mode]).astype(np.int64))
+    # Округление половин от нуля, как std::lround загрузчика: (2·n + d) // (2·d) для n = длина × 10 мм, d = скорость.
+    numerator, denominator = r["segment_cm"].astype(np.int64) * 10, speeds[pool_mode]
+    ride = np.maximum(MIN_RIDE_S, (2 * numerator + denominator) // (2 * denominator))
     ride[stop_offset[1:] - 1] = 0   # у последней остановки куска перегона нет
     piece_s = np.add.reduceat(ride, stop_offset[:-1]) if len(stop_offset) > 1 else np.zeros(0, dtype=np.int64)
     _expect((piece_s <= 7 * 86_400).all(), "route_pieces: кусок маршрута идёт дольше 7 суток (глубина расписания)")
@@ -1020,6 +1030,15 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     order = np.argsort(starts_s, kind="stable")
     _expect(np.array_equal((starts_s[order] + lengths[order]) % 86_400, np.roll(starts_s[order], -1)), "transit_periods: периоды идут не встык")
     h = t["transit_headways"]
+    # Модельных рейсов за сутки меньше 2³¹: ID рейса — 2³¹ + номер рейса за сутки (sim-core.md). Оценка сверху — на каждый
+    # кусок и период с движением ⌊длина периода / интервал⌋ + 1.
+    period_length = (p["end_s"].astype(np.int64) - p["start_s"].astype(np.int64)) % 86_400
+    headway = h["headway_s"].astype(np.int64).reshape(len(codes["mode"]), len(codes["period"])) if len(h["headway_s"]) == len(codes["mode"]) * len(codes["period"]) else None
+    if headway is not None:
+        served = headway != mtab.NONE["u32"]
+        trips_per_mode = np.where(served, period_length[None, :] // np.where(served, headway, 1) + 1, 0).sum(axis=1)
+        pieces_per_mode = np.bincount(t["route_pieces"]["mode"].astype(np.int64), minlength=len(codes["mode"]))
+        _expect(int((trips_per_mode * pieces_per_mode[:len(trips_per_mode)]).sum()) < (1 << 31), "transit_headways: модельных рейсов за сутки не меньше 2³¹ — не хватит ID рейсов")
     grid = [(m, q) for m in range(len(codes["mode"])) for q in range(len(codes["period"]))]
     _expect(list(zip(h["mode"].tolist(), h["period"].tolist())) == grid, "transit_headways: строка на каждую пару (вид, период) в порядке кодов")
     # Перепись: возрастные группы — ровно группы таблиц Росстата (census.py) для каждого региона по порядку.
@@ -1050,6 +1069,13 @@ def _cross_checks(t, codes, zone_cell_m, origin):
     _expect(((hh_size == 6) | (kids <= (hh_size - 1) * k["households"].astype(np.int64))).all()
             and not ((hh_size == 2) & ((k["with_2_children"] > 0) | (k["with_3_plus_children"] > 0)) | (hh_size == 3) & (k["with_3_plus_children"] > 0)).any(),
             "census_household_children: детей больше, чем позволяет размер домохозяйства")
+    # В домохозяйствах 6+ детей не больше, чем лиц минус по одному взрослому на домохозяйство.
+    sizes_table = t["census_household_size"]
+    six = {int(r_): (int(p_), int(h_)) for r_, s_, p_, h_ in zip(sizes_table["region"], sizes_table["size"], sizes_table["persons"], sizes_table["households"]) if s_ == 6}
+    for region, size, children in zip(k["region"].tolist(), hh_size.tolist(), kids.tolist()):
+        if size == 6 and region in six:   # нет строки 6+ — её отсутствие отклонит проверка полной сетки размеров ниже
+            persons, households = six[region]
+            _expect(children <= persons - households, "census_household_children: детей в домохозяйствах 6+ больше, чем лиц без взрослых")
     # Дети категории 3+ помещаются в свои домохозяйства: не больше (размер − 1) на домохозяйство для размеров 4–5.
     small = (hh_size >= 4) & (hh_size <= 5)
     _expect((k["children_in_3_plus"][small].astype(np.int64) <= (hh_size[small] - 1) * k["with_3_plus_children"][small].astype(np.int64)).all(),
@@ -1195,7 +1221,10 @@ def _matches_reexport(sim_dir: Path, manifest: dict):
     package_dir = sim_dir.parent
     config_asset = next((a for a in manifest["assets"] if a["role"] == "config"), None)
     _expect(config_asset is not None, "роль sim требует build_config.json (роль config) для сверки с файлами пакета")
-    config = parse_json_bytes((package_dir / config_asset["path"]).read_bytes(), package_dir / config_asset["path"])
+    config_path = package_dir / config_asset["path"]
+    _expect(config_asset["size_bytes"] <= MAX_INDEX_BYTES and config_path.stat().st_size <= MAX_INDEX_BYTES,
+            f"build_config.json больше {MAX_INDEX_BYTES} байт")   # размер — до чтения
+    config = parse_json_bytes(config_path.read_bytes(), config_path)
     _expect(isinstance(config, dict) and config.get("config_version") == 2, "build_config.json пакета с ролью sim должен быть версии 2")
     # Встроенная конфигурация проверяется той же схемой v2, что у build: ошибка структуры — сообщение, а не KeyError.
     # Те же правила, что у build и map-tile (строгие целые, связи полей), а не только схема.
