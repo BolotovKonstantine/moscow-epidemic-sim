@@ -519,6 +519,9 @@ class SimValidationTests(unittest.TestCase):
             ("gateways", self.set_value("road_class", road, (int(gateways["road_class"][1][road]) + 1) % 8), "класс или внутренний флаг"),
             ("gateways", self.set_value("inside_node", road, not_end), "inside_node не является концом"),
             ("road_arcs", self.set_value("way_id", 0, 1 << 63), "way_id: значение больше"),
+            ("census_study", self.set_value("general", 0, 1000), "учащихся больше, чем указавших"),
+            ("census_household_children", self.set_value("children_in_3_plus", 2, 1), "меньше трёх на домохозяйство"),
+            ("transit_modes", self.set_value("wagons", 0, 17), "wagons: значение больше 16"),
         ]
         for name, change, message in cases:
             with self.subTest(table=name, message=message):
@@ -532,6 +535,15 @@ class SimValidationTests(unittest.TestCase):
         table.unlink()
         table.symlink_to(outside)
         self.assert_rejected(package, "не ссылкой")
+
+    def test_sim_asset_must_be_estimated(self):
+        package = self.copy()
+        manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+        asset = next(a for a in manifest["assets"] if a["role"] == "sim")
+        asset["data_kind"] = "game_setting"
+        del asset["estimation"]
+        (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        self.assert_rejected(package, "должен быть estimated")
 
     def test_household_sizes_must_be_complete(self):
         def drop_last(columns, rows):

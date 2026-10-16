@@ -156,7 +156,7 @@ SCHEMA = {
     "transit_modes": {"version": 1, "kind": "game_setting", "unique": [], "columns": [
         _col("speed_mm_s", "u32", "rows", ("min", 1), ("max", 100_000)),
         _col("capacity", "u32", "rows", ("min", 1), ("max", 100_000)),
-        _col("wagons", "u16", "rows", ("min", 1), ("max", 1000)),
+        _col("wagons", "u16", "rows", ("min", 1), ("max", 16)),   # как в модели #35: загрузка рейса — не больше 16 вагонов
     ]},
     "transit_periods": {"version": 1, "kind": "game_setting", "unique": [], "columns": [
         _col("start_s", "u32", "rows", ("max", 86_399)),
@@ -926,7 +926,9 @@ def _cross_checks(t, codes, zone_cell_m):
     lab = {c: v.astype(np.int64) for c, v in t["census_labour"].items()}
     _expect(((lab["employed"] <= lab["status_indicated"]) & (lab["status_indicated"] <= lab["total"])).all(), "census_labour: нужно employed ≤ status_indicated ≤ total")
     st = {c: v.astype(np.int64) for c, v in t["census_study"].items()}
-    _expect(((st["not_indicated"] <= st["total"]) & (st["preschool"] + st["general"] + st["professional"] <= st["total"])).all(), "census_study: части больше итога")
+    # Доли обучения считаются от указавших статус (total − not_indicated), поэтому учащиеся не больше указавших.
+    _expect(((st["not_indicated"] <= st["total"]) & (st["preschool"] + st["general"] + st["professional"] <= st["total"] - st["not_indicated"])).all(),
+            "census_study: учащихся больше, чем указавших статус обучения")
     # Жители по размеру домохозяйства: для 1–5 — размер × число, для 6+ — не меньше 6 × число.
     s = t["census_household_size"]
     size, households, persons = (s[c].astype(np.int64) for c in ("size", "households", "persons"))
@@ -936,6 +938,9 @@ def _cross_checks(t, codes, zone_cell_m):
     k = t["census_household_children"]
     with_children = k["with_1_child"].astype(np.int64) + k["with_2_children"].astype(np.int64) + k["with_3_plus_children"].astype(np.int64)
     _expect((with_children <= k["households"].astype(np.int64)).all(), "census_household_children: домохозяйств с детьми больше, чем домохозяйств")
+    # В категории 3+ в среднем не меньше трёх детей; нет таких домохозяйств — нет и детей.
+    three, kids3 = k["with_3_plus_children"].astype(np.int64), k["children_in_3_plus"].astype(np.int64)
+    _expect(((three > 0) & (kids3 >= 3 * three) | (three == 0) & (kids3 == 0)).all(), "census_household_children: детей в домохозяйствах 3+ меньше трёх на домохозяйство")
     # Размеры домохозяйств — полная сетка: 1–6 и 2–6 (6 — шесть и более) для каждой территории, по порядку.
     for name, sizes in (("census_household_size", range(1, 7)), ("census_household_children", range(2, 7))):
         expected = [(region, size) for region in range(len(codes["census_region"])) for size in sizes]
@@ -1035,6 +1040,8 @@ def validate_sim_index(path: Path, manifest: dict, asset_id: str) -> int:
     map_asset = next((a for a in manifest["assets"] if a["role"] == "map"), None)
     _expect(map_asset is not None, f"{asset_id}: роль sim требует участков карты (role map) — плоскость таблиц общая с картой")
     sim_asset = next(a for a in manifest["assets"] if a["asset_id"] == asset_id)
+    # Индекс — производный файл со смешанными таблицами: в паспорте он estimated с описанием оценки.
+    _expect(sim_asset["data_kind"] == "estimated" and "estimation" in sim_asset, f"{asset_id}: файл роли sim должен быть estimated с методом и неопределённостью")
     _expect(sim_asset["path"] == f"sim/{INDEX_NAME}", f"{asset_id}: путь индекса расчётных таблиц должен быть sim/{INDEX_NAME}")
     map_index_path = path.parent.parent / map_asset["path"]   # path — <пакет>/sim/index.json
     try:

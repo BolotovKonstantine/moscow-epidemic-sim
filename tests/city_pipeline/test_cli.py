@@ -122,6 +122,13 @@ class ConfigTests(unittest.TestCase):
             path.write_text(json.dumps(broken))
             with self.assertRaisesRegex(ManifestError, "headway_minutes.periods"):
                 load_config(path)
+            for edit, message in ((lambda c: c["zones"].update(cell_size_m=10000), "zones.cell_size_m"),   # площадь зоны в дм² — u32
+                                  (lambda c: c["model_assumptions"]["mobility"]["vehicle_capacity"]["train"].update(wagons=17), "wagons")):
+                broken = json.loads(real.read_text(encoding="utf-8"))
+                edit(broken)
+                path.write_text(json.dumps(broken))
+                with self.subTest(message=message), self.assertRaisesRegex(ManifestError, message):
+                    load_config(path)
             broken = json.loads(real.read_text(encoding="utf-8"))
             broken["model_assumptions"]["mobility"]["origin_cell_m"] = 333   # не делит зону 1000 м
             path.write_text(json.dumps(broken))
