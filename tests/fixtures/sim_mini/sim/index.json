@@ -1,0 +1,411 @@
+{
+  "format": "mesim-sim-index",
+  "format_version": 1,
+  "package_id": "synthetic-mini-city",
+  "package_version": "0.7.0",
+  "plane": {
+    "origin_metric": [
+      376000.0,
+      6216000.0
+    ],
+    "metric_crs": "EPSG:32637",
+    "units": "cm",
+    "y_axis": "down"
+  },
+  "zone_cell_m": 1000,
+  "sentinels": {
+    "none": {
+      "u8": 255,
+      "u16": 65535,
+      "u32": 4294967295,
+      "u64": 18446744073709551615
+    },
+    "unknown": {
+      "u8": 254,
+      "u16": 65534,
+      "u32": 4294967294,
+      "u64": 18446744073709551614
+    }
+  },
+  "codes": {
+    "osm_type": [
+      "n",
+      "w",
+      "r"
+    ],
+    "territory": [
+      "moscow",
+      "buffer"
+    ],
+    "building_function": [
+      "unknown",
+      "residential",
+      "work",
+      "retail",
+      "education",
+      "medical",
+      "transport",
+      "control",
+      "other"
+    ],
+    "function_source": [
+      "tag",
+      "tag+poi",
+      "poi",
+      "site",
+      "unknown"
+    ],
+    "share_function": [
+      "residential",
+      "work",
+      "retail",
+      "education",
+      "medical",
+      "transport",
+      "control",
+      "other"
+    ],
+    "road_class": [
+      "service",
+      "pedestrian",
+      "residential",
+      "tertiary",
+      "secondary",
+      "primary",
+      "trunk",
+      "motorway"
+    ],
+    "mode": [
+      "bus",
+      "share_taxi",
+      "trolleybus",
+      "tram",
+      "light_rail",
+      "monorail",
+      "train",
+      "subway"
+    ],
+    "stop_kind": [
+      "platform",
+      "stop_position",
+      "station"
+    ],
+    "facility_kind": [
+      "hospital",
+      "clinic",
+      "doctors",
+      "university",
+      "college",
+      "school",
+      "kindergarten",
+      "police"
+    ],
+    "gateway_kind": [
+      "road",
+      "transit"
+    ],
+    "census_region": [
+      "moscow",
+      "moscow_oblast"
+    ],
+    "period": [
+      "night",
+      "early",
+      "morning_peak",
+      "day",
+      "evening_peak",
+      "evening"
+    ]
+  },
+  "tables": [
+    {
+      "name": "buildings",
+      "path": "buildings.mtab",
+      "schema_version": 1,
+      "rows": 14,
+      "size_bytes": 3008,
+      "sha256": "9f121bbac721500b48eefd36c8a3af3ba17e922e6da66901457589b0245587f5",
+      "data_kind": "estimated",
+      "source_ids": [
+        "build-config-synthetic-mini-city",
+        "synthetic-mini-city"
+      ],
+      "estimation": {
+        "method": "Копия building_attributes и population пакета в компактных кодах; координаты — представительная точка в плоскости карты; road_node_depart/arrive — ближайший узел основной компоненты сильной связности автомобильного графа не дальше building_node_max_m, иначе ближайший узел внутри региона с исходящей (отправление) или входящей (прибытие) дугой машины.",
+        "uncertainty": "Функции, этажность и жители — оценки с неопределённостью building_attributes и population; привязка к узлу — по прямой, входы зданий неизвестны."
+      }
+    },
+    {
+      "name": "zones",
+      "path": "zones.mtab",
+      "schema_version": 1,
+      "rows": 3393,
+      "size_bytes": 68736,
+      "sha256": "53defaac6382dde14e5f662fb518daaf59734a1a25bd4f66aec5c72f51103d4b",
+      "data_kind": "estimated",
+      "source_ids": [
+        "build-config-synthetic-mini-city",
+        "synthetic-mini-city"
+      ],
+      "estimation": {
+        "method": "Копия zones.geojsonl пакета: индексы квадрата, жители, площадь внутри региона, доли Москвы и территории внутри МКАД.",
+        "uncertainty": "Как у zones пакета: зона — расчётное деление, жители — оценка."
+      }
+    },
+    {
+      "name": "road_nodes",
+      "path": "road_nodes.mtab",
+      "schema_version": 1,
+      "rows": 14,
+      "size_bytes": 1344,
+      "sha256": "7c245a583fba4f836bcbd653dd9236d2b7464744f14f2f20e9960009fa2f3eb7",
+      "data_kind": "estimated",
+      "source_ids": [
+        "build-config-synthetic-mini-city",
+        "synthetic-mini-city"
+      ],
+      "estimation": {
+        "method": "Узлы road_nodes пакета; arc_offset — CSR дуг по исходному узлу; car_main — узел основной компоненты сильной связности автомобильного графа (внутренние дуги с car=1 и ненулевой скоростью класса).",
+        "uncertainty": "Компоненты зависят от классов дорог, границы и скоростей конфигурации."
+      }
+    },
+    {
+      "name": "road_arcs",
+      "path": "road_arcs.mtab",
+      "schema_version": 1,
+      "rows": 18,
+      "size_bytes": 1984,
+      "sha256": "0ce43c6514cea639e47935bf484a50866c4cf2eba125c9337a85ba1cb87c729e",
+      "data_kind": "estimated",
+      "source_ids": [
+        "build-config-synthetic-mini-city",
+        "synthetic-mini-city"
+      ],
+      "estimation": {
+        "method": "Каждое ребро roads пакета даёт две дуги (по и против направления файла); car — проезд машиной в этом направлении по oneway, кроме pedestrian; internal — оба конца внутри региона и ребро не пересекает границу (не дорожный вход); by_edge — перестановка дуг в порядке (way_id, way_part, reverse).",
+        "uncertainty": "Разбиение на рёбра и длины меняются вместе с классами дорог и проекцией; теги — наблюдение OSM."
+      }
+    },
+    {
+      "name": "stops",
+      "path": "stops.mtab",
+      "schema_version": 1,
+      "rows": 8,
+      "size_bytes": 1152,
+      "sha256": "3ba5cfd4c6da4508845b920e4a79afcfdc6a6cb91f7e39d0b7edd8c5c604331d",
+      "data_kind": "estimated",
+      "source_ids": [
+        "build-config-synthetic-mini-city",
+        "synthetic-mini-city"
+      ],
+      "estimation": {
+        "method": "Остановки transit_stops пакета после объединения точек и платформ; modes — маска видов транспорта.",
+        "uncertainty": "Эвристика объединения остановок, как у transit_stops."
+      }
+    },
+    {
+      "name": "route_pieces",
+      "path": "route_pieces.mtab",
+      "schema_version": 1,
+      "rows": 9,
+      "size_bytes": 1088,
+      "sha256": "8553aa4ff878f864f235cb2fc50b8db9a758f2f2c17b63cb09383c937a758d3b",
+      "data_kind": "estimated",
+      "source_ids": [
+        "build-config-synthetic-mini-city",
+        "synthetic-mini-city"
+      ],
+      "estimation": {
+        "method": "Маршруты из отрезков transit_segments: где у маршрута нет отрезка (ненайденный член), маршрут делится на непрерывные куски; segment_cm — расстояние по прямой до следующей остановки куска (у последней — 0). Маршруты без кусков — в отчёте качества.",
+        "uncertainty": "Наследует эвристику объединения остановок; отрезки — по прямой."
+      }
+    },
+    {
+      "name": "transfers",
+      "path": "transfers.mtab",
+      "schema_version": 1,
+      "rows": 1,
+      "size_bytes": 768,
+      "sha256": "033ccf17e57cb0bc1c43d7ce1710dcd4875c35241e207c0a699f40399a9e4925",
+      "data_kind": "estimated",
+      "source_ids": [
+        "build-config-synthetic-mini-city",
+        "synthetic-mini-city"
+      ],
+      "estimation": {
+        "method": "Пересадки transit_transfers пакета (stop_area OSM); walk_s пересчитано как у пешей пересадки между близкими остановками: прямая × walk_detour / transfer_walk_speed_mps + transfer_overhead_s, не меньше 1 с (в transit_transfers.csv — без walk_detour).",
+        "uncertainty": "Как у transit_transfers; реальные переходы и коэффициент 1,3 — оценки."
+      }
+    },
+    {
+      "name": "facilities",
+      "path": "facilities.mtab",
+      "schema_version": 1,
+      "rows": 5,
+      "size_bytes": 1280,
+      "sha256": "300930792d2c991a52ede7fd67ca5bdbe3633c2a9a68d43fe0cf76f1d2f9312d",
+      "data_kind": "estimated",
+      "source_ids": [
+        "build-config-synthetic-mini-city",
+        "synthetic-mini-city"
+      ],
+      "estimation": {
+        "method": "Учреждения facilities пакета; buildings — CSR привязанных зданий; вместимость unknown.",
+        "uncertainty": "Объединение и привязка к зданиям — пространственная эвристика, как у facilities."
+      }
+    },
+    {
+      "name": "gateways",
+      "path": "gateways.mtab",
+      "schema_version": 1,
+      "rows": 2,
+      "size_bytes": 1408,
+      "sha256": "1f8315800f0fedea158e2ad2e646a1e50cd3bdeacbd1e57ddc70861c4755aed1",
+      "data_kind": "estimated",
+      "source_ids": [
+        "build-config-synthetic-mini-city",
+        "synthetic-mini-city"
+      ],
+      "estimation": {
+        "method": "Внешние входы gateways пакета; у дорожного входа arc — дуга ребра по направлению файла, inside_node — ближайший к точке пересечения конец ребра внутри региона; у транспортного — остановка и маршрут.",
+        "uncertainty": "Как у gateways пакета."
+      }
+    },
+    {
+      "name": "road_classes",
+      "path": "road_classes.mtab",
+      "schema_version": 1,
+      "rows": 8,
+      "size_bytes": 256,
+      "sha256": "7c3557842e5d858111a1833a25498e9bb6a2abcc4889b6555c02ed5a4809495e",
+      "data_kind": "game_setting",
+      "source_ids": [
+        "build-config-synthetic-mini-city"
+      ]
+    },
+    {
+      "name": "transit_modes",
+      "path": "transit_modes.mtab",
+      "schema_version": 1,
+      "rows": 8,
+      "size_bytes": 512,
+      "sha256": "7de3c5c59a90a7170618dff46612138ef2438b8c01337882b65bf22124238cae",
+      "data_kind": "game_setting",
+      "source_ids": [
+        "build-config-synthetic-mini-city"
+      ]
+    },
+    {
+      "name": "transit_periods",
+      "path": "transit_periods.mtab",
+      "schema_version": 1,
+      "rows": 6,
+      "size_bytes": 384,
+      "sha256": "29c2c69ff2191019e0b1d8945739e1fb140fc8564c61f187d535a4c407dee172",
+      "data_kind": "game_setting",
+      "source_ids": [
+        "build-config-synthetic-mini-city"
+      ]
+    },
+    {
+      "name": "transit_headways",
+      "path": "transit_headways.mtab",
+      "schema_version": 1,
+      "rows": 48,
+      "size_bytes": 640,
+      "sha256": "74796ca371191d8f6471cf15a2cf59e0f5aae0eaceffbd336a07c37b93b88b7c",
+      "data_kind": "game_setting",
+      "source_ids": [
+        "build-config-synthetic-mini-city"
+      ]
+    },
+    {
+      "name": "mobility",
+      "path": "mobility.mtab",
+      "schema_version": 1,
+      "rows": 1,
+      "size_bytes": 1792,
+      "sha256": "67ce9e85435ad516ced5609a96389fd8a73e3dfdd84e574306041e73b50610f2",
+      "data_kind": "game_setting",
+      "source_ids": [
+        "build-config-synthetic-mini-city"
+      ]
+    },
+    {
+      "name": "mobility_estimates",
+      "path": "mobility_estimates.mtab",
+      "schema_version": 1,
+      "rows": 1,
+      "size_bytes": 256,
+      "sha256": "b2918a90954699efde7d9a59504ea1b3866928217a1f6bcc15f7fbef8ce903b8",
+      "data_kind": "estimated",
+      "source_ids": [
+        "build-config-synthetic-mini-city"
+      ],
+      "estimation": {
+        "method": "walk_detour — отношение пешего пути к прямой для подходов к остановкам и пересадок (model_assumptions.mobility).",
+        "uncertainty": "1,2–1,5 в плотной застройке; проверка по графу дорог без тротуаров дала медиану 1,73 (docs/mobility.md)."
+      }
+    },
+    {
+      "name": "census_age",
+      "path": "census_age.mtab",
+      "schema_version": 1,
+      "rows": 36,
+      "size_bytes": 768,
+      "sha256": "2ef2f7c02f7dbe90b0efe27ae224b6debc8d0e0d1a5dbc8611ae37b4b4108591",
+      "data_kind": "game_setting",
+      "source_ids": [
+        "synthetic-mini-city"
+      ]
+    },
+    {
+      "name": "census_household_size",
+      "path": "census_household_size.mtab",
+      "schema_version": 1,
+      "rows": 12,
+      "size_bytes": 640,
+      "sha256": "16b91a6af2780dce7603e46e2102253d6f30e64e282c4519bc09e6ce2f1403e8",
+      "data_kind": "game_setting",
+      "source_ids": [
+        "synthetic-mini-city"
+      ]
+    },
+    {
+      "name": "census_household_children",
+      "path": "census_household_children.mtab",
+      "schema_version": 1,
+      "rows": 10,
+      "size_bytes": 1024,
+      "sha256": "5ce8f81d3b42c57d3f49ac181e0e69ee162c3f1778803c0367684c9b3eb3946c",
+      "data_kind": "game_setting",
+      "source_ids": [
+        "synthetic-mini-city"
+      ]
+    },
+    {
+      "name": "census_labour",
+      "path": "census_labour.mtab",
+      "schema_version": 1,
+      "rows": 16,
+      "size_bytes": 896,
+      "sha256": "e51e02e4dc854510c203f2a7b41a2eb8f9cb0b69554b2c53a6c5b1b56584f752",
+      "data_kind": "game_setting",
+      "source_ids": [
+        "synthetic-mini-city"
+      ]
+    },
+    {
+      "name": "census_study",
+      "path": "census_study.mtab",
+      "schema_version": 1,
+      "rows": 30,
+      "size_bytes": 1472,
+      "sha256": "7c7d56e962043bf52281bf2a0ef0d2204caf6c60dd0ee17f029849d0431b57d9",
+      "data_kind": "game_setting",
+      "source_ids": [
+        "synthetic-mini-city"
+      ]
+    }
+  ]
+}

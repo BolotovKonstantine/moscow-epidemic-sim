@@ -31,6 +31,18 @@ jobs:
       - run: .venv/bin/python -m pip check
       - run: .venv/bin/python -m unittest discover -s tests/city_pipeline -v
       - run: .venv/bin/python -m tools.city_pipeline validate tests/fixtures/city_package/manifest.json
+  core-tests:
+    name: Native core tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Чистое ядро без godot-cpp: переносимый SHA256, GCC, AddressSanitizer и UBSan.
+      - run: cmake -S native -B native/build/core-asan -DCMAKE_BUILD_TYPE=Debug -DMESIM_SANITIZE=ON
+      - run: cmake --build native/build/core-asan -j4
+      - run: ctest --test-dir native/build/core-asan --output-on-failure
   native-smoke:
     name: macOS native smoke
     if: github.event_name == 'workflow_dispatch' && inputs.run_macos
