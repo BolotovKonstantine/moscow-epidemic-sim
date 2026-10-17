@@ -1,11 +1,16 @@
 {
-  "config_version": 1,
+  "config_version": 2,
   "package_id": "moscow-2021",
-  "package_version": "0.6.0",
+  "package_version": "0.7.0",
   "description": "Москва и пояс 30 км от внешнего края МКАД: здания, функции, население по зданиям и зонам, дорожный и транспортный граф. Срез данных около 2020–2021 годов (OSM на 1 января 2021, сетка населения GHS-POP эпохи 2020).",
   "sources": {
     "osm": "osm-geofabrik-cfd-20210101",
-    "population": "ghs-pop-e2020-r2023a-r4c22"
+    "population": "ghs-pop-e2020-r2023a-r4c22",
+    "census_age": "rosstat-vpn2020-tom2-tab2",
+    "census_household_size": "rosstat-vpn2020-tom8-tab2",
+    "census_household_children": "rosstat-vpn2020-tom8-tab4",
+    "census_labour": "rosstat-vpn2020-tom10-tab2",
+    "census_study": "rosstat-vpn2020-tom3-tab5"
   },
   "metric_crs": "EPSG:32637",
   "boundary": {
@@ -85,7 +90,7 @@
     "platform_roles": ["platform", "platform_entry_only", "platform_exit_only", "forward_platform", "backward_platform", "forward:platform", "backward:platform"]
   },
   "model_assumptions": {
-    "note": "Модельные параметры, не наблюдаемые данные. Их можно менять: значения попадают в transit_service.json пакета с видом game_setting.",
+    "note": "Модельные параметры, не наблюдаемые данные. Их можно менять: значения попадают в transit_service.json и расчётные таблицы sim/ пакета с видом game_setting (walk_detour — estimated).",
     "transfer_walk_speed_mps": 1.2,
     "transfer_overhead_s": 60,
     "headway_minutes": {
@@ -100,6 +105,33 @@
         "bus":        {"morning_peak": 8,  "day": 12, "evening_peak": 8,  "evening": 20, "night": 45,   "early": 20},
         "share_taxi": {"morning_peak": 10, "day": 15, "evening_peak": 10, "evening": 25, "night": null, "early": 25}
       }
+    },
+    "mobility": {
+      "note": "Параметры поездок (#35, принято автором 14 октября 2026; перенесены из benchmarks/mobility/params.json в #36). Скорость пешехода — transfer_walk_speed_mps. Калибровка — #43/#44.",
+      "car_speed_kmh": {"service": 12, "pedestrian": 0, "residential": 20, "tertiary": 28, "secondary": 33, "primary": 38, "trunk": 50, "motorway": 70},
+      "transit_speed_kmh": {"bus": 16, "share_taxi": 20, "trolleybus": 15, "tram": 16, "light_rail": 25, "monorail": 20, "train": 45, "subway": 38},
+      "vehicle_capacity": {
+        "bus":        {"capacity": 90,   "wagons": 1},
+        "share_taxi": {"capacity": 15,   "wagons": 1},
+        "trolleybus": {"capacity": 90,   "wagons": 1},
+        "tram":       {"capacity": 180,  "wagons": 1},
+        "light_rail": {"capacity": 250,  "wagons": 2},
+        "monorail":   {"capacity": 200,  "wagons": 4},
+        "train":      {"capacity": 1500, "wagons": 10},
+        "subway":     {"capacity": 1600, "wagons": 8}
+      },
+      "car_park_s": 180,
+      "walk_detour": 1.3,
+      "access_radius_m": 1000,
+      "access_stops_max": 8,
+      "transfer_radius_m": 250,
+      "board_penalty_s": 180,
+      "max_wait_s": 1800,
+      "walk_only_max_s": 2400,
+      "origin_cell_m": 250,
+      "crowding_penalty": 1.0,
+      "crowding_iterations": 3,
+      "building_node_max_m": 500
     }
   },
   "quality": {

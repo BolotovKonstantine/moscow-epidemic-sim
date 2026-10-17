@@ -123,6 +123,36 @@ def validate_manifest(path: Path, *, check_files: bool = True) -> dict:
     if boundary is None or boundary["role"] != "boundary":
         raise ManifestError("region.boundary_asset_id должен ссылаться на файл с ролью boundary")
 
+    # Роль sim (расчётные таблицы, docs/sim-core.md): одна на пакет и только с ID и версией, которые
+    # помещаются в заголовок таблицы; проверяется и без открытия файлов.
+    sim_assets = [asset for asset in manifest["assets"] if asset["role"] == "sim"]
+    if len(sim_assets) > 1:
+        raise ManifestError("В пакете может быть только один файл с ролью sim")
+    if sim_assets:
+        from . import mtab
+        try:
+            mtab.check_package(manifest["package_id"], manifest["package_version"])
+        except mtab.TableError as error:
+            raise ManifestError(f"{sim_assets[0]['asset_id']}: {error}") from error
+        sim = sim_assets[0]
+        if sim["format"] != "mesim-sim-index":
+            raise ManifestError(f"{sim['asset_id']}: формат файла роли sim должен быть mesim-sim-index")
+        if sim["path"] != "sim/index.json":
+            raise ManifestError(f"{sim['asset_id']}: путь индекса расчётных таблиц должен быть sim/index.json")
+        if sim["data_kind"] != "estimated" or "estimation" not in sim:
+            raise ManifestError(f"{sim['asset_id']}: файл роли sim должен быть estimated с методом и неопределённостью")
+        # Зависимости роли sim — и без открытия файлов: плоскость берётся из карты, сверка — по build_config.json и его карточке.
+        roles = [asset["role"] for asset in manifest["assets"]]
+        if roles.count("map") != 1 or roles.count("config") != 1:
+            raise ManifestError(f"{sim['asset_id']}: роль sim требует ровно один файл роли map и один роли config")
+        card_id = f"build-config-{manifest['package_id']}"
+        config = next(asset for asset in manifest["assets"] if asset["role"] == "config")
+        if not any(source["source_id"] == card_id for source in manifest["sources"]) or card_id not in config["source_ids"]:
+            raise ManifestError(f"{sim['asset_id']}: роль sim требует карточку {card_id}, на которую ссылается файл роли config")
+        card = next(source for source in manifest["sources"] if source["source_id"] == card_id)
+        if config["sha256"] != card["sha256"]:
+            raise ManifestError(f"{sim['asset_id']}: SHA256 файла роли config не совпадает с карточкой {card_id}")
+
     known_sources = set(source_ids)
     synthetic_sources = {source["source_id"] for source in manifest["sources"] if source["source_type"] == "synthetic"}
     for asset in manifest["assets"]:
@@ -145,6 +175,9 @@ def validate_manifest(path: Path, *, check_files: bool = True) -> dict:
             raise ManifestError(f"{asset['asset_id']}: ошибка чтения файла: {error}") from error
         if asset["role"] == "map":
             validate_map_index(target, manifest, asset["asset_id"])
+        if asset["role"] == "sim":
+            from .simtables import validate_sim_index
+            validate_sim_index(target, manifest, asset["asset_id"])
     return manifest
 
 

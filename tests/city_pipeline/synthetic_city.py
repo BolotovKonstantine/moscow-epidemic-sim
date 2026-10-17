@@ -78,6 +78,8 @@ def build_city(directory: Path):
     b.way([b.node(lon0 - 0.025, lat0 + 0.03), b.node(lon0 + 0.025, lat0 + 0.03)], {"highway": "tertiary", "bridge": "yes", "layer": "2"})
     # Ребро с обоими концами вне региона (±0.6° ≈ 37 км), середина которого проходит через регион.
     b.way([b.node(lon0 - 0.6, lat0 + 0.25), b.node(lon0 + 0.6, lat0 + 0.25)], {"highway": "primary"})
+    # Выезд из региона: внутренний конец у МКАД, внешний — за поясом (≈ 50 км на восток); настоящий дорожный вход для sim/.
+    b.way([b.node(lon0 + 0.03, lat0 - 0.03), b.node(lon0 + 0.8, lat0 - 0.03)], {"highway": "trunk"})
 
     # Здания.
     b.square(lon0 + 0.002, lat0 + 0.002, 0.0003, {"building": "apartments", "building:levels": "9"})
@@ -184,6 +186,8 @@ def mini_city_config():
     config = json.loads((ROOT / "data" / "manifests" / "moscow-2021.json").read_text(encoding="utf-8"))
     config = copy.deepcopy(config)
     config["package_id"] = "synthetic-mini-city"
+    # Все роли источников — синтетический источник теста (как SOURCE_ROLES): повторный экспорт sim/ берёт роли из конфигурации.
+    config["sources"] = {role: "synthetic-mini-city" for role in config["sources"]}
     config["description"] = "Синтетический мини-город для теста сборки; не карта Москвы."
     config["boundary"]["mkad_area_km2_range"] = [10, 30]
     config["quality"]["manual_sample_size"] = 4
@@ -198,3 +202,34 @@ def synthetic_sources():
         "owner": "Moscow Epidemic Sim", "license": "MIT", "data_date": None, "acquired_at": "2026-10-06T00:00:00Z",
         "coverage": "Синтетический мини-город для теста", "format": "osm-xml+geotiff", "sha256": "0" * 64, "processing_version": "test",
     }]
+
+
+SOURCE_ROLES = {role: "synthetic-mini-city" for role in (
+    "osm", "population", "census_age", "census_household_size", "census_household_children", "census_labour", "census_study")}
+
+
+def synthetic_census():
+    """Итоги «переписи» мини-города в формате census.read_census: малые выдуманные числа, не статистика."""
+    from tools.city_pipeline.census import AGE_BINS, LABOUR_BINS, STUDY_BINS
+
+    def territory(scale):
+        persons = [scale * (10 + i % 5) for i in range(len(AGE_BINS))]
+        by_size = [scale * 40, scale * 30, scale * 20, scale * 8, scale * 2]
+        six = {"households": scale, "persons": scale * 7}
+        study_total = [scale * 20] * len(STUDY_BINS)
+        return {
+            "age": {"bins": AGE_BINS, "persons": persons, "total": sum(persons)},
+            "household_size": {"households": sum(by_size) + six["households"],
+                               "persons": sum((k + 1) * h for k, h in enumerate(by_size)) + six["persons"],
+                               "by_size_1_to_5": by_size, "size_6_plus": six},
+            "household_children": {"sizes": [2, 3, 4, 5, 6], "households": [scale * 30, scale * 20, scale * 8, scale * 2, scale],
+                                   "with_1_child": [scale * 10, scale * 8, scale * 3, scale, 0],
+                                   "with_2_children": [0, scale * 4, scale * 3, scale, 0],
+                                   "with_3_plus_children": [0, 0, scale, 0, scale], "children_in_3_plus": [0, 0, scale * 3, 0, scale * 4]},
+            "labour": {"bins": LABOUR_BINS, "total": [scale * 10] * len(LABOUR_BINS),
+                       "status_indicated": [scale * 9] * len(LABOUR_BINS), "employed": [scale * 6] * len(LABOUR_BINS)},
+            "study": {"bins": STUDY_BINS, "total": study_total, "not_indicated": [scale] * len(STUDY_BINS),
+                      "preschool": [scale * 2] * len(STUDY_BINS), "general": [scale * 5] * len(STUDY_BINS),
+                      "professional": [scale * 3] * len(STUDY_BINS)},
+        }
+    return {"moscow": territory(3), "moscow_oblast": territory(2)}

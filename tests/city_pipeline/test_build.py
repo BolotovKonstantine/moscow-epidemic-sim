@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.city_pipeline.synthetic_city import build_city, synthetic_sources, mini_city_config
+from tests.city_pipeline.synthetic_city import SOURCE_ROLES, build_city, mini_city_config, synthetic_census, synthetic_sources
 from tools.city_pipeline.build import build_package, make_boundary
 from tools.city_pipeline.geo import GeoError, Projector
 from tools.city_pipeline.manifest import validate_manifest
@@ -40,8 +40,8 @@ class BuildTests(unittest.TestCase):
     @classmethod
     def build(cls, out):
         return build_package(
-            cls.config, sources=synthetic_sources(), source_roles={"osm": "synthetic-mini-city", "population": "synthetic-mini-city"},
-            kind="fixture", region_parts=cls.parts, region_osm=cls.osm, raster=cls.raster, out_dir=out,
+            cls.config, sources=synthetic_sources(), source_roles=SOURCE_ROLES,
+            kind="fixture", region_parts=cls.parts, region_osm=cls.osm, raster=cls.raster, census=synthetic_census(), out_dir=out,
             created_at="2026-10-06T00:00:00Z", log=lambda *_: None,
         )
 
@@ -90,7 +90,7 @@ class BuildTests(unittest.TestCase):
     def test_manifest_is_valid_and_lists_all_roles(self):
         manifest = validate_manifest(self.out / "manifest.json")
         roles = {asset["role"] for asset in manifest["assets"]}
-        self.assertEqual(roles, {"boundary", "buildings", "roads", "transport", "facilities", "population", "zones", "config", "quality_report", "map"})
+        self.assertEqual(roles, {"boundary", "buildings", "roads", "transport", "facilities", "population", "zones", "config", "quality_report", "map", "sim"})
         # Снимок конфигурации в пакете совпадает с хешем источника build-config.
         source = next(s for s in manifest["sources"] if s["source_id"].startswith("build-config-"))
         import hashlib
@@ -294,6 +294,11 @@ class BuildTests(unittest.TestCase):
         second = {asset["path"]: asset["sha256"] for asset in manifest["assets"]}
         self.assertEqual(first, second)
         self.assertEqual((self.out / "manifest.json").read_bytes(), (self.root / "second" / "manifest.json").read_bytes())
+        # Расчётные таблицы: хеши лежат в sim/index.json, но побайтное совпадение проверяем и напрямую.
+        tables = sorted(path.name for path in (self.out / "sim").iterdir())
+        self.assertEqual(tables, sorted(path.name for path in (self.root / "second" / "sim").iterdir()))
+        for name in tables:
+            self.assertEqual((self.out / "sim" / name).read_bytes(), (self.root / "second" / "sim" / name).read_bytes(), name)
 
     def test_relation_building_is_not_duplicated_by_its_outer_way(self):
         ids = {row["building_id"] for row in read_csv(self.out / "building_attributes.csv.gz")}
@@ -387,13 +392,18 @@ class BuildTests(unittest.TestCase):
     def test_road_graph_splits_at_shared_nodes_and_reports_components(self):
         roads = self.report["roads"]
         # Крест — 4 ребра, изолированная улица — 1, длинная улица — 1, кольцо МКАД — 1 петля,
-        # сквозное ребро с концами вне региона — 1.
-        self.assertEqual(roads["edges"], 8)
-        self.assertEqual(roads["nodes"], 12)
-        self.assertEqual(roads["weak_components"], 5)
-        self.assertEqual(roads["gateway_crossings"], 2)
+        # сквозное ребро с концами вне региона — 1, выезд из региона — 1.
+        self.assertEqual(roads["edges"], 9)
+        self.assertEqual(roads["nodes"], 14)
+        self.assertEqual(roads["weak_components"], 6)
+        self.assertEqual(roads["gateway_crossings"], 3)
         crossings = [row for row in read_csv(self.out / "gateways.csv.gz") if row["kind"] == "road"]
-        self.assertTrue(all(row["inside_ref"] == "" and row["outside_ref"].count(";") == 1 and row["zone_id"] for row in crossings))
+        self.assertTrue(all(row["zone_id"] for row in crossings))
+        chords = [row for row in crossings if row["inside_ref"] == ""]   # сквозное ребро: две точки, оба конца снаружи
+        self.assertEqual(len(chords), 2)
+        self.assertTrue(all(row["outside_ref"].count(";") == 1 for row in chords))
+        exits = [row for row in crossings if row["inside_ref"]]   # выезд: один конец внутри, другой снаружи
+        self.assertEqual([(row["inside_ref"].count(";"), row["outside_ref"].count(";")) for row in exits], [(0, 0)])
         self.assertNotIn("footway", roads["length_km_by_class"])
         with gzip.open(self.out / "roads.geojsonl.gz", "rt", encoding="utf-8") as stream:
             self.assertNotIn("gateway", json.loads(stream.readline())["properties"])   # вычисленный флаг не в наблюдении

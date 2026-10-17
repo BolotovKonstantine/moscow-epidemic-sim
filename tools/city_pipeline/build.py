@@ -13,6 +13,7 @@ import shapely
 
 from . import BUILDER_NAME, BUILDER_VERSION
 from .buildings import FUNCTIONS, classify, poi_records, site_records
+from .census import ROLES as CENSUS_ROLES
 from .facilities import collect as collect_facilities
 from .geo import Projector, build_region, round_wgs84
 from .manifest import ManifestError, read_json, sha256_file, validate_manifest
@@ -21,6 +22,7 @@ from .osm import read_boundary_sources, read_osm
 from .population import allocate, cell_points, read_cells
 from .report import build_report, write_markdown
 from .roads import build_graph, largest_component
+from .simtables import export_sim_tables
 from .transit import build_network, components as transit_components
 from .writers import fmt, write_csv, write_geojson, write_geojsonl, write_json
 from .zones import area_share, build_zones
@@ -252,8 +254,9 @@ def replace_dir(new: Path, final: Path):
 
 # ---------------------------------------------------------------- основная сборка
 
-def build_package(config, *, sources, source_roles, kind, region_parts, region_osm: Path, raster: Path, out_dir: Path, created_at: str, log=print, config_path: Path | None = None, config_bytes: bytes | None = None):
-    """Собрать пакет. sources — карточки для паспорта; source_roles — {"osm": id, "population": id}."""
+def build_package(config, *, sources, source_roles, kind, region_parts, region_osm: Path, raster: Path, census: dict, out_dir: Path, created_at: str, log=print, config_path: Path | None = None, config_bytes: bytes | None = None):
+    """Собрать пакет. sources — карточки для паспорта; source_roles — {"osm": id, "population": id, "census_*": id};
+    census — итоги переписи по территориям (census.read_census)."""
     # Заранее: прежний каталог пуст или это тот же пакет (паспорт читается и совпадает по ID и версии).
     if out_dir.exists() and any(out_dir.iterdir()):
         try:
@@ -269,7 +272,7 @@ def build_package(config, *, sources, source_roles, kind, region_parts, region_o
     final_dir.parent.mkdir(parents=True, exist_ok=True)
     out_dir = Path(tempfile.mkdtemp(prefix=f"{final_dir.name}.", suffix=".partial", dir=final_dir.parent))
     try:
-        return _build_into(config, sources, source_roles, kind, region_parts, region_osm, raster, out_dir, final_dir, created_at, log, config_path, config_bytes)
+        return _build_into(config, sources, source_roles, kind, region_parts, region_osm, raster, census, out_dir, final_dir, created_at, log, config_path, config_bytes)
     except BaseException:
         shutil.rmtree(out_dir, ignore_errors=True)
         raise
@@ -335,7 +338,7 @@ def config_source(config, created_at, config_path: Path | None = None, config_by
     }
 
 
-def _build_into(config, sources, source_roles, kind, region_parts, region_osm, raster, out_dir, final_dir, created_at, log, config_path, config_bytes):
+def _build_into(config, sources, source_roles, kind, region_parts, region_osm, raster, census, out_dir, final_dir, created_at, log, config_path, config_bytes):
     projector = Projector(config["metric_crs"])
     # Модельные параметры ссылаются на конфигурацию, а не на OSM.
     model_source = config_source(config, created_at, config_path, config_bytes)
@@ -606,6 +609,17 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
                        "и жители в карточке — оценки с той же неопределённостью, что building_attributes и population.",
     })
 
+    log("Расчётные таблицы…")
+    # Как и карта, читают уже записанные файлы пакета (и индекс карты — ради общей плоскости).
+    sim_summary = export_sim_tables(out_dir, config, census, kind=kind, source_roles=source_roles, log=log)
+    add("sim-index", "sim", "sim/index.json", "mesim-sim-index", "estimated", ["osm", "population", "config", *CENSUS_ROLES], {
+        "method": "Производные расчётные таблицы ядра (docs/sim-core.md, docs/city-package.md#расчётные-таблицы): файлы пакета в компактных "
+                  "кодах и индексах, дорожный граф CSR, куски маршрутов, привязка зданий к узлам, модельные параметры конфигурации и итоги "
+                  "переписи. Вид данных, метод и источники каждой таблицы — в индексе, хеши таблиц — тоже в нём.",
+        "uncertainty": "Как у исходных файлов пакета: оценки зданий, населения, графов и транспорта сохраняют свою неопределённость; "
+                       "модельные параметры — игровые настройки; перепись — наблюдение Росстата для Москвы и Московской области.",
+    })
+
     log("Отчёт качества…")
     # ---------------------------------------------------------------- отчёт качества
     weak_label, weak_size = largest_component(graph.weak_labels)
@@ -630,17 +644,17 @@ def _build_into(config, sources, source_roles, kind, region_parts, region_osm, r
         "zones": zones, "zone_pop": zone_pop, "zone_buildings": zone_buildings, "links": links,
         "building_reach": (b_dist, reach(b_edge)),
         "facility_reach": (f_dist, reach(f_edge)),
-        "building_zone": building_zone, "gateways": gateway_rows, "map": map_summary,
+        "building_zone": building_zone, "gateways": gateway_rows, "map": map_summary, "sim": sim_summary,
     }
     report = build_report(context)
     write_json(out_dir / "quality_report.json", report)
     write_markdown(out_dir / "quality_report.md", report)
     report_estimation = {
-        "method": "Сводка проверок и показателей пакета: счётчики по наблюдаемым данным OSM и сетки, показатели оценённых файлов (функции, население, остановки, учреждения) и пороги/выборка из конфигурации сборки (quality, model_assumptions).",
+        "method": "Сводка проверок и показателей пакета: счётчики по наблюдаемым данным OSM и сетки, показатели оценённых файлов (функции, население, остановки, учреждения), карточки источников (в том числе таблиц переписи Росстата), сводка расчётных таблиц sim/ и пороги/выборка из конфигурации сборки (quality, model_assumptions).",
         "uncertainty": "Значения меняются вместе с конфигурацией (пороги, seed выборки, граница, правила классификации); неопределённость оценённых показателей — как у соответствующих файлов пакета.",
     }
-    add("quality-report", "quality_report", "quality_report.json", "json", "estimated", ["osm", "population", "config"], report_estimation)
-    add("quality-report-md", "quality_report", "quality_report.md", "markdown", "estimated", ["osm", "population", "config"], report_estimation)
+    add("quality-report", "quality_report", "quality_report.json", "json", "estimated", ["osm", "population", "config", *CENSUS_ROLES], report_estimation)
+    add("quality-report-md", "quality_report", "quality_report.md", "markdown", "estimated", ["osm", "population", "config", *CENSUS_ROLES], report_estimation)
 
     for asset in assets:
         path = out_dir / asset["path"]

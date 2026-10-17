@@ -73,7 +73,7 @@ class ConfigTests(unittest.TestCase):
     def test_unknown_config_version_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
-            for version in (2, None, "1", True):
+            for version in (3, None, "1", True):
                 with self.subTest(version=version):
                     path.write_text(json.dumps({"config_version": version}))
                     with self.assertRaises(ManifestError):
@@ -84,6 +84,19 @@ class ConfigTests(unittest.TestCase):
                 load_config(path)
             real = Path(__file__).resolve().parents[2] / "data" / "manifests" / "moscow-2021.json"
             self.assertEqual(load_config(real)["package_id"], "moscow-2021")
+            # Версия 1 (пакеты до 0.7.0) по-прежнему читается — map-tile загружает build_config.json старых пакетов;
+            # build требует версию 2.
+            old_config = json.loads(real.read_text(encoding="utf-8"))
+            old_config["config_version"] = 1
+            old_config["sources"] = {key: old_config["sources"][key] for key in ("osm", "population")}
+            del old_config["model_assumptions"]["mobility"]
+            path.write_text(json.dumps(old_config))
+            self.assertEqual(load_config(path)["config_version"], 1)
+            old_config["model_assumptions"]["headway_minutes"]["by_mode"]["bus"]["morning_peak"] = 0.001   # v1 не пишет sim/: допустимо
+            path.write_text(json.dumps(old_config))
+            self.assertEqual(load_config(path)["config_version"], 1)
+            with self.assertRaisesRegex(ManifestError, "ожидается 2"):
+                load_config(path, versions=(2,))
             from tests.city_pipeline.synthetic_city import mini_city_config
             path.write_text(json.dumps(mini_city_config()))
             self.assertEqual(load_config(path)["package_id"], "synthetic-mini-city")
@@ -97,6 +110,51 @@ class ConfigTests(unittest.TestCase):
             path.write_text(json.dumps(broken))
             with self.assertRaisesRegex(ManifestError, "quality.sample_seed"):
                 load_config(path)
+            # Заголовок расчётной таблицы строже схемы: такой ID отклоняется до тяжёлой сборки, а не на экспорте sim/.
+            broken = json.loads(real.read_text(encoding="utf-8"))
+            broken["zones"]["cell_size_m"] = 1000.5   # в индекс sim/ пишется целым — дробное отклоняется сразу
+            path.write_text(json.dumps(broken))
+            with self.assertRaisesRegex(ManifestError, "zones.cell_size_m"):
+                load_config(path)
+            broken = json.loads(real.read_text(encoding="utf-8"))
+            broken["model_assumptions"]["headway_minutes"]["by_mode"]["bus"]["morning_peak"] = 0.001   # 0,06 с → 0 с в sim/
+            path.write_text(json.dumps(broken))
+            with self.assertRaisesRegex(ManifestError, "bus.morning_peak: 0.001 мин меньше секунды"):
+                load_config(path)
+            for section, key, value in (("transit_speed_kmh", "bus", 0.000001), ("car_speed_kmh", "residential", 0.000001)):
+                broken = json.loads(real.read_text(encoding="utf-8"))
+                broken["model_assumptions"]["mobility"][section][key] = value   # округлилось бы до 0 мм/с
+                path.write_text(json.dumps(broken))
+                with self.subTest(section=section), self.assertRaisesRegex(ManifestError, f"mobility.{section}.{key}"):
+                    load_config(path)
+            broken = json.loads(real.read_text(encoding="utf-8"))
+            headways = broken["model_assumptions"]["headway_minutes"]
+            headways["periods"][""] = headways["periods"].pop("early")   # пустое имя периода не попадёт в коды sim/
+            for by_period in headways["by_mode"].values():
+                by_period[""] = by_period.pop("early")
+            path.write_text(json.dumps(broken))
+            with self.assertRaisesRegex(ManifestError, "headway_minutes.periods"):
+                load_config(path)
+            for edit, message in ((lambda c: c["zones"].update(cell_size_m=10000), "zones.cell_size_m"),   # площадь зоны в дм² — u32
+                                  (lambda c: c["transit"]["route_modes"].append("ferry"), "transit.route_modes"),   # нет кода в sim/
+                                  (lambda c: c["model_assumptions"]["headway_minutes"]["by_mode"].update(buss=c["model_assumptions"]["headway_minutes"]["by_mode"]["bus"]), "by_mode"),
+                                  (lambda c: c["model_assumptions"]["mobility"]["vehicle_capacity"]["train"].update(wagons=17), "wagons")):
+                broken = json.loads(real.read_text(encoding="utf-8"))
+                edit(broken)
+                path.write_text(json.dumps(broken))
+                with self.subTest(message=message), self.assertRaisesRegex(ManifestError, message):
+                    load_config(path)
+            broken = json.loads(real.read_text(encoding="utf-8"))
+            broken["model_assumptions"]["mobility"]["origin_cell_m"] = 333   # не делит зону 1000 м
+            path.write_text(json.dumps(broken))
+            with self.assertRaisesRegex(ManifestError, "origin_cell_m 333 не делит зону"):
+                load_config(path)
+            for key, value, message in (("package_id", "custom_city", "package_id"), ("package_version", "1.0.0-very-long-version", "package_version")):
+                broken = json.loads(real.read_text(encoding="utf-8"))
+                broken[key] = value
+                path.write_text(json.dumps(broken))
+                with self.subTest(key=key), self.assertRaisesRegex(ManifestError, message):
+                    load_config(path)
 
 
 
@@ -315,3 +373,24 @@ class ConfigSnapshotTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CensusTests(unittest.TestCase):
+    def test_infinite_number_is_a_data_error(self):
+        from tools.city_pipeline.census import number
+        for text in ("1e400", "-5", "2.5"):
+            with self.subTest(text=text), self.assertRaises(ManifestError):
+                number(text)
+
+    def test_broken_sheet_structure_is_a_data_error(self):
+        import zipfile
+        from tools.city_pipeline.census import ROLES, read_census
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "broken.xlsx"
+            ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("xl/sharedStrings.xml", f'<sst xmlns="{ns}"></sst>')
+                # Ссылка на строку 5 общего списка, которого нет: IndexError → ManifestError.
+                archive.writestr("xl/worksheets/sheet1.xml", f'<worksheet xmlns="{ns}"><sheetData><row><c r="A1" t="s"><v>5</v></c></row></sheetData></worksheet>')
+            with self.assertRaisesRegex(ManifestError, "некорректная структура листа"):
+                read_census({role: path for role in ROLES})
