@@ -2,9 +2,11 @@
 
 Пакет собирается тем же `build_package`, что и настоящий, из синтетического мини-города
 (synthetic_city.py), поэтому проверяет совместимость Python-экспорта `sim/` и C++-чтения. Это не
-карта Москвы. В tests/fixtures/sim_mini/ лежат только `manifest.json` пакета и каталог `sim/`:
-загрузчику ядра нужны паспорт (пакет, версия, хеш индекса) и таблицы, остальные файлы пакета
-в фикстуру не входят, поэтому полная проверка паспорта к ней не применяется.
+карта Москвы. В tests/fixtures/sim_mini/ лежат каталог `sim/` и урезанный `manifest.json`: только
+поля паспорта, которые читает загрузчик ядра (пакет, версия, вид и файл роли `sim`). Остальные
+файлы и описания пакета в фикстуру не входят: участки карты, например, зависят от геометрических
+библиотек платформы (размер индекса карты на Linux и macOS различается), а таблицы `sim/` — нет.
+Полная проверка паспорта к фикстуре не применяется.
 Тест test_sim_fixture проверяет, что закоммиченные файлы совпадают с пересборкой.
 
 Пересобрать: .venv/bin/python -m tests.city_pipeline.sim_fixture
@@ -18,6 +20,7 @@ from pathlib import Path
 from tests.city_pipeline.synthetic_city import SOURCE_ROLES, build_city, mini_city_config, synthetic_census, synthetic_sources
 from tools.city_pipeline.build import build_package, make_boundary
 from tools.city_pipeline.geo import Projector
+from tools.city_pipeline.writers import write_json
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "sim_mini"
 CREATED_AT = "2026-10-06T00:00:00Z"
@@ -31,11 +34,12 @@ def build_fixture(out: Path):
         config = mini_city_config()
         parts = make_boundary(config, osm, Projector(config["metric_crs"]))
         package = root / "package"
-        build_package(config, sources=synthetic_sources(), source_roles=SOURCE_ROLES, kind="fixture", region_parts=parts,
-                      region_osm=osm, raster=raster, census=synthetic_census(), out_dir=package, created_at=CREATED_AT,
-                      log=lambda *_: None)
+        manifest, _ = build_package(config, sources=synthetic_sources(), source_roles=SOURCE_ROLES, kind="fixture", region_parts=parts,
+                                    region_osm=osm, raster=raster, census=synthetic_census(), out_dir=package, created_at=CREATED_AT,
+                                    log=lambda *_: None)
         out.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(package / "manifest.json", out / "manifest.json")
+        sim_asset = next(asset for asset in manifest["assets"] if asset["role"] == "sim")
+        write_json(out / "manifest.json", {key: manifest[key] for key in ("package_id", "package_version", "kind")} | {"assets": [sim_asset]})
         shutil.copytree(package / "sim", out / "sim")
 
 
