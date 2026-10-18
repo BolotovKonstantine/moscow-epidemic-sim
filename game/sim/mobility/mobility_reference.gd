@@ -56,6 +56,7 @@ var heap := MinHeap.new()
 var intervals: Array = []     # [сутки, номер рейса, маршрут, вагон, житель, позиция посадки, выхода, время посадки, выхода]
 var log: Array = []           # [время, житель, событие, подробности...]
 var violations: Array = []    # нарушения инвариантов, найденные по ходу
+var initializing := true      # при регистрации поездки в момент 0 идут через очередь, а не сразу
 
 
 func _init(scene_value: Dictionary, reverse_init := false) -> void:
@@ -94,6 +95,7 @@ func _init(scene_value: Dictionary, reverse_init := false) -> void:
 		_settle(id, 0)
 	for r in run_order:
 		_push_run(r, runs[r].depart)
+	initializing = false
 
 
 # ---------- Подготовка ----------
@@ -180,7 +182,7 @@ func _push_run(r: int, t: int) -> void:
 
 
 func _schedule(id: int, t: int) -> void:
-	if t <= now and t != NONE:
+	if t <= now and t != NONE and not initializing:
 		violations.append("житель %d: событие %d не позже текущего %d" % [id, t, now])
 	next_event[id] = t
 	if t != NONE:
@@ -221,7 +223,7 @@ func _settle(id: int, t: int) -> void:
 		if trip[0] < t or from_home != (loc[id] == HOME):
 			trip_cursor[id] += 1
 			continue
-		if trip[0] == t:
+		if trip[0] == t and not initializing:
 			trip_cursor[id] += 1
 			_begin_trip(id, trip[1])
 		else:

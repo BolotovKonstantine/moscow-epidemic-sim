@@ -254,7 +254,8 @@ func route_length(r: int) -> int:
 
 
 # Узлы дерева: A(s) = s — на остановке, можно сесть; B(s) = S + s — только что вышел;
-# R(k) = 2S + k — в рейсе на позиции k. Стоимость выбора = время + штраф посадки.
+# R(k) = 2S + k — в рейсе, приехал на позицию k. Посадка ведёт сразу на следующую позицию,
+# поэтому из R можно выйти только после хотя бы одного перегона. Стоимость = время + штраф посадки.
 func _tree(seeds: Array, q: int) -> Dictionary:
 	var stop_count: int = scene.stops.size()
 	var cost := {}
@@ -285,7 +286,8 @@ func _tree(seeds: Array, q: int) -> Dictionary:
 				var h := headway(scene.routes[r].mode, q)
 				if h == 0 or pos_index[k] + 1 >= route_length(r):
 					continue
-				relax.call(2 * stop_count + k, c + h / 2 + params.board_penalty_s, t + h / 2, u)
+				var ride: int = h / 2 + pos_ride_s[k]
+				relax.call(2 * stop_count + k + 1, c + ride + params.board_penalty_s, t + ride, u)
 		elif u < 2 * stop_count:  # B(s): пересадка на той же остановке или пешком
 			var s := u - stop_count
 			relax.call(s, c, t, u)
@@ -351,8 +353,8 @@ func _path_from_tree(tree: Dictionary, origin: Array, dest: Array) -> Dictionary
 	var core_s: int = tree.time[stop_count + best_stop] - tree.time[start_stop]
 	var i := 1
 	while i < nodes.size():
-		# nodes[i] — R(k) посадки; дальше R до выхода B, затем A пересадки или конец.
-		var board_k: int = nodes[i] - 2 * stop_count
+		# nodes[i] — R(k + 1) после посадки на позиции k; дальше R до выхода B, затем A пересадки или конец.
+		var board_k: int = nodes[i] - 2 * stop_count - 1
 		var j := i
 		while nodes[j + 1] >= 2 * stop_count:
 			j += 1

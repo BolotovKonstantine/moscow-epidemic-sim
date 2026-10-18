@@ -28,6 +28,7 @@ func _initialize() -> void:
 	_test_philox()
 	_test_heap()
 	_test_scene_rejects()
+	_test_tiny_scenes()
 	var root := ProjectSettings.globalize_path("res://").path_join(SCENARIOS).simplify_path()
 	for name in SCENES:
 		var dir := root.path_join(name)
@@ -137,6 +138,41 @@ func _test_scene_rejects() -> void:
 	_rejects(func(d): d.residents[0].leave_at_s = 1800, "совпадают")
 	_rejects(func(d): d.params.walk_speed_mps = 0, "walk_speed_mps")
 	check(SceneLoader.parse([]).get("error", "") != "", "не объект — ошибка, а не падение")
+
+
+# Маленькие сцены на основе _minimal: транспорт без пешего варианта (пределы пешком — 0).
+func _tiny(mutate: Callable) -> Dictionary:
+	var d := _minimal()
+	d.params.walk_only_max_s = 0
+	d.params.walk_fallback_max_s = 0
+	mutate.call(d)
+	var loaded := SceneLoader.parse(JSON.parse_string(JSON.stringify(d)))
+	check(loaded.has("scene"), "маленькая сцена: %s" % loaded.get("error", ""))
+	return loaded.get("scene", {})
+
+
+func _test_tiny_scenes() -> void:
+	# Выезд в момент 0: двое с нулевым подходом приходят на остановку одновременно, место одно.
+	# Порядок посадки — по ID, а не по порядку регистрации. Путь: 0 + 300 + 10 + 0 = 310 с.
+	var zero := _tiny(func(d):
+		d.checkpoints_s = [0, 3600]
+		d.residents[0].arrive_by_s = 310
+		d.residents.append(d.residents[0].duplicate(true)))
+	var out := Reference.run_scene(zero)
+	check(out.plans[0].trips[0].time_s == 310, "выезд в 0: путь 310 с, %s" % [out.plans[0].trips[0]])
+	check(out.log.slice(0, 4) == [[0, 0, "depart", "transit", 0], [0, 0, "queue", 0, 0],
+			[0, 1, "depart", "transit", 0], [0, 1, "queue", 0, 0]], "выезд в 0 в порядке ID: %s" % [out.log.slice(0, 4)])
+	check(_canonical(Reference.run_scene(zero, [], true)) == _canonical(out), "выезд в 0 не зависит от порядка регистрации")
+	check(out.violations.is_empty(), "выезд в 0: нарушения %s" % [out.violations])
+	# Дом и место у одной промежуточной остановки: «сесть и сразу выйти» на той же позиции — не путь.
+	var same := _tiny(func(d):
+		d.stops = [{"x": 0, "y": 0, "outside": false}, {"x": 1000, "y": 0, "outside": false},
+				{"x": 2000, "y": 0, "outside": false}]
+		d.routes = [{"mode": "bus", "stops": [0, 1, 2]}]
+		d.buildings = [[1000, 50], [1000, -50]])
+	out = Reference.run_scene(same)
+	check(out.plans[0].no_path and out.plans[0].trips[0].mode == "none", "посадка без перегона — не путь: %s" % [out.plans[0]])
+	check(out.violations.is_empty() and out.intervals.is_empty(), "без пути никто не едет")
 
 
 # ---------- Инварианты обеих сцен ----------
