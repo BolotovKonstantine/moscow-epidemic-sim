@@ -117,10 +117,14 @@ func _plan_resident(id: int) -> void:
 		return
 	# Расписание: выезд к arrive_by_s по ожидаемому времени пути, обратно в leave_at_s
 	# (на следующие сутки, если leave_at_s раньше arrive_by_s). Выезд до начала сценария пропускается.
+	# Дни перебираются, пока выезд или возвращение суток прибытия раньше конца сценария: выезд к
+	# прибытию после полуночи бывает в предыдущих сутках, в том числе в последних сутках сценария.
+	var out_offset: int = r.arrive_by_s - out.time_s
+	var back_offset: int = r.leave_at_s + (DAY if r.leave_at_s < r.arrive_by_s else 0)
 	var day := 0
-	while day * DAY < scene.duration_s:
-		var t_out: int = day * DAY + r.arrive_by_s - out.time_s
-		var t_back: int = day * DAY + r.leave_at_s + (DAY if r.leave_at_s < r.arrive_by_s else 0)
+	while day * DAY + mini(out_offset, back_offset) < scene.duration_s:
+		var t_out: int = day * DAY + out_offset
+		var t_back: int = day * DAY + back_offset
 		if t_out >= 0 and t_out < scene.duration_s:
 			trips[id].append([t_out, OUTBOUND])
 		if t_back < scene.duration_s:

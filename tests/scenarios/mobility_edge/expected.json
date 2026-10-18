@@ -12,7 +12,7 @@
     {"counts":{"car":0,"home":13,"outside":0,"place":0,"return":0,"ride":0,"wait":1,"walk":0},"queues":[[1,0,[8]]],"residents":[["home",0],["home",0],["home",0],["home",0],["home",0],["home",0],["home",0],["home",0],["wait",1,0,87820],["home",5],["home",0],["home",0],["home",0],["home",8]],"runs":[],"t":86400},
     {"counts":{"car":0,"home":13,"outside":0,"place":0,"return":0,"ride":0,"wait":1,"walk":0},"queues":[[1,0,[8]]],"residents":[["home",0],["home",0],["home",0],["home",0],["home",0],["home",0],["home",0],["home",0],["wait",1,0,87820],["home",5],["home",0],["home",0],["home",0],["home",8]],"runs":[],"t":87000},
     {"counts":{"car":2,"home":7,"outside":0,"place":1,"return":0,"ride":0,"wait":4,"walk":0},"queues":[[0,0,[1,2,3]],[2,0,[9]]],"residents":[["place",1],["wait",0,0,119900],["wait",0,0,119900],["wait",0,0,119900],["car",118800],["home",0],["home",0],["home",0],["home",4],["wait",2,0,120100],["car",118800],["home",0],["home",0],["home",8]],"runs":[],"t":118800},
-    {"counts":{"car":0,"home":14,"outside":0,"place":0,"return":0,"ride":0,"wait":0,"walk":0},"queues":[],"residents":[["home",0],["home",0],["home",0],["home",0],["home",0],["home",0],["home",0],["home",0],["home",4],["home",5],["home",0],["home",0],["home",0],["home",8]],"runs":[],"t":172800}
+    {"counts":{"car":0,"home":13,"outside":0,"place":0,"return":0,"ride":0,"wait":1,"walk":0},"queues":[[1,0,[8]]],"residents":[["home",0],["home",0],["home",0],["home",0],["home",0],["home",0],["home",0],["home",0],["wait",1,0,174220],["home",5],["home",0],["home",0],["home",0],["home",8]],"runs":[],"t":172800}
   ],
   "intervals": [
     [0,274,0,0,0,0,3,32260,32560],
@@ -220,7 +220,9 @@
     [163100,12,"depart","transit",0],
     [163200,12,"queue",6,0],
     [165000,12,"cancel",6,0],
-    [165100,12,"returned"]
+    [165100,12,"returned"],
+    [172320,8,"depart","transit",0],
+    [172420,8,"queue",1,0]
   ],
   "plans": [
     {"no_path":false,"trips":[{"access_s":100,"egress_s":100,"end_stop":3,"mode":"transit","rides":[{"alight":3,"board":0,"route":0,"walk_after_s":100}],"start_stop":0,"time_s":800,"tree":"cell"},{"access_s":100,"egress_s":100,"end_stop":0,"mode":"transit","rides":[{"alight":3,"board":0,"route":3,"walk_after_s":100}],"start_stop":3,"time_s":800,"tree":"cell"}]},
