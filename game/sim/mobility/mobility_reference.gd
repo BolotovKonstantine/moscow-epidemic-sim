@@ -449,14 +449,17 @@ static func run_scene(scene_value: Dictionary, chunks := [], reverse_init := fal
 	var sim = load("res://sim/mobility/mobility_reference.gd").new(scene_value, reverse_init)
 	var checkpoints := []
 	var chunk_i := 0
-	for t in scene_value.checkpoints_s:
+	# Снимки на контрольных временах, затем расчёт до конца сценария: журнал и интервалы
+	# не зависят от того, где стоит последний снимок.
+	for t in scene_value.checkpoints_s + [scene_value.duration_s]:
 		while sim.now < t:
 			var step: int = t - sim.now
 			if not chunks.is_empty():
 				step = mini(step, chunks[chunk_i % chunks.size()])
 				chunk_i += 1
 			sim.advance_to(sim.now + step)
-		checkpoints.append(sim.snapshot())
+		if checkpoints.size() < scene_value.checkpoints_s.size():
+			checkpoints.append(sim.snapshot())
 	var ordered: Array = sim.intervals.duplicate()
 	ordered.sort()
 	return {

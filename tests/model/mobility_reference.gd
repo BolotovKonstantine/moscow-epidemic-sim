@@ -164,6 +164,12 @@ func _test_tiny_scenes() -> void:
 			[0, 1, "depart", "transit", 0], [0, 1, "queue", 0, 0]], "выезд в 0 в порядке ID: %s" % [out.log.slice(0, 4)])
 	check(_canonical(Reference.run_scene(zero, [], true)) == _canonical(out), "выезд в 0 не зависит от порядка регистрации")
 	check(out.violations.is_empty(), "выезд в 0: нарушения %s" % [out.violations])
+	# Прогон идёт до duration_s, а не до последнего снимка: без снимка в 3600 журнал тот же.
+	var early: Dictionary = zero.duplicate(true)
+	early.checkpoints_s = [0]
+	var early_out := Reference.run_scene(early)
+	check(_canonical(early_out.log) == _canonical(out.log) and _canonical(early_out.intervals) == _canonical(out.intervals),
+			"журнал и интервалы не зависят от последнего снимка")
 	# Одновременный приход в очередь в обратном порядке ID (так бывает при пересадке без пешего
 	# участка внутри события рейса) — очередь всё равно по (время, ID); более ранний приход — первым.
 	var sim = Reference.new(zero)
@@ -260,11 +266,11 @@ static func _ints(v: Variant) -> Variant:
 	return v
 
 
-func _plain(out: Dictionary) -> Dictionary:
+func _plain(out: Variant) -> Variant:
 	return _ints(JSON.parse_string(JSON.stringify(out)))
 
 
-func _canonical(out: Dictionary) -> String:
+func _canonical(out: Variant) -> String:
 	return JSON.stringify(_plain(out), "", true)
 
 
@@ -277,7 +283,7 @@ func _test_order_independence(name: String, scene: Dictionary, out: Dictionary) 
 
 # expected.json: одна запись массива — одна строка, чтобы изменения правил читались в diff.
 func _format(out: Dictionary) -> String:
-	var data := _plain(out)
+	var data: Dictionary = _plain(out)
 	var keys := data.keys()
 	keys.sort()
 	var parts := []
