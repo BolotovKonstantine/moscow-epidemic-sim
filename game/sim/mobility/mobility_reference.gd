@@ -289,7 +289,13 @@ func _arrive(id: int) -> void:
 func _queue(id: int) -> void:
 	var ride: Dictionary = _plan(id).rides[ride_ix[id]]
 	var k: int = planner.route_first[ride.route] + ride.board
-	queues[k].append(id)
+	# Очередь — в порядке (время прихода, ID): пересаживающийся без пешего участка приходит
+	# в событии рейса, то есть позже по обработке, чем житель с большим ID в тот же момент.
+	var queue: Array = queues[k]
+	var i := queue.size()
+	while i > 0 and wait_since[queue[i - 1]] == now and queue[i - 1] > id:
+		i -= 1
+	queue.insert(i, id)
 	wait_pos[id] = k
 	wait_since[id] = now
 	_set_loc(id, WAIT)

@@ -164,6 +164,20 @@ func _test_tiny_scenes() -> void:
 			[0, 1, "depart", "transit", 0], [0, 1, "queue", 0, 0]], "выезд в 0 в порядке ID: %s" % [out.log.slice(0, 4)])
 	check(_canonical(Reference.run_scene(zero, [], true)) == _canonical(out), "выезд в 0 не зависит от порядка регистрации")
 	check(out.violations.is_empty(), "выезд в 0: нарушения %s" % [out.violations])
+	# Одновременный приход в очередь в обратном порядке ID (так бывает при пересадке без пешего
+	# участка внутри события рейса) — очередь всё равно по (время, ID); более ранний приход — первым.
+	var sim = Reference.new(zero)
+	var k: int = sim.planner.route_first[0]
+	sim.now = 100
+	sim._queue(1)
+	sim._queue(0)
+	check(sim.queues[k] == [0, 1], "одновременный приход: очередь по ID, %s" % [sim.queues[k]])
+	var later = Reference.new(zero)
+	later.now = 50
+	later._queue(1)
+	later.now = 100
+	later._queue(0)
+	check(later.queues[k] == [1, 0], "более ранний приход стоит первым, %s" % [later.queues[k]])
 	# Дом и место у одной промежуточной остановки: «сесть и сразу выйти» на той же позиции — не путь.
 	var same := _tiny(func(d):
 		d.stops = [{"x": 0, "y": 0, "outside": false}, {"x": 1000, "y": 0, "outside": false},
@@ -205,8 +219,8 @@ func _test_invariants(name: String, scene: Dictionary, out: Dictionary) -> void:
 		spans.sort()
 		for i in range(1, spans.size()):
 			check(spans[i][0] >= spans[i - 1][1], "%s: житель %d в двух группах" % [name, id])
-	# Очередь в порядке прихода (время, ID): на каждой позиции маршрута посадки идут в том же порядке,
-	# что и приход в очередь, среди дождавшихся.
+	# Очередь в порядке прихода (время, ID): на каждой позиции маршрута посадки идут в порядке
+	# (время прихода, ID) среди дождавшихся, независимо от порядка записей журнала.
 	var arrivals := {}
 	var boards := {}
 	var waiting := {}
@@ -223,6 +237,7 @@ func _test_invariants(name: String, scene: Dictionary, out: Dictionary) -> void:
 		elif e[2] == "cancel":
 			arrivals[waiting[id]].erase(arrivals[waiting[id]].filter(func(a): return a[1] == id).back())
 	for pos in arrivals:
+		arrivals[pos].sort()
 		var expected := []
 		for a in arrivals[pos]:
 			expected.append(a[1])
