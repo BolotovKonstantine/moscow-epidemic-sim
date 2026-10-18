@@ -252,7 +252,8 @@ public:
 
 	// Калибровка по выборке зданий (estimated): множитель доли семей с детьми и веса возраста
 	// подгоняются к переписи, потому что её таблицы возраста и домохозяйств не согласованы.
-	void calibrate() {
+	// scratch — не меньше жителей самого большого здания.
+	void calibrate(uint8_t *scratch) {
 		double w[kTerritories][kMaxAge + 1];
 		for (int t = 0; t < kTerritories; ++t) {
 			std::copy(in_.demography[t].age_weight, in_.demography[t].age_weight + kMaxAge + 1, w[t]);
@@ -261,7 +262,6 @@ public:
 		}
 		const size_t every = static_cast<size_t>(p_.calibration_sample_every);
 		const size_t step = in_.buildings >= every * 1000 ? every : 1;
-		std::vector<uint8_t> sizes;
 		uint8_t ages[kMaxHouseholdSize];
 		for (int round = 0; round < p_.calibration_rounds; ++round) {
 			double hist[kTerritories][kMaxAge + 1] = {};
@@ -271,12 +271,11 @@ public:
 					continue;
 				}
 				const int t = in_.territory[b];
-				sizes.resize(residents);
-				const uint32_t count = household_sizes(static_cast<uint32_t>(b), residents, t, sizes.data());
+				const uint32_t count = household_sizes(static_cast<uint32_t>(b), residents, t, scratch);
 				for (uint32_t h = 0; h < count; ++h) {
 					RngDraws r(key_, static_cast<uint32_t>(b), h, 0);
-					compose(t, r, sizes[h], ages);
-					for (int m = 0; m < sizes[h]; ++m) {
+					compose(t, r, scratch[h], ages);
+					for (int m = 0; m < scratch[h]; ++m) {
 						hist[t][ages[m]] += 1.0;
 					}
 				}
@@ -550,9 +549,12 @@ Status validate_population_params(const PopulationParams &p) {
 	if (!(p.partner_age_gap_sd >= 0.0 && p.partner_age_gap_sd <= 30.0)) {
 		return bad_param("partner_age_gap_sd вне 0–30 лет");
 	}
-	if (p.parent_age_gap_min < 0 || p.parent_age_gap_max < p.parent_age_gap_min ||
+	// Диапазон возраста главы [max(18, ребёнок + min), ребёнок + max] не пуст для любого ребёнка 0–17,
+	// поэтому глава семьи с детьми всегда взрослый.
+	if (p.parent_age_gap_min < 0 || p.parent_age_gap_max < p.parent_age_gap_min || p.parent_age_gap_max < kAdultAge ||
 			kAdultAge - 1 + p.parent_age_gap_min > kMaxAge) {
-		return bad_param("parent_age_gap: нужно 0 ≤ min ≤ max и 17 + min ≤ " + std::to_string(kMaxAge));
+		return bad_param("parent_age_gap: нужно 0 ≤ min ≤ max, max ≥ " + std::to_string(kAdultAge) + " и 17 + min ≤ " +
+				std::to_string(kMaxAge));
 	}
 	if (p.calibration_rounds < 0 || p.calibration_rounds > 64 || p.calibration_sample_every < 1) {
 		return bad_param("calibration_rounds вне 0–64 или calibration_sample_every < 1");
@@ -640,7 +642,9 @@ Status generate_population(const PopulationInput &in, const PopulationParams &pa
 		return Status::error(StatusCode::limit_exceeded, "Население: зданий больше 2³² − 2");
 	}
 	uint64_t persons = 0;
+	uint32_t max_residents = 0;
 	for (size_t b = 0; b < in.buildings; ++b) {
+		max_residents = std::max(max_residents, in.residents[b]);
 		if (in.territory[b] >= kTerritories) {
 			return Status::error(StatusCode::invalid_argument, "Население: код территории здания " + std::to_string(b));
 		}
@@ -651,7 +655,12 @@ Status generate_population(const PopulationInput &in, const PopulationParams &pa
 	}
 
 	Generator gen(in, params, seed);
-	gen.calibrate();
+	Buffer<uint8_t> scratch;
+	if (!scratch.allocate(max_residents)) {
+		return no_memory("размеры семей калибровки", max_residents);
+	}
+	gen.calibrate(scratch.data());
+	scratch.reset();
 
 	// Первый проход: размеры семей всех зданий и смещения. Каждая семья — хотя бы один житель,
 	// поэтому семей не больше жителей.

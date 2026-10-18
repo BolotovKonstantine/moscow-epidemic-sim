@@ -250,6 +250,15 @@ void test_rejects() {
 	bad = fast_params();
 	bad.age_bands[3] = bad.age_bands[2];
 	CHECK(validate_population_params(bad).code == StatusCode::invalid_argument);
+	// Верхняя граница разницы с ребёнком меньше 18 лет допустила бы несовершеннолетнего главу семьи.
+	bad = fast_params();
+	bad.parent_age_gap_min = bad.parent_age_gap_max = 0;
+	CHECK(validate_population_params(bad).code == StatusCode::invalid_argument);
+	bad.parent_age_gap_max = kAdultAge;
+	CHECK(validate_population_params(bad).ok());
+	Scene couples({ 100 }, { 0 });
+	CHECK(generate_population(couples.input, bad, 1, pop).ok());
+	CHECK(check_population(couples.input, bad, pop).ok());
 	CHECK(validate_population_params(PopulationParams()).ok());
 
 	Scene wrong_territory({ 5 }, { 2 });
