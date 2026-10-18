@@ -1,0 +1,24 @@
+{
+  "package_id": "synthetic-mini-city",
+  "package_version": "0.7.0",
+  "kind": "fixture",
+  "assets": [
+    {
+      "asset_id": "sim-index",
+      "role": "sim",
+      "path": "sim/index.json",
+      "format": "mesim-sim-index",
+      "size_bytes": 14233,
+      "sha256": "2249d148e713245937dfde86c599fd42eb7bfd9f33a3bc319ef5cd1c54b4db08",
+      "source_ids": [
+        "build-config-synthetic-mini-city",
+        "synthetic-mini-city"
+      ],
+      "data_kind": "estimated",
+      "estimation": {
+        "method": "Производные расчётные таблицы ядра (docs/sim-core.md, docs/city-package.md#расчётные-таблицы): файлы пакета в компактных кодах и индексах, дорожный граф CSR, куски маршрутов, привязка зданий к узлам, модельные параметры конфигурации и итоги переписи. Вид данных, метод и источники каждой таблицы — в индексе, хеши таблиц — тоже в нём.",
+        "uncertainty": "Как у исходных файлов пакета: оценки зданий, населения, графов и транспорта сохраняют свою неопределённость; модельные параметры — игровые настройки; перепись — наблюдение Росстата для Москвы и Московской области."
+      }
+    }
+  ]
+}
