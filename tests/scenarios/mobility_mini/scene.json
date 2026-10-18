@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "name": "mobility_mini",
+  "seed": 20261019,
+  "duration_s": 172800,
+  "checkpoints_s": [0, 21600, 28800, 30600, 32400, 36000, 50400, 61200, 64800, 68400, 79200, 86400, 90000, 115200, 118800, 151200, 172800],
+  "params": {
+    "walk_speed_mps": 1.2,
+    "walk_detour": 1.3,
+    "parking_s": 180,
+    "attach_radius_m": 500,
+    "access_radius_m": 1000,
+    "access_stops_max": 8,
+    "transfer_radius_m": 250,
+    "cell_size_m": 250,
+    "board_penalty_s": 180,
+    "max_wait_s": 1800,
+    "walk_only_max_s": 2400,
+    "walk_fallback_max_s": 4800
+  },
+  "periods": [
+    {"name": "night", "start_s": 3600},
+    {"name": "early", "start_s": 19800},
+    {"name": "morning_peak", "start_s": 25200},
+    {"name": "day", "start_s": 36000},
+    {"name": "evening_peak", "start_s": 61200},
+    {"name": "evening", "start_s": 72000}
+  ],
+  "modes": {
+    "metro": {"speed_kmh": 40, "capacity": 40, "wagons": 2, "headway_s": [0, 600, 240, 420, 300, 600]},
+    "bus": {"speed_kmh": 20, "capacity": 12, "wagons": 1, "headway_s": [1800, 900, 480, 720, 600, 900]}
+  },
+  "road_nodes": [
+    [0, -2000], [1500, -2000], [3000, -2000], [4500, -2000],
+    [0, 0], [1500, 0], [3000, 0], [4500, 0],
+    [0, 2000], [1500, 2000], [3000, 2000], [4500, 2000],
+    [6000, 0], [8000, 5000]
+  ],
+  "road_edges": [
+    {"from": 0, "to": 1, "length_m": 1500, "speed_kmh": 40, "oneway": false},
+    {"from": 1, "to": 2, "length_m": 1500, "speed_kmh": 40, "oneway": false},
+    {"from": 2, "to": 3, "length_m": 1500, "speed_kmh": 40, "oneway": false},
+    {"from": 4, "to": 5, "length_m": 1500, "speed_kmh": 60, "oneway": false},
+    {"from": 5, "to": 6, "length_m": 1500, "speed_kmh": 60, "oneway": false},
+    {"from": 6, "to": 7, "length_m": 1500, "speed_kmh": 60, "oneway": false},
+    {"from": 8, "to": 9, "length_m": 1500, "speed_kmh": 40, "oneway": false},
+    {"from": 9, "to": 10, "length_m": 1500, "speed_kmh": 40, "oneway": true},
+    {"from": 10, "to": 11, "length_m": 1500, "speed_kmh": 40, "oneway": false},
+    {"from": 0, "to": 4, "length_m": 2000, "speed_kmh": 40, "oneway": false},
+    {"from": 4, "to": 8, "length_m": 2000, "speed_kmh": 40, "oneway": false},
+    {"from": 1, "to": 5, "length_m": 2000, "speed_kmh": 40, "oneway": false},
+    {"from": 5, "to": 9, "length_m": 2000, "speed_kmh": 40, "oneway": false},
+    {"from": 2, "to": 6, "length_m": 2000, "speed_kmh": 40, "oneway": false},
+    {"from": 6, "to": 10, "length_m": 2000, "speed_kmh": 40, "oneway": false},
+    {"from": 3, "to": 7, "length_m": 2000, "speed_kmh": 40, "oneway": false},
+    {"from": 7, "to": 11, "length_m": 2000, "speed_kmh": 40, "oneway": false},
+    {"from": 7, "to": 12, "length_m": 1500, "speed_kmh": 60, "oneway": false}
+  ],
+  "buildings": [
+    [100, 300], [-200, -300], [1400, 600], [2900, 2100], [3200, 1900], [3100, -2100],
+    [3100, 100], [4400, -200], [1600, -400], [8000, 5100], [2950, 1050], [600, 0]
+  ],
+  "stops": [
+    {"x": 0, "y": 0, "outside": false},
+    {"x": 1500, "y": 0, "outside": false},
+    {"x": 3000, "y": 0, "outside": false},
+    {"x": 4500, "y": 0, "outside": false},
+    {"x": 6500, "y": 0, "outside": true},
+    {"x": 3000, "y": 2000, "outside": false},
+    {"x": 3000, "y": 1000, "outside": false},
+    {"x": 3050, "y": 50, "outside": false},
+    {"x": 3000, "y": -1000, "outside": false},
+    {"x": 3000, "y": -2000, "outside": false}
+  ],
+  "stop_areas": [[2, 7]],
+  "routes": [
+    {"mode": "metro", "stops": [0, 1, 2, 3, 4]},
+    {"mode": "metro", "stops": [4, 3, 2, 1, 0]},
+    {"mode": "bus", "stops": [5, 6, 7, 8, 9]},
+    {"mode": "bus", "stops": [9, 8, 7, 6, 5]}
+  ],
+  "gateways": [
+    {"kind": "transit", "stop": 3},
+    {"kind": "road", "node": 12}
+  ],
+  "residents": [
+    {"home": 0, "profile": "other", "place": {"building": 6}, "arrive_by_s": 32400, "leave_at_s": 64800},
+    {"home": 0, "profile": "other", "place": {"building": 6}, "arrive_by_s": 32400, "leave_at_s": 64800},
+    {"home": 0, "profile": "car", "place": {"building": 6}, "arrive_by_s": 32400, "leave_at_s": 64800},
+    {"home": 1, "profile": "other", "place": {"building": 7}, "arrive_by_s": 34200, "leave_at_s": 66600},
+    {"home": 1, "profile": "other", "place": {"building": 8}, "arrive_by_s": 30600, "leave_at_s": 52200},
+    {"home": 2, "profile": "other", "place": {"building": 8}, "arrive_by_s": 30600, "leave_at_s": 52200},
+    {"home": 3, "profile": "other", "place": {"building": 6}, "arrive_by_s": 32400, "leave_at_s": 64800},
+    {"home": 3, "profile": "other", "place": {"building": 7}, "arrive_by_s": 32400, "leave_at_s": 64800},
+    {"home": 4, "profile": "other", "place": {"building": 6}, "arrive_by_s": 31500, "leave_at_s": 63000},
+    {"home": 4, "profile": "car", "place": {"building": 7}, "arrive_by_s": 32400, "leave_at_s": 64800},
+    {"home": 5, "profile": "other", "place": {"building": 6}, "arrive_by_s": 32400, "leave_at_s": 64800},
+    {"home": 5, "profile": "other", "place": {"building": 10}, "arrive_by_s": 30000, "leave_at_s": 61200},
+    {"home": 5, "profile": "car", "place": {"building": 6}, "arrive_by_s": 33300, "leave_at_s": 66600},
+    {"home": 3, "profile": "other", "place": {"building": 9}, "arrive_by_s": 30600, "leave_at_s": 52200},
+    {"home": 0, "profile": "car", "place": {"building": 9}, "arrive_by_s": 30600, "leave_at_s": 52200},
+    {"home": 2, "profile": "other", "place": {"gateway": 0}, "arrive_by_s": 30600, "leave_at_s": 59400},
+    {"home": 2, "profile": "car", "place": {"gateway": 1}, "arrive_by_s": 30600, "leave_at_s": 59400},
+    {"home": 11, "profile": "other", "place": {"building": 8}, "arrive_by_s": 30600, "leave_at_s": 52200},
+    {"home": 11, "profile": "other", "place": null, "arrive_by_s": 30600, "leave_at_s": 52200},
+    {"home": 4, "profile": "other", "place": null, "arrive_by_s": 30600, "leave_at_s": 52200},
+    {"home": 1, "profile": "other", "place": {"building": 6}, "arrive_by_s": 75600, "leave_at_s": 25200},
+    {"home": 3, "profile": "other", "place": {"building": 7}, "arrive_by_s": 82800, "leave_at_s": 27000},
+    {"home": 0, "profile": "other", "place": {"building": 6}, "arrive_by_s": 32400, "leave_at_s": 64800},
+    {"home": 0, "profile": "other", "place": {"building": 6}, "arrive_by_s": 32400, "leave_at_s": 64800}
+  ]
+}
