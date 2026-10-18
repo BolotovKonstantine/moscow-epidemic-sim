@@ -30,9 +30,18 @@ target_include_directories(mesim_core_tests PRIVATE src/core)
 target_compile_options(mesim_core_tests PRIVATE ${MESIM_FLAGS})
 target_link_libraries(mesim_core_tests PRIVATE mesim_core)
 
+add_executable(mesim_population_tests tests/population_tests.cpp)
+target_compile_options(mesim_population_tests PRIVATE ${MESIM_FLAGS})
+target_link_libraries(mesim_population_tests PRIVATE mesim_core)
+
 add_executable(mesim_load_city ../benchmarks/city_load/load_city.cpp)
 target_compile_options(mesim_load_city PRIVATE ${MESIM_FLAGS})
 target_link_libraries(mesim_load_city PRIVATE mesim_core)
 
+add_executable(mesim_population ../benchmarks/population/population.cpp)
+target_compile_options(mesim_population PRIVATE ${MESIM_FLAGS})
+target_link_libraries(mesim_population PRIVATE mesim_core)
+
 enable_testing()
 add_test(NAME core_tests COMMAND mesim_core_tests ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/sim_mini)
+add_test(NAME population_tests COMMAND mesim_population_tests ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/sim_mini)
