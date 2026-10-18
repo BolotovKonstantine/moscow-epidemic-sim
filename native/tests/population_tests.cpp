@@ -254,6 +254,13 @@ void test_rejects() {
 	bad = fast_params();
 	bad.parent_age_gap_min = bad.parent_age_gap_max = 0;
 	CHECK(validate_population_params(bad).code == StatusCode::invalid_argument);
+	bad.parent_age_gap_max = 2147483647;  // без переполнения в проверке и в compose
+	CHECK(validate_population_params(bad).code == StatusCode::invalid_argument);
+	bad.parent_age_gap_min = 2147483647;
+	CHECK(validate_population_params(bad).code == StatusCode::invalid_argument);
+	bad.parent_age_gap_min = 0;
+	bad.parent_age_gap_max = kMaxAge;
+	CHECK(validate_population_params(bad).ok());
 	bad.parent_age_gap_max = kAdultAge;
 	CHECK(validate_population_params(bad).ok());
 	Scene couples({ 100 }, { 0 });

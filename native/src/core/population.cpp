@@ -551,10 +551,12 @@ Status validate_population_params(const PopulationParams &p) {
 	}
 	// Диапазон возраста главы [max(18, ребёнок + min), ребёнок + max] не пуст для любого ребёнка 0–17,
 	// поэтому глава семьи с детьми всегда взрослый.
+	// Границы сравниваются без сложений, чтобы большие значения не переполняли int: max ≤ kMaxAge,
+	// поэтому возраст ребёнка + max в compose помещается в int.
 	if (p.parent_age_gap_min < 0 || p.parent_age_gap_max < p.parent_age_gap_min || p.parent_age_gap_max < kAdultAge ||
-			kAdultAge - 1 + p.parent_age_gap_min > kMaxAge) {
-		return bad_param("parent_age_gap: нужно 0 ≤ min ≤ max, max ≥ " + std::to_string(kAdultAge) + " и 17 + min ≤ " +
-				std::to_string(kMaxAge));
+			p.parent_age_gap_max > kMaxAge || p.parent_age_gap_min > kMaxAge - (kAdultAge - 1)) {
+		return bad_param("parent_age_gap: нужно 0 ≤ min ≤ max, " + std::to_string(kAdultAge) + " ≤ max ≤ " +
+				std::to_string(kMaxAge) + " и 17 + min ≤ " + std::to_string(kMaxAge));
 	}
 	if (p.calibration_rounds < 0 || p.calibration_rounds > 64 || p.calibration_sample_every < 1) {
 		return bad_param("calibration_rounds вне 0–64 или calibration_sample_every < 1");
