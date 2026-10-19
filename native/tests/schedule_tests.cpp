@@ -190,6 +190,16 @@ void test_personal(World &w) {
 
 // next_trip: время не раньше t, из дома — туда или посещение, с места — обратно; поиск с более
 // позднего t не возвращает более раннюю поездку.
+// Пустое население: расписание инициализируется, поездок нет (таблица кандидатов с зданиями без жителей).
+void test_empty_population(World &w) {
+	Population empty;
+	MobilityPopulation pop;
+	VisitCandidates visits;
+	visits.first = { 0, 0 };
+	TemplateSchedule schedule;
+	CHECK(schedule.init(empty, pop, visits, w.params, kSeed, 0, kDay).ok());
+}
+
 void test_next_trip(World &w) {
 	uint64_t checked = 0;
 	for (uint32_t id = 0; id < w.population.persons(); id += 7) {
@@ -290,6 +300,18 @@ void test_crowding_and_store(World &w, const std::string &tmp) {
 			std::fclose(f);
 		}
 		CHECK(load_plan_store(cut, key, w.net, plans, crowd, loaded).code == StatusCode::format_error);
+		CHECK(plans.empty());
+		// Счётчик планов больше файла: ошибка до выделения памяти (заголовок: 8 + 4 + 64 байта, затем счётчики).
+		std::vector<char> big = data;
+		const uint64_t huge = uint64_t(1) << 33;
+		std::memcpy(big.data() + 76, &huge, sizeof huge);
+		f = std::fopen(cut.c_str(), "wb");
+		if (f != nullptr) {
+			std::fwrite(big.data(), 1, big.size(), f);
+			std::fclose(f);
+		}
+		const Status st = load_plan_store(cut, key, w.net, plans, crowd, loaded);
+		CHECK(st.code == StatusCode::format_error);
 		CHECK(plans.empty());
 		std::remove(cut.c_str());
 	}
@@ -450,6 +472,7 @@ int main(int argc, char **argv) {
 		CHECK(plan_world(w, cache, report, 0, 9 * kDay));
 		test_personal(w);
 		test_next_trip(w);
+		test_empty_population(w);
 		test_crowding_and_store(w, argv[2]);
 		test_week(w);
 	}

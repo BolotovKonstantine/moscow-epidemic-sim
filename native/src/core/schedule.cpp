@@ -140,8 +140,9 @@ Status TemplateSchedule::init(const Population &population, const MobilityPopula
 	if (!st.ok()) {
 		return st;
 	}
-	if (population.persons() != pop.persons || start_weekday >= kDaysPerWeek ||
-			(visits.first.size() != 0 && visits.first.size() <= size_t(*std::max_element(pop.home, pop.home + pop.persons)))) {
+	if (population.persons() != pop.persons || start_weekday >= kDaysPerWeek || (pop.persons > 0 && pop.home == nullptr) ||
+			(pop.persons > 0 && visits.first.size() != 0 &&
+					visits.first.size() <= size_t(*std::max_element(pop.home, pop.home + pop.persons)))) {
 		return Status::error(StatusCode::invalid_argument, "расписание: жители, день недели или кандидаты посещений");
 	}
 	population_ = &population;

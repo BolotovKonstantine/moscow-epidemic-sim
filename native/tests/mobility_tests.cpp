@@ -311,8 +311,6 @@ Output run_scene(const Prepared &p, const RunMode &mode) {
 		}
 		CHECK(mine == all);
 	}
-	CHECK(cache.stats().pinned == 0 || sim.counts()[size_t(Whereabouts::wait)] + sim.counts()[size_t(Whereabouts::ride)] +
-					sim.counts()[size_t(Whereabouts::walk)] > 0);
 	return out;
 }
 
@@ -436,6 +434,39 @@ void test_rejects(const std::string &dir) {
 	CHECK(!sim.advance_to(0).ok() || sim.now() == 0);
 }
 
+// Закрепления путей снимаются при повторной инициализации и уничтожении симуляции посреди поездок:
+// общий кеш переживает симуляцию, и брошенные закрепления навсегда исключили бы записи из вытеснения.
+void test_release_pins(const std::string &dir) {
+	Prepared p;
+	CHECK(prepare(dir + "/mobility_edge/scene.json", p));
+	if (g_failures > 0) {
+		return;
+	}
+	FixedSchedule schedule(p.pop, p.arrive_by.data(), p.leave_at.data(), p.scene.duration);
+	MobilityOptions options;
+	options.horizon = p.scene.duration;
+	PathCache cache;
+	uint64_t pinned_mid = 0;
+	{
+		MobilitySim sim;
+		CHECK(sim.init(p.planner, cache, p.scene.fleet, p.scene.seed, p.pop, schedule, options).ok());
+		for (uint32_t t = 0; t < p.scene.duration && pinned_mid == 0; t += 60) {
+			CHECK(sim.advance_to(t).ok());
+			pinned_mid = cache.stats().pinned;
+		}
+		CHECK(pinned_mid > 0);
+		CHECK(sim.init(p.planner, cache, p.scene.fleet, p.scene.seed, p.pop, schedule, options).ok());
+		CHECK(cache.stats().pinned == 0);
+		uint64_t again = 0;
+		for (uint32_t t = 0; t < p.scene.duration && again == 0; t += 60) {
+			CHECK(sim.advance_to(t).ok());
+			again = cache.stats().pinned;
+		}
+		CHECK(again > 0);
+	}
+	CHECK(cache.stats().pinned == 0);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -447,6 +478,7 @@ int main(int argc, char **argv) {
 	test_scene(dir, "mobility_edge");
 	test_scene(dir, "mobility_mini");
 	test_rejects(dir);
+	test_release_pins(dir);
 	std::printf("%s: %d проверок, %d ошибок\n", g_failures ? "FAIL" : "OK", g_checks, g_failures);
 	return g_failures ? 1 : 0;
 }

@@ -138,7 +138,7 @@ bool FixedSchedule::next_trip(uint32_t id, bool at_home, uint32_t t, ScheduledTr
 
 Status MobilitySim::init(const TripPlanner &planner, PathCache &cache, const FleetParams &fleet, uint64_t seed,
 		const MobilityPopulation &pop, const Schedule &schedule, const MobilityOptions &options) {
-	*this = MobilitySim();
+	reset();
 	const RouteNetwork &net = planner.network();
 	Status st = check_fleet_params(fleet, net.mode_count);
 	if (!st.ok()) {
@@ -219,6 +219,58 @@ Status MobilitySim::init(const TripPlanner &planner, PathCache &cache, const Fle
 	}
 	initializing_ = false;
 	return Status::success();
+}
+
+MobilitySim::~MobilitySim() {
+	release_all_paths();
+}
+
+void MobilitySim::release_all_paths() {
+	if (cache_ == nullptr || path_.data() == nullptr) {
+		return;
+	}
+	for (size_t id = 0; id < path_.size(); ++id) {
+		release_path(uint32_t(id));
+	}
+}
+
+// Прежнее состояние целиком: закрепления путей снимаются, затем все поля — как у нового объекта.
+void MobilitySim::reset() {
+	release_all_paths();
+	net_ = nullptr;
+	planner_ = nullptr;
+	cache_ = nullptr;
+	schedule_ = nullptr;
+	fleet_ = FleetParams();
+	pop_ = MobilityPopulation();
+	options_ = MobilityOptions();
+	transit_key_ = 0;
+	ws_.reset();
+	queue_ = EventQueue();
+	now_ = 0;
+	initializing_ = false;
+	loc_.reset();
+	kind_.reset();
+	leg_.reset();
+	ride_ix_.reset();
+	moved_.reset();
+	ref_.reset();
+	path_.reset();
+	std::fill_n(counts_, kWhereabouts, uint64_t(0));
+	gen_.clear();
+	days_generated_ = 0;
+	numbers_ = 0;
+	runs_.clear();
+	free_runs_.clear();
+	number_runs_.clear();
+	waiting_.clear();
+	pending_.clear();
+	log_.clear();
+	journals_.clear();
+	intervals_.clear();
+	run_list_.clear();
+	stats_ = MobilityStats();
+	violations_ = MobilityViolations();
 }
 
 // ---------- Продвижение ----------

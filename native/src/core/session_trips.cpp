@@ -52,6 +52,20 @@ bool read_all(std::FILE *f, void *data, size_t size) {
 	return size == 0 || std::fread(data, 1, size, f) == size;
 }
 
+// Байт до конца файла: размеры массивов сверяются с ним до выделения памяти, чтобы испорченный
+// счётчик давал format_error, а не попытку выделить сотни гигабайт.
+uint64_t remaining(std::FILE *f) {
+	const long at = std::ftell(f);
+	if (at < 0 || std::fseek(f, 0, SEEK_END) != 0) {
+		return 0;
+	}
+	const long end = std::ftell(f);
+	if (end < at || std::fseek(f, at, SEEK_SET) != 0) {
+		return 0;
+	}
+	return uint64_t(end - at);
+}
+
 template <typename T>
 bool write_vec(std::FILE *f, const std::vector<T> &v) {
 	const uint64_t n = v.size();
@@ -61,7 +75,7 @@ bool write_vec(std::FILE *f, const std::vector<T> &v) {
 template <typename T>
 bool read_vec(std::FILE *f, std::vector<T> &v, uint64_t max) {
 	uint64_t n = 0;
-	if (!read_all(f, &n, sizeof n) || n > max) {
+	if (!read_all(f, &n, sizeof n) || n > max || n > remaining(f) / sizeof(T)) {
 		return false;
 	}
 	v.resize(n);
@@ -371,9 +385,16 @@ Status load_plan_store(const std::string &path, const std::string &key, const Ro
 		return Status::error(StatusCode::format_error, std::string("хранилище планов: ") + what);
 	};
 	const size_t crowd_size = size_t(net.period_count()) * net.pos_count();
+	// Запись пути — не меньше 24 байт (ключ, заголовок, остановки) плюс поездки.
+	constexpr uint64_t kMinEntryBytes = sizeof(uint64_t) + 4 + 3 * sizeof(uint32_t);
 	if (!read_all(in.f, counts, sizeof counts) || counts[0] > (uint64_t(1) << 33) ||
 			(counts[1] != 0 && counts[1] != crowd_size) || counts[2] > (uint64_t(1) << 32)) {
 		return bad("счётчики вне пределов");
+	}
+	const uint64_t left = remaining(in.f);
+	if (counts[0] > left / sizeof(TripPlan) || counts[1] > (left - counts[0] * sizeof(TripPlan)) / sizeof(float) ||
+			counts[2] > (left - counts[0] * sizeof(TripPlan) - counts[1] * sizeof(float)) / kMinEntryBytes) {
+		return bad("счётчики больше файла");
 	}
 	plans.resize(counts[0]);
 	crowd.resize(counts[1]);
@@ -519,6 +540,9 @@ Status load_places_store(const std::string &path, const std::string &key, const 
 	const uint64_t persons = population.persons();
 	if (!read_all(in.f, &n, sizeof n) || n != persons) {
 		return bad("другое число жителей");
+	}
+	if (n > remaining(in.f) / (sizeof(uint32_t) + 1)) {
+		return bad("файл обрезан");
 	}
 	std::vector<uint32_t> place(n);
 	std::vector<uint8_t> flags(n);

@@ -188,6 +188,11 @@ struct MobilityViolations {
 
 class MobilitySim {
 public:
+	MobilitySim() = default;
+	MobilitySim(const MobilitySim &) = delete;
+	MobilitySim &operator=(const MobilitySim &) = delete;
+	// Снимает закрепления путей кеша у поездок в пути: кеш общий и переживает симуляцию.
+	~MobilitySim();
 	// Сеть, планировщик и кеш должны жить, пока жив MobilitySim. seed — сессии (поток транспорта).
 	Status init(const TripPlanner &planner, PathCache &cache, const FleetParams &fleet, uint64_t seed,
 			const MobilityPopulation &pop, const Schedule &schedule, const MobilityOptions &options);
@@ -303,6 +308,8 @@ private:
 	void enqueue(uint32_t id);
 	void resident_event(uint32_t id);
 	void release_path(uint32_t id);
+	void release_all_paths();
+	void reset();
 	uint32_t wait_since(uint32_t id) const { return queue_.next_time(id) - fleet_.max_wait_s; }
 	Whereabouts origin_of(uint32_t id) const;
 	Whereabouts destination_of(uint32_t id) const;
