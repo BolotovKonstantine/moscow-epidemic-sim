@@ -2,9 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
-#include <new>
 
+#include "mesim/buffer.h"
 #include "mesim/status.h"
 
 // Синтетические жители региона (#38): семьи, возраст, роль, отсутствие или слот места и коды
@@ -132,31 +131,6 @@ constexpr double kChildren3PlusMeanFallback = 3.3;
 // Вход из таблиц пакета: здания из `buildings`, демография из `census_*` (территория Москвы —
 // регион «г. Москва», пояс — «Московская область»; перенос областных долей на пояс — допущение).
 Status population_input_from_city(const CityData &city, PopulationInput &out);
-
-// Массив фиксированной длины; память берётся через new (std::nothrow).
-template <typename T>
-class Buffer {
-public:
-	bool allocate(size_t count) {
-		data_.reset(count > 0 ? new (std::nothrow) T[count]() : nullptr);
-		size_ = data_ || count == 0 ? count : 0;
-		return data_ != nullptr || count == 0;
-	}
-	void reset() {
-		data_.reset();
-		size_ = 0;
-	}
-	T *data() { return data_.get(); }
-	const T *data() const { return data_.get(); }
-	size_t size() const { return size_; }
-	size_t bytes() const { return size_ * sizeof(T); }
-	T &operator[](size_t i) { return data_[i]; }
-	const T &operator[](size_t i) const { return data_[i]; }
-
-private:
-	std::unique_ptr<T[]> data_;
-	size_t size_ = 0;
-};
 
 // Жители как структура массивов, ID жителя — номер строки. Члены семьи идут подряд по ID,
 // жители здания — тоже: семьи и здания хранятся смещениями CSR.

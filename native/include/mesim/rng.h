@@ -2,21 +2,49 @@
 
 #include <cstdint>
 
+#include "mesim/status.h"
+
 // Случайность ядра (docs/sim-core.md#случайность): счётчиковый Philox4x32-10 (Random123).
 // Розыгрыш — чистая функция (ключ потока, счётчик), скрытого состояния нет. Целое из диапазона
 // и вероятности сравниваются в целых числах.
 
 namespace mesim {
 
-// Версия алгоритма розыгрышей и таблицы потоков. Меняется, если меняются розыгрыши уже
-// существующих потоков; добавление нового потока номера прежних не сдвигает.
+// Версия алгоритма: Philox4x32-10, ключ потока SplitMix64, порог вероятности, метод Лемира.
+constexpr uint32_t kRngAlgorithm = 1;
+// Версия таблицы потоков. Меняется, если меняются розыгрыши уже существующих потоков (раскладка
+// счётчика, номер); добавление нового потока номера прежних не сдвигает и версию не меняет.
 constexpr uint32_t kRngVersion = 1;
 
 // Таблица потоков по подсистемам. Номера закреплены: не переставлять и не переиспользовать.
 enum class RngStream : uint32_t {
 	population = 1,  // генерация жителей (#38)
 	places = 2,      // назначение работы и учёбы (#41)
+	schedules = 3,   // расписания жителей (#43)
+	transit = 4,     // модельные рейсы: фаза, вагон (#43, #44; эталон #39)
 };
+
+// Состояние случайности сессии целиком: скрытого состояния у генератора нет, розыгрыш — функция
+// (ключ потока, счётчик). Это состояние и сохраняет будущий формат сохранения.
+struct RngState {
+	uint64_t seed = 0;
+	uint32_t algorithm = kRngAlgorithm;
+	uint32_t streams = kRngVersion;
+};
+
+inline RngState rng_state(uint64_t seed) {
+	return RngState{ seed, kRngAlgorithm, kRngVersion };
+}
+
+// Восстановление: состояние другой версии алгоритма или таблицы потоков даёт другие розыгрыши и
+// отклоняется.
+inline Status restore_rng_state(const RngState &state, uint64_t &seed) {
+	if (state.algorithm != kRngAlgorithm || state.streams != kRngVersion) {
+		return Status::error(StatusCode::version_mismatch, "Случайность: другая версия генератора или таблицы потоков");
+	}
+	seed = state.seed;
+	return Status::success();
+}
 
 struct PhiloxCounter {
 	uint32_t c[4];

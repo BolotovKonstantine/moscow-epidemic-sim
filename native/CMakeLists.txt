@@ -1,4 +1,4 @@
-# Сборка чистого ядра без Godot и godot-cpp: тесты и инструмент замера загрузки пакета.
+# Сборка чистого ядра без Godot и godot-cpp: тесты и инструменты замеров.
 # Библиотеку GDExtension собирает SConstruct; оба берут одни и те же исходники src/core/*.cpp.
 # Команды — в native/AGENTS.md.
 cmake_minimum_required(VERSION 3.20)
@@ -34,6 +34,11 @@ add_executable(mesim_population_tests tests/population_tests.cpp)
 target_compile_options(mesim_population_tests PRIVATE ${MESIM_FLAGS})
 target_link_libraries(mesim_population_tests PRIVATE mesim_core)
 
+add_executable(mesim_clock_tests tests/clock_tests.cpp)
+target_include_directories(mesim_clock_tests PRIVATE src/core)
+target_compile_options(mesim_clock_tests PRIVATE ${MESIM_FLAGS})
+target_link_libraries(mesim_clock_tests PRIVATE mesim_core)
+
 add_executable(mesim_load_city ../benchmarks/city_load/load_city.cpp)
 target_compile_options(mesim_load_city PRIVATE ${MESIM_FLAGS})
 target_link_libraries(mesim_load_city PRIVATE mesim_core)
@@ -42,6 +47,11 @@ add_executable(mesim_population ../benchmarks/population/population.cpp)
 target_compile_options(mesim_population PRIVATE ${MESIM_FLAGS})
 target_link_libraries(mesim_population PRIVATE mesim_core)
 
+add_executable(mesim_event_queue ../benchmarks/event_queue/event_queue.cpp)
+target_compile_options(mesim_event_queue PRIVATE ${MESIM_FLAGS})
+target_link_libraries(mesim_event_queue PRIVATE mesim_core)
+
 enable_testing()
 add_test(NAME core_tests COMMAND mesim_core_tests ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/sim_mini)
+add_test(NAME clock_tests COMMAND mesim_clock_tests ${CMAKE_CURRENT_SOURCE_DIR}/../tests/scenarios)
 add_test(NAME population_tests COMMAND mesim_population_tests ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/sim_mini)

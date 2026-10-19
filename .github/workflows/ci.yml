@@ -76,3 +76,4 @@ jobs:
       - run: Godot --headless --path game --script ../tests/integration/map_streaming.gd
       - run: Godot --headless --path game --script ../tests/integration/map_layers.gd
       - run: Godot --headless --path game --script ../tests/model/mobility_reference.gd
+      - run: Godot --headless --path game --script ../tests/model/event_reference.gd
