@@ -45,8 +45,9 @@ constexpr uint32_t kPlaceUnknown = 0xFFFFFFFEu;  // место нужно, но 
 
 // Флаги назначения места (ставит #41).
 enum PlaceFlag : uint8_t {
-	place_over_capacity = 1,
-	place_missing = 2,
+	place_over_capacity = 1,  // мест вида в доступной области не осталось: назначен сверх вместимости
+	place_missing = 2,        // мест этого вида в регионе нет
+	place_unreachable = 4,    // места вида есть, но ни до одного нет пути (docs/mobility.md, решение 4)
 };
 
 // Общий профиль u16 — номер комбинации пяти кодов; параметры уровней — в таблице сценария.

@@ -57,6 +57,8 @@ public:
 	// Достигнут ли выход на остановке, его стоимость (с штрафами) и время.
 	bool reached(uint32_t stop) const { return cost_[net_->stop_count() + stop] != kInf; }
 	uint64_t alight_cost(uint32_t stop) const { return cost_[net_->stop_count() + stop]; }
+	// Время до выхода на остановке (без штрафов выбора, с подходом затравки).
+	uint64_t alight_time(uint32_t stop) const { return time_[net_->stop_count() + stop]; }
 	// Путь до выхода на остановке (должен быть достигнут). false — путь не помещается в запись
 	// (пересадка длиннее 65 535 с); тогда он отклоняется, а не обрезается.
 	bool extract(uint32_t end_stop, TransitPath &out) const;
