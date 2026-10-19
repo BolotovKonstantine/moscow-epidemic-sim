@@ -1,6 +1,6 @@
 # Малые сцены и эталонные выходы
 
-Синтетические сцены для сверки нативного ядра с простой независимой реализацией модели (`game/sim/`). Данные сцен вымышлены, реальных людей и мест в них нет. Тесты — [tests/model/mobility_reference.gd](../model/mobility_reference.gd) и [tests/model/event_reference.gd](../model/event_reference.gd), команды — в [game/AGENTS.md](../../game/AGENTS.md). Ядро сверяется с этими выходами: часы и очередь — `native/tests/clock_tests.cpp` (`events_week`), планы поездок (`plans`) — `native/tests/route_tests.cpp` (#42; рейсы, очереди и журнал — #43, #44), команды — в [native/AGENTS.md](../../native/AGENTS.md).
+Синтетические сцены для сверки нативного ядра с простой независимой реализацией модели (`game/sim/`). Данные сцен вымышлены, реальных людей и мест в них нет. Тесты — [tests/model/mobility_reference.gd](../model/mobility_reference.gd) и [tests/model/event_reference.gd](../model/event_reference.gd), команды — в [game/AGENTS.md](../../game/AGENTS.md). Ядро сверяется с этими выходами: часы и очередь — `native/tests/clock_tests.cpp` (`events_week`), планы поездок (`plans`) — `native/tests/route_tests.cpp` (#42), рейсы, контрольные состояния, интервалы присутствия и журнал (`runs`, `checkpoints`, `intervals`, `log`) — `native/tests/mobility_tests.cpp` (#43, побайтно в каноническом JSON), команды — в [native/AGENTS.md](../../native/AGENTS.md).
 
 | Каталог | Что проверяет |
 | --- | --- |

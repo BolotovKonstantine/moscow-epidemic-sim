@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <memory>
+#include <utility>
 
 namespace mesim {
 
@@ -97,11 +98,28 @@ Status TripPlanner::build(const RouteNetwork &net) {
 	if (!net.finalized) {
 		return Status::error(StatusCode::invalid_state, "планировщик поездок: сеть маршрутов не проверена");
 	}
+	crowd_.clear();
 	Status st = car_.build(net);
 	if (st.ok()) {
 		net_ = &net;
 	}
 	return st;
+}
+
+Status TripPlanner::set_crowding(std::vector<float> crowd) {
+	if (net_ == nullptr) {
+		return Status::error(StatusCode::invalid_state, "планировщик поездок: сеть не задана");
+	}
+	if (!crowd.empty() && crowd.size() != size_t(net_->period_count()) * net_->pos_count()) {
+		return Status::error(StatusCode::invalid_argument, "штраф загрузки: нужен размер периоды × позиции маршрутов");
+	}
+	for (float x : crowd) {
+		if (!(x >= 0.0f) || !(x <= 1000.0f)) {
+			return Status::error(StatusCode::invalid_argument, "штраф загрузки вне [0, 1000]");
+		}
+	}
+	crowd_ = std::move(crowd);
+	return Status::success();
 }
 
 TripPlanner::Car TripPlanner::car_trip(CarQuery &q, const TripRequest &r) const {
@@ -207,13 +225,13 @@ TripPlan TripPlanner::plan_one(RouteWorkspace &ws, const TripRequest &r) const {
 	} else {
 		ws.targets.clear();
 		add_targets(ws, net, dest);
-		ws.transit.run(ws.seeds, r.period, &ws.targets);
+		ws.transit.run(ws.seeds, r.period, &ws.targets, crowd_row(r.period));
 		ok = path_from_tree(ws, dest, end_stop, egress, reasons) && ws.transit.extract(end_stop, path);
 		if (ok && route_distance(origin, net.stop_pos[path.start_stop]) > net.params.access_radius_m) {
 			tree = TransitTree::origin;
 			reasons |= trip_origin_tree;
 			transit_seeds(net, origin, net.params.access_radius_m, ws.seeds);
-			ws.transit.run(ws.seeds, r.period, &ws.targets);
+			ws.transit.run(ws.seeds, r.period, &ws.targets, crowd_row(r.period));
 			ok = path_from_tree(ws, dest, end_stop, egress, reasons) && ws.transit.extract(end_stop, path);
 		}
 	}
@@ -240,6 +258,10 @@ Status TripPlanner::plan(const TripRequest *requests, size_t n, TripPlan *out, P
 		if (r.from >= net.endpoint_count() || r.to >= net.endpoint_count() || r.period >= net.period_count()) {
 			return Status::error(StatusCode::invalid_argument, "планировщик поездок: запрос вне сети");
 		}
+	}
+	const size_t load_size = size_t(net.period_count()) * net.pos_count();
+	if (options.segment_load != nullptr && options.segment_load->size() != load_size) {
+		return Status::error(StatusCode::invalid_argument, "планирование: размер загрузки — периоды × позиции маршрутов");
 	}
 	unsigned threads = worker_threads(options.threads);
 	std::vector<std::unique_ptr<RouteWorkspace>> ws;
@@ -297,6 +319,21 @@ Status TripPlanner::plan(const TripRequest *requests, size_t n, TripPlan *out, P
 		stats.cache_s += seconds_since(t);
 	};
 	const bool fill = cache != nullptr && options.fill_cache;
+	// Загрузка перегонов по потокам; сливается в конце.
+	std::vector<std::vector<uint32_t>> loads(options.segment_load != nullptr ? threads : 0);
+	auto add_load = [&](unsigned w, uint32_t period, const TransitPath &path) {
+		std::vector<uint32_t> &l = loads[w];
+		if (l.empty()) {
+			l.assign(load_size, 0);
+		}
+		uint32_t *row = l.data() + size_t(period) * net.pos_count();
+		for (const TransitRide &ride : path.rides) {
+			const uint32_t first = net.route_first[ride.route];
+			for (uint32_t pos = ride.board; pos < ride.alight; ++pos) {
+				++row[first + pos];
+			}
+		}
+	};
 
 	// 2. Деревья ячеек начала пути: одно на (ячейка, период), группы — в порядке ключей.
 	t0 = std::chrono::steady_clock::now();
@@ -321,7 +358,7 @@ Status TripPlanner::plan(const TripRequest *requests, size_t n, TripPlan *out, P
 				for (size_t j = a; j < b; ++j) {
 					add_targets(s, net, net.endpoint_pos[requests[items[j].index].to]);
 				}
-				s.transit.run(s.seeds, period, &s.targets);
+				s.transit.run(s.seeds, period, &s.targets, crowd_row(period));
 				settled[w] += s.transit.settled();
 			}
 			for (size_t j = a; j < b; ++j) {
@@ -352,6 +389,9 @@ Status TripPlanner::plan(const TripRequest *requests, size_t n, TripPlan *out, P
 					total = access + path->core_s + egress;
 				}
 				out[i] = choose(r, cars[i], ok, total, access, egress, end_stop, TransitTree::cell, reasons);
+				if (!loads.empty() && out[i].mode == TripMode::transit) {
+					add_load(w, period, s.memo[memo]);
+				}
 				if (fill && out[i].mode == TripMode::transit) {
 					keep(s, found[gi], PathKey{ key, end_stop, uint8_t(period), TransitTree::cell }, memo);
 				}
@@ -391,7 +431,7 @@ Status TripPlanner::plan(const TripRequest *requests, size_t n, TripPlan *out, P
 			for (size_t j = a; j < b; ++j) {
 				add_targets(s, net, net.endpoint_pos[requests[items[j].index].to]);
 			}
-			s.transit.run(s.seeds, period, &s.targets);
+			s.transit.run(s.seeds, period, &s.targets, crowd_row(period));
 			settled[w] += s.transit.settled();
 			for (size_t j = a; j < b; ++j) {
 				const uint32_t i = items[j].index;
@@ -413,6 +453,9 @@ Status TripPlanner::plan(const TripRequest *requests, size_t n, TripPlan *out, P
 					total = access + path.core_s + egress;
 				}
 				out[i] = choose(r, cars[i], ok, total, access, egress, end_stop, TransitTree::origin, reasons);
+				if (!loads.empty() && out[i].mode == TripMode::transit) {
+					add_load(w, period, s.memo[memo]);
+				}
 				if (fill && out[i].mode == TripMode::transit) {
 					keep(s, found[gi], PathKey{ from, end_stop, uint8_t(period), TransitTree::origin }, memo);
 				}
@@ -426,6 +469,11 @@ Status TripPlanner::plan(const TripRequest *requests, size_t n, TripPlan *out, P
 	stats.origin_s = seconds_since(t0);
 	for (uint64_t x : settled) {
 		stats.tree_settled += x;
+	}
+	for (const std::vector<uint32_t> &l : loads) {
+		for (size_t k = 0; k < l.size(); ++k) {
+			(*options.segment_load)[k] += l[k];
+		}
 	}
 	for (size_t i = 0; i < n; ++i) {
 		++stats.by_mode[size_t(out[i].mode)];
@@ -450,7 +498,7 @@ bool TripPlanner::rebuild(RouteWorkspace &ws, const TripRequest &r, const TripPl
 		return false;
 	}
 	ws.targets.assign(1, plan.end_stop);
-	ws.transit.run(ws.seeds, plan.period, &ws.targets);
+	ws.transit.run(ws.seeds, plan.period, &ws.targets, crowd_row(plan.period));
 	return plan.end_stop < net.stop_count() && ws.transit.reached(plan.end_stop) && ws.transit.extract(plan.end_stop, out);
 }
 

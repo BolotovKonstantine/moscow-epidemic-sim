@@ -41,7 +41,8 @@ TransitSearch::TransitSearch(const RouteNetwork &net) : net_(&net) {
 	target_.assign(net.stop_count(), 0);
 }
 
-void TransitSearch::run(const std::vector<TransitSeed> &seeds, uint32_t period, const std::vector<uint32_t> *targets) {
+void TransitSearch::run(const std::vector<TransitSeed> &seeds, uint32_t period, const std::vector<uint32_t> *targets,
+		const float *crowd) {
 	for (uint32_t v : touched_) {
 		cost_[v] = time_[v] = kInf;
 		pred_[v] = kRouteNone;
@@ -62,6 +63,11 @@ void TransitSearch::run(const std::vector<TransitSeed> &seeds, uint32_t period, 
 			pred_[v] = from;
 			heap.push({ c, v });
 		}
+	};
+	// Стоимость перегона k: без штрафа — само время (побитово как эталон #39).
+	auto segment_cost = [&](uint32_t k) -> uint64_t {
+		const uint32_t ride = net.pos_ride_s[k];
+		return crowd == nullptr || !(crowd[k] > 0.0f) ? ride : uint64_t(std::llround(double(ride) * (1.0 + double(crowd[k]))));
 	};
 	size_t remaining = 0;
 	if (targets != nullptr) {
@@ -98,7 +104,7 @@ void TransitSearch::run(const std::vector<TransitSeed> &seeds, uint32_t period, 
 					continue;
 				}
 				const uint64_t ride = h / 2 + net.pos_ride_s[k];
-				relax(2 * S + k + 1, c + ride + net.params.board_penalty_s, t + ride, u);
+				relax(2 * S + k + 1, c + h / 2 + segment_cost(k) + net.params.board_penalty_s, t + ride, u);
 			}
 		} else if (u < 2 * S) {  // B(s): посадка на той же остановке или пешая пересадка
 			const uint32_t s = u - S;
@@ -110,7 +116,7 @@ void TransitSearch::run(const std::vector<TransitSeed> &seeds, uint32_t period, 
 			const uint32_t k = u - 2 * S;
 			const uint32_t r = net.pos_route[k];
 			if (k + 1 < net.route_first[r + 1]) {
-				relax(u + 1, c + net.pos_ride_s[k], t + net.pos_ride_s[k], u);
+				relax(u + 1, c + segment_cost(k), t + net.pos_ride_s[k], u);
 			}
 			if (k > net.route_first[r] && net.stop_inside[net.pos_stop[k]]) {
 				relax(S + net.pos_stop[k], c, t, u);
@@ -238,6 +244,17 @@ void PathCache::clear() {
 	const uint64_t peak = stats_.peak_bytes;
 	stats_ = PathCacheStats();
 	stats_.peak_bytes = peak;
+}
+
+std::vector<uint32_t> PathCache::live_slots() const {
+	std::vector<uint32_t> out;
+	for (uint32_t slot : table_) {
+		if (slot != kRouteNone) {
+			out.push_back(slot);
+		}
+	}
+	std::sort(out.begin(), out.end(), [&](uint32_t a, uint32_t b) { return key(a) < key(b); });
+	return out;
 }
 
 PathKey PathCache::key(uint32_t slot) const {

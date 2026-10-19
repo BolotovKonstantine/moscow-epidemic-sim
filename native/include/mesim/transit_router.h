@@ -52,8 +52,11 @@ public:
 
 	// Дерево от затравки для периода. Если заданы targets (остановки выхода), поиск останавливается,
 	// когда выходы на всех них просмотрены: их метки и цепочки предков уже окончательны, поэтому
-	// результат для этих остановок тот же, что у полного дерева.
-	void run(const std::vector<TransitSeed> &seeds, uint32_t period, const std::vector<uint32_t> *targets = nullptr);
+	// результат для этих остановок тот же, что у полного дерева. crowd — штраф загрузки перегонов
+	// периода (по позиции маршрута, перегон к следующей): стоимость перегона — round(время × (1 + штраф)),
+	// время пути не меняется (учёт загрузки при выборе, docs/mobility.md); nullptr — без штрафа.
+	void run(const std::vector<TransitSeed> &seeds, uint32_t period, const std::vector<uint32_t> *targets = nullptr,
+			const float *crowd = nullptr);
 	// Достигнут ли выход на остановке, его стоимость (с штрафами) и время.
 	bool reached(uint32_t stop) const { return cost_[net_->stop_count() + stop] != kInf; }
 	uint64_t alight_cost(uint32_t stop) const { return cost_[net_->stop_count() + stop]; }
@@ -131,6 +134,9 @@ public:
 	uint32_t ride_count(uint32_t slot) const { return slots_[slot].rides; }
 	// Поездки записи; указатель действителен до следующей вставки.
 	const TransitRide *rides(uint32_t slot) const { return pool_.data() + slots_[slot].ride_at; }
+
+	// Слоты всех записей по возрастанию ключа (для сохранения кеша на диск).
+	std::vector<uint32_t> live_slots() const;
 
 	uint64_t limit_bytes() const { return limit_; }
 	// Ёмкость массивов кеша (слоты, пул поездок, индекс, списки свободных участков).
