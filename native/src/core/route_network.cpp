@@ -213,6 +213,10 @@ Status finalize_route_network(RouteNetwork &net) {
 			p.walk_fallback_max_s < p.walk_only_max_s) {
 		return bad("недопустимые параметры");
 	}
+	// Подход и отход хранятся в плане как u16 и не длиннее пешего пути на радиус подхода.
+	if (route_walk_s(p, p.access_radius_m) > 0xFFFF) {
+		return bad("пеший подход на радиус подхода дольше 65 535 с: время не помещается в план");
+	}
 	const uint32_t periods = net.period_count();
 	if (periods == 0 || periods > 255) {
 		return bad("нужно от 1 до 255 периодов суток");
@@ -236,11 +240,14 @@ Status finalize_route_network(RouteNetwork &net) {
 			net.car_ds.size() != net.car_to.size() || net.car_source.size() != net.car_to.size()) {
 		return bad("CSR графа машины не согласован");
 	}
-	uint64_t total = 0;
+	// Смещения проверяются целиком до обхода: иначе испорченное смещение увело бы чтение за массив дуг.
 	for (uint32_t u = 0; u < n; ++u) {
 		if (net.car_first[u + 1] < net.car_first[u]) {
 			return bad("CSR графа машины убывает");
 		}
+	}
+	uint64_t total = 0;
+	for (uint32_t u = 0; u < n; ++u) {
 		for (uint32_t k = net.car_first[u]; k < net.car_first[u + 1]; ++k) {
 			if (net.car_to[k] >= n || net.car_to[k] == u || net.car_ds[k] == 0) {
 				return bad("дуга машины: петля, нулевой вес или ссылка вне узлов");
@@ -276,6 +283,11 @@ Status finalize_route_network(RouteNetwork &net) {
 	if (net.route_first.empty() || net.route_first[0] != 0 || net.route_first[routes] != net.pos_stop.size() ||
 			net.route_mode.size() != routes || net.pos_ride_s.size() != net.pos_stop.size()) {
 		return bad("позиции маршрутов не согласованы");
+	}
+	for (uint32_t r = 0; r < routes; ++r) {
+		if (net.route_first[r + 1] < net.route_first[r]) {
+			return bad("смещения позиций маршрутов убывают");
+		}
 	}
 	net.pos_route.assign(net.pos_count(), 0);
 	net.pos_index.assign(net.pos_count(), 0);

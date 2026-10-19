@@ -641,6 +641,17 @@ void test_no_path_reasons() {
 	RouteNetwork broken = b.net;
 	broken.pos_stop[0] = 999;
 	CHECK(finalize_route_network(broken).code == StatusCode::invalid_argument);
+	// Испорченные смещения CSR и непредставимые времена отклоняются до обхода, без чтения за массивом.
+	RouteNetwork csr = b.net;
+	csr.car_first = { 0, 2, 1, csr.car_first[3], csr.car_first[4] };
+	CHECK(finalize_route_network(csr).code == StatusCode::invalid_argument);
+	RouteNetwork routes = b.net;
+	routes.route_first = { 0, 100, 2, 4 };
+	CHECK(finalize_route_network(routes).code == StatusCode::invalid_argument);
+	RouteNetwork slow = b.net;
+	slow.params.walk_speed_mps = 0.001;  // подход на радиус — больше 65 535 с: в u16 плана не помещается
+	slow.params.walk_only_max_s = 0;
+	CHECK(finalize_route_network(slow).code == StatusCode::invalid_argument);
 	RouteNetwork unfinished;
 	TripPlanner none;
 	CHECK(none.build(unfinished).code == StatusCode::invalid_state);
@@ -794,6 +805,29 @@ void test_cache_random() {
 	CHECK(bad == 0);
 	CHECK(cache.stats().evictions > 0 && cache.stats().entries > 0);
 	CHECK(cache.allocated_bytes() > 0);
+
+	// Серии путей разной длины: свободные участки пула входят в предел, пул уплотняется, и ёмкость
+	// кеша не растёт сверх предела с запасом роста массивов.
+	const uint64_t limit = uint64_t(1) << 20;
+	PathCache series(limit);
+	uint64_t worst = 0;
+	bool within = true;
+	for (uint32_t len = 1; len <= 20; ++len) {
+		for (uint32_t i = 0; i < 40000; ++i) {
+			PathKey k;
+			k.origin = len;
+			k.end_stop = i;
+			TransitPath p;
+			p.rides.assign(len, TransitRide{ i, 0, 1, 0 });
+			const uint32_t slot = series.insert(k, p);
+			within = within && series.stats().bytes <= limit && series.ride_count(slot) == len &&
+					series.rides(slot)[len - 1].route == i;
+		}
+		worst = std::max(worst, series.allocated_bytes());
+	}
+	CHECK(within);
+	CHECK(series.stats().compactions > 0);
+	CHECK(worst < 2 * limit + (uint64_t(64) << 10));
 }
 
 // ---------- Кеш, потоки и порядок ----------

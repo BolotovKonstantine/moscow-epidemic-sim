@@ -178,9 +178,13 @@ bool PathKey::operator<(const PathKey &o) const {
 }
 
 size_t PathKeyHash::operator()(const PathKey &k) const {
-	uint64_t h = k.origin * 0x9E3779B97F4A7C15ull;
-	h ^= (uint64_t(k.end_stop) << 16 | uint64_t(k.period) << 8 | uint64_t(k.tree)) + 0x632BE59BD9B4E019ull + (h << 6) + (h >> 2);
-	return size_t(h ^ (h >> 31));
+	// Все поля ключа перемешиваются в младшие биты (финализатор SplitMix64): по ним выбирается ячейка таблицы.
+	auto mix = [](uint64_t z) {
+		z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+		z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+		return z ^ (z >> 31);
+	};
+	return size_t(mix(mix(k.origin) ^ (uint64_t(k.end_stop) << 16 | uint64_t(k.period) << 8 | uint64_t(k.tree))));
 }
 
 uint64_t cell_key(const RouteNetwork &net, const RoutePoint &p) {
@@ -229,6 +233,8 @@ void PathCache::clear() {
 	free_rides_.clear();
 	table_.clear();
 	head_ = tail_ = kRouteNone;
+	live_bytes_ = 0;
+	free_rides_count_ = 0;
 	const uint64_t peak = stats_.peak_bytes;
 	stats_ = PathCacheStats();
 	stats_.peak_bytes = peak;
@@ -344,16 +350,20 @@ uint32_t PathCache::find(const PathKey &key) {
 
 void PathCache::evict_to(uint64_t target) {
 	uint32_t i = tail_;
-	while (stats_.bytes > target && i != kRouteNone) {
+	while (live_bytes_ > target && i != kRouteNone) {
 		const uint32_t prev = slots_[i].prev;
 		if (slots_[i].pins == 0) {
 			Slot &s = slots_[i];
 			unlink(i);
 			erase_index(i);
-			stats_.bytes -= entry_bytes(s.rides);
+			live_bytes_ -= entry_bytes(s.rides);
+			free_rides_count_ += s.rides;
 			--stats_.entries;
 			++stats_.evictions;
 			if (s.rides > 0) {
+				if (free_rides_.size() <= s.rides) {
+					free_rides_.resize(size_t(s.rides) + 1);
+				}
 				free_rides_[s.rides].push_back(s.ride_at);
 			}
 			s = Slot();
@@ -379,8 +389,19 @@ uint32_t PathCache::insert(const PathKey &key, const TransitPath &path) {
 	}
 	const size_t n = path.rides.size();
 	const uint64_t bytes = entry_bytes(n);
-	if (stats_.bytes + bytes > limit_) {
+	if (live_bytes_ + bytes > limit_) {
 		evict_to(limit_ > bytes ? limit_ - bytes : 0);
+	}
+	// Свободные участки пула переиспользуются только записями той же длины, поэтому они входят в
+	// предел; при нехватке места или большой доле свободного пул уплотняется.
+	// Перед уплотнением освобождается запас в восьмую часть предела, чтобы уплотнение не повторялось на
+	// каждой следующей вставке.
+	if (free_rides_count_ > 0 && live_bytes_ + free_rides_count_ * sizeof(TransitRide) + bytes > limit_) {
+		const uint64_t reserve = limit_ / 8 + bytes;
+		evict_to(limit_ > reserve ? limit_ - reserve : 0);
+		compact();
+	} else if (free_rides_count_ * 4 > pool_.size() + 1024) {
+		compact();
 	}
 	if ((stats_.entries + 1) * 2 > table_.size()) {
 		grow_table();
@@ -402,6 +423,7 @@ uint32_t PathCache::insert(const PathKey &key, const TransitPath &path) {
 		if (!free_rides_[n].empty()) {
 			at = free_rides_[n].back();
 			free_rides_[n].pop_back();
+			free_rides_count_ -= n;
 		} else {
 			grow_gently(pool_, pool_.size() + n);
 			at = uint32_t(pool_.size());
@@ -424,12 +446,31 @@ uint32_t PathCache::insert(const PathKey &key, const TransitPath &path) {
 	table_[lookup(key)] = i;
 	++stats_.entries;
 	++stats_.inserts;
-	stats_.bytes += bytes;
+	live_bytes_ += bytes;
+	stats_.bytes = live_bytes_ + free_rides_count_ * sizeof(TransitRide);
 	if (stats_.bytes > limit_) {
 		++stats_.over_limit;
 	}
 	stats_.peak_bytes = std::max(stats_.peak_bytes, stats_.bytes);
 	return i;
+}
+
+// Поездки живых записей переносятся в новый плотный пул; свободных участков не остаётся.
+void PathCache::compact() {
+	std::vector<TransitRide> pool;
+	pool.reserve(pool_.size() - free_rides_count_);
+	for (Slot &s : slots_) {
+		if (s.used && s.rides > 0) {
+			const uint32_t at = uint32_t(pool.size());
+			pool.insert(pool.end(), pool_.begin() + s.ride_at, pool_.begin() + s.ride_at + s.rides);
+			s.ride_at = at;
+		}
+	}
+	pool_.swap(pool);
+	std::vector<std::vector<uint32_t>>().swap(free_rides_);
+	free_rides_count_ = 0;
+	stats_.bytes = live_bytes_;
+	++stats_.compactions;
 }
 
 void PathCache::pin(uint32_t slot) {

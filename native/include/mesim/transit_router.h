@@ -96,7 +96,8 @@ RoutePoint cell_center(const RouteNetwork &net, uint64_t key);
 
 struct PathCacheStats {
 	uint64_t entries = 0;
-	uint64_t bytes = 0;           // учёт предела: записи, их поездки и индекс
+	uint64_t bytes = 0;           // учёт предела: записи, их поездки, индекс и свободные участки пула
+	uint64_t compactions = 0;     // уплотнений пула поездок
 	uint64_t peak_bytes = 0;
 	uint64_t inserts = 0;
 	uint64_t hits = 0;
@@ -110,7 +111,8 @@ struct PathCacheStats {
 // давно не нужных незакреплённых записей; закреплённые (по ним кто-то едет) не вытесняются.
 // Вытесненная запись восстанавливается заново тем же деревом, поэтому результат от предела не зависит.
 // Хранение компактное: слот 40 байт, поездки — в общем пуле (освобождённые участки повторно
-// используются записями той же длины), индекс — открытая адресация по номерам слотов.
+// используются записями той же длины), индекс — открытая адресация по номерам слотов. Свободные
+// участки пула входят в предел; когда их становится много, пул уплотняется.
 class PathCache {
 public:
 	explicit PathCache(uint64_t limit_bytes = uint64_t(256) << 20);
@@ -170,6 +172,10 @@ private:
 	void unlink(uint32_t slot);
 	void push_front(uint32_t slot);
 	void evict_to(uint64_t target);
+	void compact();
+
+	uint64_t live_bytes_ = 0;  // записи без свободных участков пула
+	uint64_t free_rides_count_ = 0;
 };
 
 } // namespace mesim
