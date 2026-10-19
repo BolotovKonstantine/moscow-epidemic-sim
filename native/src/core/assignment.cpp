@@ -13,6 +13,7 @@
 #include <map>
 #include <memory>
 #include <queue>
+#include <string>
 #include <utility>
 
 #include "mesim/city_data.h"
@@ -324,7 +325,7 @@ struct Assigner {
 	bool eligible(int mode, uint32_t home, uint32_t place) const;
 	uint32_t take(uint32_t place, bool over);
 	void release(uint32_t place, bool over);
-	void build_groups();
+	Status build_groups();
 };
 
 Status Assigner::build_places() {
@@ -814,7 +815,7 @@ uint32_t Assigner::choose(uint32_t id, uint32_t round, uint8_t &flags) {
 	return take(best, true);
 }
 
-void Assigner::build_groups() {
+Status Assigner::build_groups() {
 	const size_t np = places.count();
 	const size_t n = pop.persons();
 	// Жители мест подряд (CSR), внутри места — по ID.
@@ -872,7 +873,10 @@ void Assigner::build_groups() {
 	places.group_first.assign(1, 0);
 	places.group_place.clear();
 	places.group_members = members;
-	places.person_group.allocate(n);
+	if (!places.person_group.allocate(n)) {
+		return Status::error(StatusCode::limit_exceeded,
+				"Назначение мест: не хватает памяти на группы жителей (" + std::to_string(n) + " элементов)");
+	}
 	for (size_t id = 0; id < n; ++id) {
 		places.person_group[id] = kGroupNone;
 	}
@@ -919,6 +923,7 @@ void Assigner::build_groups() {
 		++r.groups;
 		r.group_max = std::max(r.group_max, places.group_first[gidx + 1] - places.group_first[gidx]);
 	}
+	return Status::success();
 }
 
 } // namespace
@@ -1159,8 +1164,11 @@ Status assign_places(const PlacesInput &input, const TripPlanner &planner, const
 			++travelled[k];
 		}
 		report.verify_s += seconds_since(t0);
+		// Жители, а не отказы: житель считается при первом повторном назначении.
 		for (uint32_t id : failed) {
-			++report.kind[int(place_kind_of(Role(population.role[id])))].reassigned;
+			if (a.excluded[id].size() == 1) {
+				++report.kind[int(place_kind_of(Role(population.role[id])))].reassigned;
+			}
 		}
 		todo.swap(failed);
 	}
@@ -1198,7 +1206,11 @@ Status assign_places(const PlacesInput &input, const TripPlanner &planner, const
 		}
 	}
 	t0 = std::chrono::steady_clock::now();
-	a.build_groups();
+	st = a.build_groups();
+	if (!st.ok()) {
+		places.clear();
+		return st;
+	}
 	report.groups_s = seconds_since(t0);
 	return Status::success();
 }
@@ -1274,7 +1286,8 @@ AssignmentCheck check_assignment(const Population &pop, const Places &places, co
 	}
 	for (int k = 0; k < kPlaceKinds; ++k) {
 		const KindReport &r = report.kind[k];
-		if (r.demand != demand[k] || r.assigned + r.over_capacity + r.missing + r.unreachable != demand[k]) {
+		if (r.demand != demand[k] || r.assigned + r.over_capacity + r.missing + r.unreachable != demand[k] ||
+				r.reassigned > demand[k]) {
 			++c.demand_mismatch;
 		}
 	}

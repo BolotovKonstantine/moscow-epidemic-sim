@@ -129,7 +129,7 @@ struct AssignmentCheck {
 	uint64_t bad_flags = 0;         // флаг не согласован с местом (none ↔ missing/unreachable)
 	uint64_t over_capacity = 0;     // мест с назначенными сверх вместимости без флага у жителя
 	uint64_t assigned_mismatch = 0;  // Places::assigned не равно числу жителей места
-	uint64_t demand_mismatch = 0;   // назначено + сверх + нет + недостижимо ≠ спрос (по видам)
+	uint64_t demand_mismatch = 0;   // назначено + сверх + нет + недостижимо ≠ спрос, повторно > спроса (по видам)
 	uint64_t bad_groups = 0;        // житель не в своей группе, группа другого места, группа больше предела
 	uint64_t mixed_age_classes = 0;  // класс или группа сада с разным годом возраста
 

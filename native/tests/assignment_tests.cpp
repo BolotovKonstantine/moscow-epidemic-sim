@@ -292,14 +292,16 @@ void test_unreachable() {
 // Остановка у места есть, но путь до неё не связан: проверка плана находит «нет пути»,
 // житель назначается повторно в другой блок; без повторов — флаг «недостижимо».
 void test_reassign() {
-	for (int rounds = 0; rounds <= 1; ++rounds) {
+	for (int rounds : { 0, 1, 3 }) {
 		Town t;
 		t.line({ 0, 500, 1000, 1500, 2000, 2500, 3000, 3400 });
-		t.line({ 3950, 4450 });  // отдельный маршрут
+		t.line({ 3950, 4450 });  // отдельные маршруты
+		t.line({ 5950, 6450 });
 		const uint32_t home = t.building(0, 500, 0);
 		const uint32_t mid = t.building(2000, 1000, 1);
 		const uint32_t a = t.building(3400, 100, 1);    // представитель блока 3 км: путь есть
 		const uint32_t b = t.building(3950, 5000, 1);   // остановка есть, но маршрут не связан
+		const uint32_t c = t.building(5950, 5000, 1);   // так же; житель может не найти путь дважды
 		CHECK(t.finish());
 		TripPlanner planner;
 		CHECK(planner.build(t.net).ok());
@@ -314,18 +316,19 @@ void test_reassign() {
 		AssignmentReport rep;
 		CHECK(assign_places(t.in, planner, params, 5, pop, places, rep).ok());
 		CHECK(check_assignment(pop, places, params, rep).ok());
-		uint32_t bp = kRouteNone;
-		for (size_t p = 0; p < places.count(); ++p) {
-			bp = places.endpoint[p] == b ? uint32_t(p) : bp;
-		}
 		for (size_t id = 0; id < pop.persons(); ++id) {
-			CHECK(pop.place[id] != bp);
+			const uint32_t p = pop.place[id];
+			CHECK(p == kPlaceNone || (places.endpoint[p] != b && places.endpoint[p] != c));
 		}
+		// Повторно назначенные — жители, а не отказы: их не больше спроса.
+		CHECK(rep.kind[0].reassigned <= rep.kind[0].demand);
 		if (rounds == 0) {
 			CHECK(rep.kind[0].unreachable > 0 && rep.kind[0].reassigned == 0);
 		} else {
-			CHECK(rep.kind[0].reassigned > 0 && rep.kind[0].unreachable == 0);
-			CHECK(rep.rounds == 2);
+			CHECK(rep.kind[0].reassigned > 0);
+		}
+		if (rounds == 3) {
+			CHECK(rep.kind[0].unreachable == 0 && rep.rounds >= 2);
 		}
 		CHECK(all_reachable(planner, pop, places, rep.period));
 		(void)mid;
