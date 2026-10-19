@@ -57,6 +57,10 @@ PathKey trip_path_key(const RouteNetwork &net, const TripRequest &request, const
 struct PlanOptions {
 	unsigned threads = 0;     // 0 — по числу ядер
 	bool fill_cache = true;   // класть выбранные пути транспорта в кеш (в порядке ключей)
+	// Ожидаемая загрузка перегонов: [период × позиции маршрутов] — сколько поездок транспортом
+	// этого периода проезжает перегон от позиции к следующей. nullptr — не считать. Прибавляется к
+	// переданным значениям; суммы целые, поэтому от числа потоков не зависят.
+	std::vector<uint32_t> *segment_load = nullptr;
 };
 
 struct PlanStats {
@@ -128,6 +132,12 @@ public:
 	Status acquire_path(RouteWorkspace &ws, const TripRequest &request, const TripPlan &plan, PathCache &cache,
 			uint32_t &slot) const;
 
+	// Штраф загрузки перегонов для выбора пути транспорта (учёт загрузки, docs/mobility.md): по
+	// периоду × позиции маршрута, пустой — без штрафа. Меняет пути, поэтому кеш, заполненный при
+	// другом штрафе, нужно очистить; восстановление вытесненных путей идёт с текущим штрафом.
+	Status set_crowding(std::vector<float> crowd);
+	const std::vector<float> &crowding() const { return crowd_; }
+
 	// Раскрыть путь в географию: машина — по исходным дугам, транспорт — подход, позиции маршрутов,
 	// пересадки и отход, пешком — по прямой. Время участков в сумме равно времени плана.
 	Status expand(RouteWorkspace &ws, const TripRequest &request, const TripPlan &plan, PathCache &cache,
@@ -136,6 +146,11 @@ public:
 private:
 	const RouteNetwork *net_ = nullptr;
 	CarRouter car_;
+	std::vector<float> crowd_;  // [период × позиции] или пусто
+
+	const float *crowd_row(uint32_t period) const {
+		return crowd_.empty() ? nullptr : crowd_.data() + size_t(period) * net_->pos_count();
+	}
 
 	struct Car {
 		uint32_t ds = kCarUnreachable;
