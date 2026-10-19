@@ -3,59 +3,18 @@
 
 #include "mesim/trip_planner.h"
 
+#include "parallel.h"
+
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <memory>
-#include <thread>
 
 namespace mesim {
 
 namespace {
 
 const char *const kTripModeNames[] = { "none", "walk", "car", "transit" };
-
-double seconds_since(std::chrono::steady_clock::time_point start) {
-	return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-}
-
-// Индексы [0, n) раздаются потокам порциями; f(индекс, номер потока). Результат должен зависеть
-// только от индекса: порядок исполнения между потоками не задан.
-template <typename F>
-void parallel_for(size_t n, unsigned threads, size_t chunk, F &&f) {
-	if (n == 0) {
-		return;
-	}
-	threads = unsigned(std::min<size_t>(threads, (n + chunk - 1) / chunk));
-	if (threads <= 1) {
-		for (size_t i = 0; i < n; ++i) {
-			f(i, 0u);
-		}
-		return;
-	}
-	std::atomic<size_t> next(0);
-	auto work = [&](unsigned worker) {
-		while (true) {
-			const size_t a = next.fetch_add(chunk);
-			if (a >= n) {
-				break;
-			}
-			const size_t b = std::min(n, a + chunk);
-			for (size_t i = a; i < b; ++i) {
-				f(i, worker);
-			}
-		}
-	};
-	std::vector<std::thread> pool;
-	for (unsigned w = 1; w < threads; ++w) {
-		pool.emplace_back(work, w);
-	}
-	work(0);
-	for (std::thread &t : pool) {
-		t.join();
-	}
-}
 
 struct GroupItem {
 	uint64_t key;
@@ -282,7 +241,7 @@ Status TripPlanner::plan(const TripRequest *requests, size_t n, TripPlan *out, P
 			return Status::error(StatusCode::invalid_argument, "планировщик поездок: запрос вне сети");
 		}
 	}
-	unsigned threads = options.threads != 0 ? options.threads : std::max(1u, std::thread::hardware_concurrency());
+	unsigned threads = worker_threads(options.threads);
 	std::vector<std::unique_ptr<RouteWorkspace>> ws;
 	for (unsigned w = 0; w < threads; ++w) {
 		ws.emplace_back(new RouteWorkspace(net));
