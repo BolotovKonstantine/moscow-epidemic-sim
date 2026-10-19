@@ -9,7 +9,7 @@ const MASK32 := 0xFFFFFFFF
 const MASK16 := 0xFFFF
 const TWO32 := 0x100000000
 
-# Номера потоков ядра закреплены в rng.h; поток транспорта — предложение эталона для #40/#44.
+# Номера потоков ядра закреплены в rng.h (RngStream): 3 — расписания, 4 — модельные рейсы.
 const STREAM_POPULATION := 1
 const STREAM_PLACES := 2
 const STREAM_TRANSIT := 4
