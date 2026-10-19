@@ -24,6 +24,8 @@ var pos_index: PackedInt32Array
 var pos_stop: PackedInt32Array
 var pos_ride_s: PackedInt32Array  # перегон до следующей позиции, у последней — 0
 var stop_positions: Array = []    # позиции на остановке по возрастанию
+var stop_board := PackedByteArray()   # внутри региона и есть не последняя позиция маршрута
+var stop_alight := PackedByteArray()  # внутри региона и есть не первая позиция маршрута
 var stop_transfers: Array = []    # [остановка, секунды] внутри региона, кроме своей
 
 
@@ -232,6 +234,15 @@ func _build_transit() -> void:
 			stop_positions[stop].append(k)
 			k += 1
 	route_first[scene.routes.size()] = k
+	stop_board.resize(stop_count)
+	stop_alight.resize(stop_count)
+	for p in k:
+		if scene.stops[pos_stop[p]].outside:
+			continue
+		if pos_index[p] + 1 < route_length(pos_route[p]):
+			stop_board[pos_stop[p]] = 1
+		if pos_index[p] > 0:
+			stop_alight[pos_stop[p]] = 1
 	# Пешие пересадки: тот же stop_area или ближе transfer_radius_m, только внутри региона, не короче 1 с.
 	for a in stop_count:
 		if scene.stops[a].outside:
@@ -305,7 +316,7 @@ func _tree(seeds: Array, q: int) -> Dictionary:
 func _seeds(center: Array, radius: float) -> Array:
 	var seeds := []
 	for s in scene.stops.size():
-		if scene.stops[s].outside:
+		if not stop_board[s]:  # остальные остановки ни к чему не ведут: с A(s) только посадка
 			continue
 		var d := distance(center, scene.stops[s].pos)
 		if d <= radius:
@@ -313,12 +324,12 @@ func _seeds(center: Array, radius: float) -> Array:
 	return seeds
 
 
-# Конечные остановки: внутри региона, не дальше access_radius_m от цели, до access_stops_max
-# ближайших (расстояние, номер).
+# Конечные остановки: с выходом внутри региона (не первая позиция хотя бы одного маршрута), не
+# дальше access_radius_m от цели, до access_stops_max ближайших (расстояние, номер).
 func _end_stops(dest: Array) -> Array:
 	var near := []
 	for s in scene.stops.size():
-		if scene.stops[s].outside:
+		if not stop_alight[s]:
 			continue
 		var d := distance(dest, scene.stops[s].pos)
 		if d <= params.access_radius_m:
