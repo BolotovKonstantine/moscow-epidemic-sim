@@ -14,6 +14,7 @@
 
 #include "json.h"
 #include "mesim/mobility.h"
+#include "mesim/session_trips.h"
 #include "mesim/sim_clock.h"
 #include "mesim/trip_planner.h"
 #include "scene_loader.h"
@@ -189,6 +190,11 @@ std::string log_json(const Scene &s, const LogRecord &r) {
 			return out + q("cancel") + "," + num(r.a) + "," + num(r.b) + "]";
 		case LogEvent::returned:
 			return out + q("returned") + "]";
+		case LogEvent::reroute:
+			if (TripMode(r.a) == TripMode::transit) {
+				return out + q("reroute") + "," + q(trip_mode_name(TripMode(r.a))) + "," + num(r.b) + "," + num(r.c) + "]";
+			}
+			return out + q("reroute") + "," + q(trip_mode_name(TripMode(r.a))) + "]";
 	}
 	(void)s;
 	return out + "]";
@@ -212,10 +218,14 @@ bool prepare(const std::string &path, Prepared &p) {
 	}
 	std::vector<uint32_t> owner;
 	const std::vector<TripRequest> req = scene_requests(p.scene, owner);
-	p.plans.assign(req.size(), TripPlan());
 	PathCache cache;
 	PlanStats stats;
-	if (!p.planner.plan(req.data(), req.size(), p.plans.data(), &cache, PlanOptions(), stats).ok()) {
+	// Как в сессии: интервалы по спросу (если включены в сцене); итераций учёта загрузки в эталоне нет.
+	CrowdingParams crowding;
+	crowding.iterations = 0;
+	CrowdingReport report;
+	if (!plan_with_crowding(p.scene.net, p.planner, req, p.plans, cache, p.scene.fleet, crowding, PlanOptions(), report,
+				stats).ok()) {
 		return false;
 	}
 	const size_t n = p.scene.residents.size();
@@ -244,6 +254,8 @@ struct RunMode {
 	uint32_t step = 0;            // 0 — сразу до контрольного времени, иначе порциями
 	bool reverse_init = false;
 	uint64_t cache_limit = uint64_t(256) << 20;
+	uint32_t reroute_window = 300;  // окно новых путей (#44): от него и числа потоков выход не зависит
+	unsigned threads = 0;
 };
 
 Output run_scene(const Prepared &p, const RunMode &mode) {
@@ -257,6 +269,8 @@ Output run_scene(const Prepared &p, const RunMode &mode) {
 	options.keep_runs = true;
 	options.reverse_init = mode.reverse_init;
 	options.journal_ids = { 2, 13 };
+	options.reroute_window_s = mode.reroute_window;
+	options.threads = mode.threads;
 	MobilitySim sim;
 	const Status st = sim.init(p.planner, cache, p.scene.fleet, p.scene.seed, p.pop, schedule, options);
 	CHECK(st.ok());
@@ -375,10 +389,12 @@ void test_scene(const std::string &dir, const std::string &name) {
 	CHECK(out.violations == 0);
 	CHECK(out.conserved);
 
-	// Нарезка продвижения, обратная регистрация и маленький кеш (вытеснение и восстановление путей)
-	// дают тот же выход.
-	for (const RunMode mode : { RunMode{ 1, false, uint64_t(256) << 20 }, RunMode{ 977, true, uint64_t(256) << 20 },
-				 RunMode{ 0, true, 1 } }) {
+	// Нарезка продвижения, обратная регистрация, маленький кеш (вытеснение и восстановление путей),
+	// окно новых путей (каждую секунду, сутки — почти все новые пути считаются на месте) и число
+	// потоков дают тот же выход.
+	for (const RunMode mode : { RunMode{ 1, false, uint64_t(256) << 20, 300, 0 },
+				 RunMode{ 977, true, uint64_t(256) << 20, 1, 4 }, RunMode{ 0, true, 1, 300, 1 },
+				 RunMode{ 0, false, uint64_t(256) << 20, 86400, 3 }, RunMode{ 61, false, uint64_t(256) << 20, 7, 2 } }) {
 		const Output other = run_scene(p, mode);
 		CHECK(other.checkpoints == out.checkpoints);
 		CHECK(other.log == out.log);
@@ -425,6 +441,15 @@ void test_rejects(const std::string &dir) {
 	fleet = p.scene.fleet;
 	fleet.capacity.pop_back();
 	CHECK(!sim.init(p.planner, cache, fleet, 1, p.pop, schedule, MobilityOptions()).ok());
+	fleet = p.scene.fleet;
+	fleet.demand_load_bp = 10001;
+	CHECK(!sim.init(p.planner, cache, fleet, 1, p.pop, schedule, MobilityOptions()).ok());
+	fleet = p.scene.fleet;
+	fleet.min_headway_s[0] = 0;
+	CHECK(!sim.init(p.planner, cache, fleet, 1, p.pop, schedule, MobilityOptions()).ok());
+	fleet = p.scene.fleet;
+	fleet.capacity[0] = 0;  // вместимость 0 допустима: рейс никого не берёт
+	CHECK(sim.init(p.planner, cache, fleet, 1, p.pop, schedule, MobilityOptions()).ok());
 	std::vector<uint32_t> home = p.home;
 	home[0] = 1u << 30;
 	MobilityPopulation pop = p.pop;
@@ -477,6 +502,7 @@ int main(int argc, char **argv) {
 	const std::string dir = argv[1];
 	test_scene(dir, "mobility_edge");
 	test_scene(dir, "mobility_mini");
+	test_scene(dir, "mobility_reroute");
 	test_rejects(dir);
 	test_release_pins(dir);
 	std::printf("%s: %d проверок, %d ошибок\n", g_failures ? "FAIL" : "OK", g_checks, g_failures);

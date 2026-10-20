@@ -110,7 +110,7 @@ bool plan_world(World &w, PathCache &cache, CrowdingReport &report, uint8_t star
 		return false;
 	}
 	PlanStats stats;
-	const Status st = plan_with_crowding(w.planner, w.requests, w.trips.plans, cache, w.fleet, w.crowding, PlanOptions(),
+	const Status st = plan_with_crowding(w.net, w.planner, w.requests, w.trips.plans, cache, w.fleet, w.crowding, PlanOptions(),
 			report, stats);
 	if (!st.ok()) {
 		std::fprintf(stderr, "%s\n", st.message.c_str());
@@ -232,7 +232,9 @@ void test_crowding_and_store(World &w, const std::string &tmp) {
 	PathCache cache;
 	CrowdingReport report;
 	CHECK(plan_world(w, cache, report, 0, 9 * kDay));
-	CHECK(report.over_share.size() == w.crowding.iterations + 1);
+	// Первый проход, проход с интервалами по спросу (#44, в мини-городе включены) и итерации.
+	CHECK(w.fleet.demand_load_bp > 0 && report.demand_changed > 0);
+	CHECK(report.over_share.size() == w.crowding.iterations + 2);
 	std::printf("учёт загрузки: %u итераций, доля сверх способности:", w.crowding.iterations);
 	for (double x : report.over_share) {
 		std::printf(" %.4f", x);
@@ -247,7 +249,7 @@ void test_crowding_and_store(World &w, const std::string &tmp) {
 		PlanStats s1;
 		PlanOptions one;
 		one.threads = 1;
-		CHECK(plan_with_crowding(v.planner, v.requests, plans1, c1, v.fleet, v.crowding, one, r1, s1).ok());
+		CHECK(plan_with_crowding(v.net, v.planner, v.requests, plans1, c1, v.fleet, v.crowding, one, r1, s1).ok());
 		CHECK(plans1.size() == v.trips.plans.size());
 		bool same = true;
 		for (size_t i = 0; i < plans1.size() && same; ++i) {
@@ -260,7 +262,7 @@ void test_crowding_and_store(World &w, const std::string &tmp) {
 	// Хранилище: те же планы, штраф и пути; другой ключ отклоняется, испорченный файл — ошибка.
 	const std::string key = plan_store_key("sim_mini", w.net, w.fleet, w.crowding, w.requests);
 	const std::string path = tmp + "/mesim_plan_store.bin";
-	CHECK(save_plan_store(path, key, w.trips.plans, w.planner.crowding(), cache).ok());
+	CHECK(save_plan_store(path, key, w.net, w.trips.plans, w.planner.crowding(), cache).ok());
 	std::vector<TripPlan> plans;
 	std::vector<float> crowd;
 	PathCache loaded;
@@ -414,11 +416,17 @@ void test_week(World &w) {
 	CHECK(base.conserved);
 	const MobilityStats &s = base.stats;
 	std::printf("неделя мини-города: %llu поездок (пешком %llu, машина %llu, транспорт %llu), посадок %llu, "
-				"не поместились %llu, отмен %llu, восстановлено путей %llu, рейсов %llu\n",
+				"не поместились %llu, новый путь %llu (пешком %llu, готовых %llu, деревьев %llu), отмен %llu, "
+				"восстановлено путей %llu, рейсов %llu\n",
 			(unsigned long long)s.trips, (unsigned long long)s.by_mode[1], (unsigned long long)s.by_mode[2],
 			(unsigned long long)s.by_mode[3], (unsigned long long)s.boardings, (unsigned long long)s.left_behind,
-			(unsigned long long)s.cancelled, (unsigned long long)s.path_rebuilds, (unsigned long long)s.runs);
+			(unsigned long long)s.rerouted, (unsigned long long)s.rerouted_walk, (unsigned long long)s.reroute_ready,
+			(unsigned long long)s.reroute_trees, (unsigned long long)s.cancelled, (unsigned long long)s.path_rebuilds,
+			(unsigned long long)s.runs);
 	CHECK(s.trips > 0 && s.arrivals > 0);
+	// Перегрузка мини-города (уменьшенная вместимость) задействует новый путь после предела ожидания
+	// (#44) и отмену; новые пути посчитаны заранее. Новый путь пешком проверяет сцена mobility_edge.
+	CHECK(s.rerouted > 0 && s.cancelled > 0 && s.reroute_ready > 0);
 	// Ритм: в 3:00 понедельника почти все дома, в полдень будня занятые на местах, в полдень
 	// воскресенья мест почти нет; посещения бывают.
 	const auto &c = base.counts;

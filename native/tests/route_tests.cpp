@@ -21,6 +21,7 @@
 #include "mesim/city_data.h"
 #include "mesim/rng.h"
 #include "mesim/route_network.h"
+#include "mesim/session_trips.h"
 #include "mesim/transit_router.h"
 #include "mesim/trip_planner.h"
 #include "scene_loader.h"
@@ -101,7 +102,12 @@ void test_scene(const std::string &dir, const std::string &name) {
 		PlanStats stats;
 		PlanOptions options;
 		options.threads = threads;
-		CHECK(planner.plan(req.data(), req.size(), plans.data(), &cache, options, stats).ok());
+		// Как в сессии: первый проход, интервалы по спросу (если включены в сцене) и новый проход;
+		// итераций учёта загрузки в эталоне нет.
+		CrowdingParams crowding;
+		crowding.iterations = 0;
+		CrowdingReport report;
+		CHECK(plan_with_crowding(s.net, planner, req, plans, cache, s.fleet, crowding, options, report, stats).ok());
 		RouteWorkspace ws(s.net);
 		const auto &exp = expected.get("plans")->items;
 		CHECK(exp.size() == s.residents.size());
@@ -132,6 +138,95 @@ void test_scene(const std::string &dir, const std::string &name) {
 			CHECK(exp[id].get("no_path")->boolean == none);
 		}
 		CHECK(cache.stats().pinned == 0);
+	}
+}
+
+// Интервалы по спросу сцены mobility_reroute — как посчитаны вручную в тесте эталона; без
+// demand_load_bp — базовые; set_route_headways отклоняет движение там, где у вида его нет.
+void test_demand_headways(const std::string &dir) {
+	Scene s;
+	CHECK(load_scene(dir + "/mobility_reroute/scene.json", s));
+	if (g_failures > 0) {
+		return;
+	}
+	TripPlanner planner;
+	CHECK(planner.build(s.net).ok());
+	std::vector<uint32_t> owner;
+	const std::vector<TripRequest> req = scene_requests(s, owner);
+	std::vector<TripPlan> plans(req.size());
+	PathCache cache;
+	PlanStats stats;
+	CrowdingParams crowding;
+	crowding.iterations = 0;
+	CrowdingReport report;
+	CHECK(plan_with_crowding(s.net, planner, req, plans, cache, s.fleet, crowding, PlanOptions(), report, stats).ok());
+	CHECK(s.net.route_headway(0, 1) == 300 && s.net.route_headway(0, 2) == 600);  // ⌊5000 × 1800 / 50000⌋ = 180 → минимум 300
+	CHECK(s.net.route_headway(9, 1) == 450);                                      // ⌊5000 × 1800 / 20000⌋ = 450
+	CHECK(s.net.route_headway(2, 2) == 600 && s.net.route_headway(4, 1) == 600);  // реже базового и вместимость 0 — базовый
+	CHECK(s.net.route_headway(0, 0) == 0);
+	CHECK(report.demand_changed == 2 && report.replanned.size() == 2);
+	// Повторный расчёт начинает с базовых интервалов: тот же результат.
+	const std::vector<uint32_t> first = s.net.route_headway_s;
+	CHECK(plan_with_crowding(s.net, planner, req, plans, cache, s.fleet, crowding, PlanOptions(), report, stats).ok());
+	CHECK(s.net.route_headway_s == first);
+	FleetParams off = s.fleet;
+	off.demand_load_bp = 0;
+	CHECK(plan_with_crowding(s.net, planner, req, plans, cache, off, crowding, PlanOptions(), report, stats).ok());
+	CHECK(s.net.route_headway(0, 1) == 600 && s.net.route_headway(9, 1) == 600 && report.demand_changed == 0);
+	std::vector<uint32_t> wrong = s.net.route_headway_s;
+	wrong[0] = 60;  // ночью вид не ходит
+	CHECK(set_route_headways(s.net, wrong).code == StatusCode::invalid_argument);
+	CHECK(set_route_headways(s.net, std::vector<uint32_t>(3, 600)).code == StatusCode::invalid_argument);
+	FleetParams bad = s.fleet;
+	bad.min_headway_s.pop_back();
+	std::vector<uint32_t> out;
+	CHECK(demand_headways(s.net, bad, std::vector<uint32_t>(size_t(s.net.period_count()) * s.net.pos_count()), out).code ==
+			StatusCode::invalid_argument);
+}
+
+// Новый путь после предела ожидания: группа целей с одним деревом даёт то же, что каждая цель
+// отдельно; исключённый маршрут не используется; пешком и «нет пути» — по правилу выбора вида.
+void test_reroute_group(const std::string &dir) {
+	for (const char *name : { "mobility_edge", "mobility_mini", "mobility_reroute" }) {
+		Scene s;
+		CHECK(load_scene(dir + "/" + name + "/scene.json", s));
+		if (g_failures > 0) {
+			return;
+		}
+		TripPlanner planner;
+		CHECK(planner.build(s.net).ok());
+		RouteWorkspace ws(s.net);
+		std::vector<uint32_t> to;
+		for (uint32_t e = 0; e < s.net.endpoint_count(); ++e) {
+			to.push_back(e);
+		}
+		std::vector<TripPlan> group(to.size()), one(1);
+		std::vector<TransitPath> paths(to.size()), path(1);
+		for (uint32_t k = 0; k < s.net.pos_count(); ++k) {
+			const uint32_t stop = s.net.pos_stop[k], route = s.net.pos_route[k];
+			for (uint32_t q = 0; q < s.net.period_count(); ++q) {
+				planner.reroute(ws, stop, route, uint8_t(q), to.data(), to.size(), group.data(), paths.data());
+				for (size_t i = 0; i < to.size(); ++i) {
+					planner.reroute(ws, stop, route, uint8_t(q), &to[i], 1, one.data(), path.data());
+					CHECK(same_plan(one[0], group[i]) && one[0].tree == group[i].tree);
+					CHECK(path[0].start_stop == paths[i].start_stop && path[0].core_s == paths[i].core_s &&
+							path[0].rides.size() == paths[i].rides.size());
+					for (const TransitRide &r : paths[i].rides) {
+						CHECK(r.route != route);
+					}
+					const uint32_t walk = route_walk_s(s.net.params, route_distance(s.net.stop_pos[stop], s.net.endpoint_pos[to[i]]));
+					if (group[i].mode == TripMode::walk) {
+						CHECK(group[i].time_s == walk && paths[i].rides.empty());
+					} else if (group[i].mode == TripMode::transit) {
+						CHECK(group[i].tree == TransitTree::reroute && !paths[i].rides.empty() &&
+								group[i].time_s == group[i].access_s + paths[i].core_s + group[i].egress_s);
+						CHECK(walk > s.net.params.walk_only_max_s || walk > group[i].time_s);
+					} else {
+						CHECK(group[i].mode == TripMode::none && walk > s.net.params.walk_fallback_max_s);
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -711,6 +806,9 @@ int main(int argc, char **argv) {
 	test_ch_random();
 	test_scene(scenarios, "mobility_edge");
 	test_scene(scenarios, "mobility_mini");
+	test_scene(scenarios, "mobility_reroute");
+	test_demand_headways(scenarios);
+	test_reroute_group(scenarios);
 	test_targeted_tree(scenarios);
 	test_cache_random();
 	test_cache_and_threads(scenarios);

@@ -1,7 +1,7 @@
 {
-  "config_version": 2,
+  "config_version": 3,
   "package_id": "moscow-2021",
-  "package_version": "0.7.0",
+  "package_version": "0.8.0",
   "description": "Москва и пояс 30 км от внешнего края МКАД: здания, функции, население по зданиям и зонам, дорожный и транспортный граф. Срез данных около 2020–2021 годов (OSM на 1 января 2021, сетка населения GHS-POP эпохи 2020).",
   "sources": {
     "osm": "osm-geofabrik-cfd-20210101",
@@ -107,7 +107,7 @@
       }
     },
     "mobility": {
-      "note": "Параметры поездок (#35, принято автором 14 октября 2026; перенесены из benchmarks/mobility/params.json в #36). Скорость пешехода — transfer_walk_speed_mps. Калибровка — #43/#44.",
+      "note": "Параметры поездок (#35, принято автором 14 октября 2026; перенесены из benchmarks/mobility/params.json в #36). Скорость пешехода — transfer_walk_speed_mps. Калибровка — #43/#44: интервал маршрута по спросу (#44, решение автора 19 октября 2026) — не чаще min_headway_minutes вида, загрузка провозной способности периода — demand_load_factor.",
       "car_speed_kmh": {"service": 12, "pedestrian": 0, "residential": 20, "tertiary": 28, "secondary": 33, "primary": 38, "trunk": 50, "motorway": 70},
       "transit_speed_kmh": {"bus": 16, "share_taxi": 20, "trolleybus": 15, "tram": 16, "light_rail": 25, "monorail": 20, "train": 45, "subway": 38},
       "vehicle_capacity": {
@@ -131,7 +131,9 @@
       "origin_cell_m": 250,
       "crowding_penalty": 1.0,
       "crowding_iterations": 3,
-      "building_node_max_m": 500
+      "building_node_max_m": 500,
+      "min_headway_minutes": {"bus": 1.5, "share_taxi": 2, "trolleybus": 3, "tram": 3, "light_rail": 3, "monorail": 4, "train": 4, "subway": 1.5},
+      "demand_load_factor": 0.35
     }
   },
   "quality": {

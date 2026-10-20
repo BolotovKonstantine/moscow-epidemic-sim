@@ -876,7 +876,7 @@ class SimValidationTests(unittest.TestCase):
         asset["size_bytes"], asset["sha256"] = len(data), hashlib.sha256(data).hexdigest()
         next(s for s in manifest["sources"] if s["source_id"].startswith("build-config-"))["sha256"] = asset["sha256"]   # карточка тоже переписана
         (package / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
-        self.assert_rejected(package, "не соответствует конфигурации версии 2")
+        self.assert_rejected(package, "не соответствует конфигурации версии 3")
 
     def test_sim_metadata_is_checked_without_files(self):
         for edit, message in ((lambda a: a.update(data_kind="game_setting"), "должен быть estimated"),

@@ -252,7 +252,7 @@ void test_loads_fixture() {
 	}
 	CHECK(status.ok());
 	CHECK(city.loaded());
-	CHECK(city.package_id() == "synthetic-mini-city" && city.package_version() == "0.7.0");
+	CHECK(city.package_id() == "synthetic-mini-city" && city.package_version() == "0.8.0");
 	CHECK(city.metric_crs() == "EPSG:32637" && city.plane_x0() == 376000.0 && city.plane_y0() == 6216000.0);
 	CHECK(city.zone_cell_m() == 1000 && city.periods().size() == 6);
 	CHECK(city.memory_bytes() > 0);
@@ -294,7 +294,7 @@ void test_expected_package() {
 	CHECK(expected.kind == "fixture" && expected.index_sha256.size() == 64 && expected.index_size_bytes > 0);
 	CityData city;
 	ExpectedPackage other = expected;
-	other.package_version = "0.7.1";
+	other.package_version = "0.8.1";
 	Status status = load_city((g_fixture / "sim").u8string(), other, city);
 	CHECK(status.code == StatusCode::version_mismatch);
 	other = expected;
@@ -368,7 +368,7 @@ void test_rejects_damaged_packages() {
 	{
 		PackageCopy p;  // версия пакета в заголовке таблицы
 		p.edit_table("zones", [](std::vector<uint8_t> &d) { d[96 + 4] = '9'; });
-		CHECK(fails_with(p, StatusCode::version_mismatch, "0.7.9"));
+		CHECK(fails_with(p, StatusCode::version_mismatch, "0.8.9"));
 	}
 	{
 		PackageCopy p;  // имя таблицы в заголовке
@@ -482,8 +482,8 @@ void test_rejects_damaged_packages() {
 	}
 	{
 		PackageCopy p;  // пакет индекса не совпадает с паспортом
-		p.edit_index("\"package_version\": \"0.7.0\"", "\"package_version\": \"0.7.1\"");
-		CHECK(fails_with(p, StatusCode::version_mismatch, "ожидается synthetic-mini-city 0.7.0"));
+		p.edit_index("\"package_version\": \"0.8.0\"", "\"package_version\": \"0.8.1\"");
+		CHECK(fails_with(p, StatusCode::version_mismatch, "ожидается synthetic-mini-city 0.8.0"));
 	}
 	{
 		PackageCopy p;  // код формата изменён

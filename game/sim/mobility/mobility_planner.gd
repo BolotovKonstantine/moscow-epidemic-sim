@@ -27,6 +27,7 @@ var stop_positions: Array = []    # позиции на остановке по 
 var stop_board := PackedByteArray()   # внутри региона и есть не последняя позиция маршрута
 var stop_alight := PackedByteArray()  # внутри региона и есть не первая позиция маршрута
 var stop_transfers: Array = []    # [остановка, секунды] внутри региона, кроме своей
+var route_headway: Array = []     # на маршрут: интервал по периоду (базовый вида или по спросу, #44)
 
 
 func _init(scene_value: Dictionary) -> void:
@@ -74,8 +75,52 @@ func next_boundary(t: int) -> int:
 	return day + 86400 + scene.periods[0].start_s
 
 
-func headway(mode: String, q: int) -> int:
-	return scene.modes[mode].headway_s[q]
+func headway(r: int, q: int) -> int:
+	return route_headway[r][q]
+
+
+# Длина периода в секундах суток: до начала следующего, у последнего — через полночь до первого.
+func period_length(q: int) -> int:
+	var n: int = scene.periods.size()
+	var end: int = scene.periods[q + 1].start_s if q + 1 < n else 86400 + scene.periods[0].start_s
+	return end - scene.periods[q].start_s
+
+
+# Интервал по спросу (#44): trips — [план, период плана] всех поездок первого прохода. Загрузка
+# перегона — число поездок транспортом периода плана, проезжающих его; у маршрута — наибольшая. Интервал —
+# ⌊вместимость × demand_load_bp × длина периода / (10000 × загрузка)⌋, не чаще min_headway_s и не
+# реже базового; без загрузки, без движения и при нулевой вместимости — базовый. Целые числа, как в ядре.
+func apply_demand(trips: Array) -> void:
+	var bp: int = params.demand_load_bp
+	if bp == 0:
+		return
+	var periods: int = scene.periods.size()
+	var load := []
+	for q in periods:
+		var row := PackedInt64Array()
+		row.resize(pos_route.size())
+		load.append(row)
+	for trip in trips:
+		var p: Dictionary = trip[0]
+		if p.mode != "transit":
+			continue
+		var row: PackedInt64Array = load[trip[1]]
+		for ride in p.rides:
+			for i in range(ride.board, ride.alight):
+				row[route_first[ride.route] + i] += 1
+		load[trip[1]] = row
+	for r in scene.routes.size():
+		var mode: Dictionary = scene.modes[scene.routes[r].mode]
+		for q in periods:
+			var base: int = mode.headway_s[q]
+			var most := 0
+			for k in range(route_first[r], route_first[r + 1] - 1):
+				most = maxi(most, load[q][k])
+			if base == 0 or most == 0 or mode.capacity == 0:
+				route_headway[r][q] = base
+				continue
+			var need: int = mode.capacity * bp * period_length(q) / (10000 * most)
+			route_headway[r][q] = mini(base, maxi(mode.min_headway_s, need))
 
 
 # ---------- Дороги ----------
@@ -234,6 +279,8 @@ func _build_transit() -> void:
 			stop_positions[stop].append(k)
 			k += 1
 	route_first[scene.routes.size()] = k
+	for r in scene.routes.size():
+		route_headway.append(scene.modes[scene.routes[r].mode].headway_s.duplicate())
 	stop_board.resize(stop_count)
 	stop_alight.resize(stop_count)
 	for p in k:
@@ -267,7 +314,8 @@ func route_length(r: int) -> int:
 # Узлы дерева: A(s) = s — на остановке, можно сесть; B(s) = S + s — только что вышел;
 # R(k) = 2S + k — в рейсе, приехал на позицию k. Посадка ведёт сразу на следующую позицию,
 # поэтому из R можно выйти только после хотя бы одного перегона. Стоимость = время + штраф посадки.
-func _tree(seeds: Array, q: int) -> Dictionary:
+# skip_route — кусок маршрута, на который садиться нельзя (новый путь после предела ожидания, #44).
+func _tree(seeds: Array, q: int, skip_route := NONE) -> Dictionary:
 	var stop_count: int = scene.stops.size()
 	var cost := {}
 	var time := {}
@@ -294,8 +342,8 @@ func _tree(seeds: Array, q: int) -> Dictionary:
 		if u < stop_count:  # A(s): посадка на позиции остановки, кроме последних
 			for k in stop_positions[u]:
 				var r: int = pos_route[k]
-				var h := headway(scene.routes[r].mode, q)
-				if h == 0 or pos_index[k] + 1 >= route_length(r):
+				var h := headway(r, q)
+				if h == 0 or r == skip_route or pos_index[k] + 1 >= route_length(r):
 					continue
 				var ride: int = h / 2 + pos_ride_s[k]
 				relax.call(2 * stop_count + k + 1, c + ride + params.board_penalty_s, t + ride, u)
@@ -430,6 +478,23 @@ func choose(profile: String, from: Dictionary, to: Dictionary, q: int) -> Dictio
 	if walk <= params.walk_only_max_s and (transit.is_empty() or walk <= transit.time_s):
 		return {"mode": "walk", "time_s": walk}
 	if not transit.is_empty():
+		return transit
+	if walk <= params.walk_fallback_max_s:
+		return {"mode": "walk", "time_s": walk}
+	return {"mode": "none"}
+
+
+# Новый путь после предела ожидания (#44): дерево от остановок не дальше access_radius_m от
+# остановки ожидания (подход пешком от неё), без куска маршрута skip_route, к той же цели; вид —
+# по правилу choose без машины: пешком от остановки, транспорт, пешком до walk_fallback_max_s.
+func reroute(stop: int, skip_route: int, to: Dictionary, q: int) -> Dictionary:
+	var from: Array = scene.stops[stop].pos
+	var walk := walk_s(distance(from, to.pos))
+	var transit := _path_from_tree(_tree(_seeds(from, params.access_radius_m), q, skip_route), from, to.pos)
+	if walk <= params.walk_only_max_s and (transit.is_empty() or walk <= transit.time_s):
+		return {"mode": "walk", "time_s": walk}
+	if not transit.is_empty():
+		transit.tree = "reroute"
 		return transit
 	if walk <= params.walk_fallback_max_s:
 		return {"mode": "walk", "time_s": walk}

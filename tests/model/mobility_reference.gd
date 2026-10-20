@@ -1,13 +1,15 @@
 extends SceneTree
 
-# Тест эталона движения мини-города (#39), game/sim. Philox совпадает с векторами Random123 и с
+# Тест эталона движения мини-города (#39, #44), game/sim. Philox совпадает с векторами Random123 и с
 # розыгрышами ядра (rng.h); сцена отклоняет неверный JSON с понятной ошибкой. Пограничная сцена
 # tests/scenarios/mobility_edge сверяется вручную: перегрузка маршрутки вместимостью 1 и порядок
-# очереди (время, ID), отмена после предела ожидания с рейсами и без рейсов, одностороння улица,
-# изолированное здание, пересадка, путь от остановок дома, ночная смена через полночь, оба вида
-# внешнего входа. На обеих сценах: численность сходится, вместимость не превышена, никто не в двух
-# группах, нарезка продвижения и обратный порядок регистрации не меняют результат, выход совпадает
-# с expected.json. Обновить эталонные выходы после осознанного изменения правил:
+# очереди (время, ID), новый путь пешком после предела ожидания, отмена без рейсов и без другого пути,
+# одностороння улица, изолированное здание, пересадка, путь от остановок дома, ночная смена через
+# полночь, оба вида внешнего входа. Сцена mobility_reroute (#44): одновременная посадка при
+# вместимости 1, новый путь транспортом, вместимость 0, второй предел ожидания, интервалы по спросу.
+# На всех сценах: численность сходится, вместимость не превышена, никто не в двух группах, нарезка
+# продвижения и обратный порядок регистрации не меняют результат, выход совпадает с expected.json.
+# Обновить эталонные выходы после осознанного изменения правил:
 # godot --headless --path game --script ../tests/model/mobility_reference.gd -- --update
 # Запуск: godot --headless --path game --script ../tests/model/mobility_reference.gd
 
@@ -17,7 +19,7 @@ const SceneLoader := preload("res://sim/mobility/mobility_scene.gd")
 const Reference := preload("res://sim/mobility/mobility_reference.gd")
 
 const SCENARIOS := "../tests/scenarios"
-const SCENES := ["mobility_edge", "mobility_mini"]
+const SCENES := ["mobility_edge", "mobility_mini", "mobility_reroute"]
 
 var failures := 0
 var update := false
@@ -42,6 +44,8 @@ func _initialize() -> void:
 		_test_expected(dir, out)
 		if name == "mobility_edge":
 			_test_edge(loaded.scene, out)
+		elif name == "mobility_reroute":
+			_test_reroute(loaded.scene, out)
 	print("FAIL: %d" % failures if failures else "OK: все проверки эталона движения пройдены")
 	quit(1 if failures else 0)
 
@@ -91,12 +95,13 @@ func _test_heap() -> void:
 
 func _minimal() -> Dictionary:
 	return {
-		"schema_version": 1, "name": "t", "seed": 1, "duration_s": 3600, "checkpoints_s": [0],
+		"schema_version": 2, "name": "t", "seed": 1, "duration_s": 3600, "checkpoints_s": [0],
 		"params": {"walk_speed_mps": 1.0, "walk_detour": 1.0, "parking_s": 0, "attach_radius_m": 500,
 				"access_radius_m": 1000, "access_stops_max": 8, "transfer_radius_m": 250, "cell_size_m": 250,
-				"board_penalty_s": 0, "max_wait_s": 600, "walk_only_max_s": 2400, "walk_fallback_max_s": 4800},
+				"board_penalty_s": 0, "max_wait_s": 600, "walk_only_max_s": 2400, "walk_fallback_max_s": 4800,
+				"demand_load_bp": 0},
 		"periods": [{"name": "all", "start_s": 0}],
-		"modes": {"bus": {"speed_kmh": 36, "capacity": 1, "wagons": 1, "headway_s": [600]}},
+		"modes": {"bus": {"speed_kmh": 36, "capacity": 1, "wagons": 1, "headway_s": [600], "min_headway_s": 60}},
 		"road_nodes": [[0, 0], [100, 0]],
 		"road_edges": [{"from": 0, "to": 1, "length_m": 100, "speed_kmh": 36, "oneway": false}],
 		"buildings": [[0, 0], [100, 0]],
@@ -119,7 +124,11 @@ func _rejects(mutate: Callable, expect: String) -> void:
 func _test_scene_rejects() -> void:
 	var ok := SceneLoader.parse(JSON.parse_string(JSON.stringify(_minimal())))
 	check(ok.has("scene") and typeof(ok.scene.residents[0].home) == TYPE_INT, "минимальная сцена принимается, целые — int")
-	_rejects(func(d): d.schema_version = 2, "schema_version")
+	_rejects(func(d): d.schema_version = 1, "schema_version")
+	_rejects(func(d): d.params.erase("demand_load_bp"), "нет поля demand_load_bp")
+	_rejects(func(d): d.params.demand_load_bp = 10001, "demand_load_bp")
+	_rejects(func(d): d.modes.bus.min_headway_s = 0, "min_headway_s")
+	_rejects(func(d): d.modes.bus.capacity = -1, "capacity")
 	_rejects(func(d): d.extra = 1, "неизвестное поле extra")
 	_rejects(func(d): d.params.erase("max_wait_s"), "нет поля max_wait_s")
 	_rejects(func(d): d.duration_s = 1.5, "duration_s: нужно целое")
@@ -240,7 +249,7 @@ func _test_invariants(name: String, scene: Dictionary, out: Dictionary) -> void:
 			arrivals[waiting[id]].append([e[0], id])
 		elif e[2] == "board":
 			boards[waiting[id]].append(id)
-		elif e[2] == "cancel":
+		elif e[2] == "cancel" or e[2] == "reroute":
 			arrivals[waiting[id]].erase(arrivals[waiting[id]].filter(func(a): return a[1] == id).back())
 	for pos in arrivals:
 		arrivals[pos].sort()
@@ -362,21 +371,21 @@ func _test_edge(scene: Dictionary, out: Dictionary) -> void:
 	check(plans[13].trips[0].tree == "origin" and plans[13].trips[0].start_stop == 11, "житель 13: дерево от дома")
 
 	# Перегрузка: четверо приходят на S0 одновременно в 31700, маршрутка на одного. Садятся по ID на
-	# рейсы подряд; четвёртому нужен рейс не раньше 31700 + 1800, поэтому он отменяет поездку
-	# (при равенстве событие жителя раньше рейса) и возвращается пешком за 100 с.
+	# рейсы подряд; четвёртому нужен рейс не раньше 31700 + 1800, поэтому в 33500 срабатывает предел
+	# ожидания (при равенстве событие жителя раньше рейса). Другого транспорта без маршрута 0 нет,
+	# пешком от S0 до места √(3000² + 100²) = 3002 с — в пределах walk_fallback_max_s (#44).
 	var deps := _route_departures(out, 0, 31700)
 	for id in 3:
 		check(_events(out, id).has([deps[id], id, "board", 0, _run_number(out, 0, deps[id]), 0]),
 				"житель %d садится на рейс %d в %d" % [id, id + 1, deps[id]])
 	check(deps[3] >= 31700 + 1800, "четвёртый рейс не раньше предела ожидания")
 	check(_events(out, 3).slice(0, 4) == [[31600, 3, "depart", "transit", 0], [31700, 3, "queue", 0, 0],
-			[33500, 3, "cancel", 0, 0], [33600, 3, "returned"]], "житель 3: отмена и возвращение")
-	# Контрольное состояние на t — после событий строго раньше t: в 33600 житель ещё в пути домой.
-	check(_at(out, 31800, 3)[0] == "wait" and _at(out, 33600, 3) == ["return", 33600] and _at(out, 36000, 3) == ["home", 0],
-			"житель 3 ждёт, возвращается, затем дома")
-	check(_at(out, 64900, 3) == ["home", 0], "обратная поездка не начинается не из того места")
+			[33500, 3, "reroute", "walk"], [36502, 3, "arrive", "place"]], "житель 3: после предела — пешком")
+	check(_at(out, 31800, 3)[0] == "wait" and _at(out, 33600, 3) == ["walk", 36502] and _at(out, 43200, 3) == ["place", 1],
+			"житель 3 ждёт, идёт пешком, затем на месте")
 
-	# Отмена без рейса: челнок ходит только вечером, выезд к 22:00 по расписанию — в 21:18:20.
+	# Отмена без рейса и без другого пути: челнок ходит только вечером, выезд к 22:00 по расписанию —
+	# в 21:18:20; без челнока транспорта нет, а пешком 20 км дольше предела.
 	check(_events(out, 12).slice(0, 4) == [[76700, 12, "depart", "transit", 0], [76800, 12, "queue", 6, 0],
 			[78600, 12, "cancel", 6, 0], [78700, 12, "returned"]], "житель 12: отмена без рейса")
 	check(_route_departures(out, 6, 0).filter(func(t): return t >= 76800 and t <= 78600).is_empty(),
@@ -396,6 +405,48 @@ func _test_edge(scene: Dictionary, out: Dictionary) -> void:
 		numbers[r[0]] = numbers.get(r[0], []) + [r[1]]
 	for day in numbers:
 		check(numbers[day] == range(numbers[day].size()), "рейсы суток %d пронумерованы подряд" % day)
+
+
+# ---------- Ручная сверка сцены нового пути и интервалов по спросу (#44) ----------
+
+func _test_reroute(scene: Dictionary, out: Dictionary) -> void:
+	var sim = Reference.new(scene)
+	# Интервал по спросу: пиковый период 1800 с, demand_load_bp 5000. Маршрут 0 везёт пятерых —
+	# ⌊1 × 5000 × 1800 / (10000 × 5)⌋ = 180, не чаще минимума 300; маршрут 9 — двоих: 450, между
+	# минимумом и базовым 600. Обратно (день, 55 800 с) нужен реже базового — базовый. Вместимость 0
+	# и маршрут без загрузки — базовый.
+	var h: Array = sim.planner.route_headway
+	check(h[0] == [0, 300, 600] and h[9] == [0, 450, 600] and h[2] == [0, 600, 600] and h[1] == [0, 600, 600]
+			and h[4] == [0, 600, 600], "интервалы по спросу: %s" % [h])
+	# Путь пересчитан с новым интервалом: подход 100 + ⌊450/2⌋ + 200 + отход 100.
+	check(out.plans[7].trips[0].time_s == 625 and out.plans[0].trips[0].time_s == 550, "планы с интервалом по спросу")
+	# Пятеро приходят на S0 одновременно; маршрутка на одного каждые 300 с. За 900 с уезжают трое
+	# (рейсы раньше 29550 + 900), двое после предела садятся на большой автобус (маршрут 1) той же
+	# остановки без подхода, в одном рейсе.
+	var boarded := []
+	for id in 5:
+		var e := _events(out, id)
+		check(e[1] == [29550, id, "queue", 0, 0], "житель %d в очереди с 29550" % id)
+		if id < 3:
+			check(e[2][2] == "board" and e[2][0] < 29550 + 900, "житель %d уехал маршруткой" % id)
+			boarded.append(e[2][0])
+		else:
+			check(e[2] == [30450, id, "reroute", "transit", 0, 2] and e[3] == [30450, id, "queue", 1, 0],
+					"житель %d: новый путь маршрутом 1 в момент предела" % id)
+			check(e[4][2] == "board" and e[4][3] == 0 and e[4][4] == _run_number(out, 1, e[4][0]), "житель %d в автобусе" % id)
+			check(e[6] == [e[5][0] + 100, id, "arrive", "place"], "житель %d на месте" % id)
+	check(boarded == [boarded[0], boarded[0] + 300, boarded[0] + 600], "маршрутка каждые 300 с: %s" % [boarded])
+	check(_events(out, 3)[4][0] == _events(out, 4)[4][0], "двое после предела — в одном рейсе")
+	# Вместимость 0 на обеих линиях: новый путь по медленной линии, второй предел — отмена и
+	# возвращение пройденным путём без ожидания: 33600 − 31700 − 2 × 900 = 100 с.
+	check(_events(out, 5) == [[31700, 5, "depart", "transit", 0], [31800, 5, "queue", 4, 0],
+			[32700, 5, "reroute", "transit", 3, 4], [32700, 5, "queue", 5, 0], [33600, 5, "cancel", 5, 0],
+			[33700, 5, "returned"]], "житель 5: второй предел — отмена")
+	# Единственная линия закрыта, пешком 2000 с дольше предела: сразу отмена.
+	check(_events(out, 6) == [[31700, 6, "depart", "transit", 0], [31800, 6, "queue", 6, 0],
+			[32700, 6, "cancel", 6, 0], [32800, 6, "returned"]], "житель 6: без другого пути — отмена")
+	check(_at(out, 34200, 5) == ["home", 2] and _at(out, 34200, 6) == ["home", 4] and _at(out, 62100, 5) == ["home", 2],
+			"после отмены дома, обратная поездка не начинается")
 
 
 func _run_number(out: Dictionary, route: int, depart: int) -> int:

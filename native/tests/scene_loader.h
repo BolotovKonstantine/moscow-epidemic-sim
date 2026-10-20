@@ -199,6 +199,7 @@ inline bool load_scene(const std::string &path, Scene &s) {
 	net.params.walk_fallback_max_s = uint32_t(inum(p.get("walk_fallback_max_s")));
 	const double attach_radius = dnum(p.get("attach_radius_m"));
 	s.fleet.max_wait_s = uint32_t(inum(p.get("max_wait_s")));
+	s.fleet.demand_load_bp = uint32_t(inum(p.get("demand_load_bp")));
 	s.seed = uint64_t(inum(v.get("seed")));
 	s.duration = uint32_t(inum(v.get("duration_s")));
 	for (const json::Value &c : v.get("checkpoints_s")->items) {
@@ -218,6 +219,7 @@ inline bool load_scene(const std::string &path, Scene &s) {
 		s.mode_names.push_back(m.first);
 		s.fleet.capacity.push_back(uint32_t(inum(m.second->get("capacity"))));
 		s.fleet.wagons.push_back(uint8_t(inum(m.second->get("wagons"))));
+		s.fleet.min_headway_s.push_back(uint32_t(inum(m.second->get("min_headway_s"))));
 		for (const json::Value &h : m.second->get("headway_s")->items) {
 			net.headway_s.push_back(uint32_t(inum(&h)));
 		}

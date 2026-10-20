@@ -82,7 +82,10 @@ struct RouteNetwork {
 	// последний период (как в эталоне).
 	std::vector<uint32_t> period_start;
 	uint32_t mode_count = 0;
-	std::vector<uint32_t> headway_s;  // [вид × периоды + период]; 0 — нет движения
+	std::vector<uint32_t> headway_s;  // базовый: [вид × периоды + период]; 0 — нет движения
+	// Интервал маршрута: [маршрут × периоды + период] — базовый вида или по спросу (#44, docs/mobility.md).
+	// Пустой — finalize заполняет базовыми; по нему считаются деревья, пути и рейсы.
+	std::vector<uint32_t> route_headway_s;
 
 	// Внутренний граф машины, CSR по исходному узлу; параллельные дуги схлопнуты в кратчайшую.
 	// Вес — децисекунды; car_source — исходная дуга пакета (ребро сцены) для раскрытия пути.
@@ -133,11 +136,18 @@ struct RouteNetwork {
 	uint32_t endpoint_count() const { return uint32_t(endpoint_pos.size()); }
 	uint32_t period_count() const { return uint32_t(period_start.size()); }
 	uint32_t headway(uint32_t mode, uint32_t period) const { return headway_s[size_t(mode) * period_count() + period]; }
+	uint32_t route_headway(uint32_t route, uint32_t period) const {
+		return route_headway_s[size_t(route) * period_count() + period];
+	}
 	uint64_t memory_bytes() const;
 };
 
 // Проверить сеть и построить производные массивы. Ошибка — invalid_argument с сообщением.
 Status finalize_route_network(RouteNetwork &net);
+
+// Задать интервалы маршрутов (пустой — базовые вида). Ошибка — invalid_argument: размер не
+// маршруты × периоды, интервал больше суток или движение там, где у вида его нет.
+Status set_route_headways(RouteNetwork &net, std::vector<uint32_t> headways);
 
 // Сеть из таблиц пакета (`sim/`), уже проверенных загрузчиком; finalize вызывается внутри.
 Status build_route_network(const CityData &city, RouteNetwork &out,

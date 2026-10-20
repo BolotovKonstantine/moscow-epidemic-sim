@@ -4,7 +4,7 @@
 
 ## Устройство
 
-- `schemas/city-package-v1.schema.json` — JSON Schema паспорта, версия 1; `schemas/build-config-v2.schema.json` — схема конфигурации сборки версии 2 (с источниками переписи `census_*` и `model_assumptions.mobility`; вместе с ограничениями заголовка расчётной таблицы на `package_id` и `package_version`), её требует `build`; `schemas/build-config-v1.schema.json` — версия 1 пакетов до 0.7.0, её читают `fetch` и `map-tile` (например, `build_config.json` старого пакета). Конфигурация проверяется до любой работы.
+- `schemas/city-package-v1.schema.json` — JSON Schema паспорта, версия 1; `schemas/build-config-v3.schema.json` — схема конфигурации сборки версии 3 (с источниками переписи `census_*` и `model_assumptions.mobility`, с пакета 0.8.0 — с параметрами интервала по спросу `min_headway_minutes` и `demand_load_factor`, #44; вместе с ограничениями заголовка расчётной таблицы на `package_id` и `package_version`), её требует `build` и проверка таблиц `sim/` пакета; `schemas/build-config-v2.schema.json` — версия 2 пакета 0.7.0 и `schemas/build-config-v1.schema.json` — версия 1 пакетов до 0.7.0, их читают `fetch` и `map-tile` (например, `build_config.json` старого пакета). Конфигурация проверяется до любой работы.
 - `manifest.py` — структурная и смысловая проверка паспорта, файлов и SHA256, для роли `map` — ещё индекса и каждого участка карты, для роли `sim` — индекса и каждой расчётной таблицы (`simtables.validate_sim_index`). Не загружает данные из сети.
 - `sources.py` — реестр источников `data/manifests/sources.json`: загрузка в `data/raw/` и проверка SHA256.
 - `osm.py` — чтение OSM за один проход pyosmium; `geo.py` — проекции и граница региона.
@@ -31,7 +31,7 @@
 .venv/bin/python -m tools.city_pipeline validate tests/fixtures/city_package/manifest.json --metadata-only
 .venv/bin/python -m tools.city_pipeline fetch data/manifests/moscow-2021.json
 .venv/bin/python -m tools.city_pipeline build data/manifests/moscow-2021.json
-.venv/bin/python -m tools.city_pipeline validate data/packages/moscow-2021-0.7.0/manifest.json
+.venv/bin/python -m tools.city_pipeline validate data/packages/moscow-2021-0.8.0/manifest.json
 .venv/bin/python -m tools.city_pipeline map-tile data/manifests/moscow-2021.json   # тестовые участки карты
 .venv/bin/python -m tools.city_pipeline map-tile data/manifests/moscow-2021.json --at 37.5,55.6 --out data/processed/map-test
 .venv/bin/python -m tools.city_pipeline map-tile data/manifests/moscow-2021.json --all --out data/processed/map-region   # весь регион, как в пакете

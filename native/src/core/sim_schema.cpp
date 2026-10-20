@@ -171,10 +171,11 @@ std::vector<TableSpec> make_tables() {
 	out.push_back(TableSpec{ TableId::road_classes, 1, "game_setting", {
 		col("car_speed_mm_s", T::u32, { max(100000) }),
 	} });
-	out.push_back(TableSpec{ TableId::transit_modes, 1, "game_setting", {
+	out.push_back(TableSpec{ TableId::transit_modes, 2, "game_setting", {
 		col("speed_mm_s", T::u32, { min(1), max(100000) }),
 		col("capacity", T::u32, { min(1), max(100000) }),
 		col("wagons", T::u16, { min(1), max(16) }),
+		col("min_headway_s", T::u32, { min(1), max(86400) }),
 	} });
 	out.push_back(TableSpec{ TableId::transit_periods, 1, "game_setting", {
 		col("start_s", T::u32, { max(86399) }),
@@ -185,7 +186,7 @@ std::vector<TableSpec> make_tables() {
 		col("period", T::u8, { code(CodeSet::period, false) }),
 		col("headway_s", T::u32, { min(1), max_or_none(86400) }),
 	} });
-	out.push_back(TableSpec{ TableId::mobility, 1, "game_setting", {
+	out.push_back(TableSpec{ TableId::mobility, 2, "game_setting", {
 		col("walk_speed_mm_s", T::u32, { min(1), max(10000) }),
 		col("transfer_overhead_s", T::u32, { max(3600) }),
 		col("car_park_s", T::u32, { max(3600) }),
@@ -199,6 +200,7 @@ std::vector<TableSpec> make_tables() {
 		col("crowding_penalty", T::u16, { max(60000) }),
 		col("crowding_iterations", T::u16, { max(100) }),
 		col("building_node_max_cm", T::u32, { max(1000000) }),
+		col("demand_load_bp", T::u16, { max(kShareOne) }),
 	} });
 	out.push_back(TableSpec{ TableId::mobility_estimates, 1, "estimated", {
 		col("walk_detour", T::u16, { min(kShareOne), max(60000) }),

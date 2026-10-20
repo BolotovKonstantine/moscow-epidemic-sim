@@ -160,10 +160,11 @@ SCHEMA = {
     "road_classes": {"version": 1, "kind": "game_setting", "unique": [], "columns": [
         _col("car_speed_mm_s", "u32", "rows", ("max", 100_000)),
     ]},
-    "transit_modes": {"version": 1, "kind": "game_setting", "unique": [], "columns": [
+    "transit_modes": {"version": 2, "kind": "game_setting", "unique": [], "columns": [
         _col("speed_mm_s", "u32", "rows", ("min", 1), ("max", 100_000)),
         _col("capacity", "u32", "rows", ("min", 1), ("max", 100_000)),
         _col("wagons", "u16", "rows", ("min", 1), ("max", 16)),   # как в модели #35: загрузка рейса — не больше 16 вагонов
+        _col("min_headway_s", "u32", "rows", ("min", 1), ("max", 86_400)),   # наименьший интервал по спросу (#44)
     ]},
     "transit_periods": {"version": 1, "kind": "game_setting", "unique": [], "columns": [
         _col("start_s", "u32", "rows", ("max", 86_399)),
@@ -174,7 +175,7 @@ SCHEMA = {
         _col("period", "u8", "rows", ("code", "period", False)),
         _col("headway_s", "u32", "rows", ("min", 1), ("max_or_none", 86_400)),
     ]},
-    "mobility": {"version": 1, "kind": "game_setting", "unique": [], "columns": [
+    "mobility": {"version": 2, "kind": "game_setting", "unique": [], "columns": [
         _col("walk_speed_mm_s", "u32", "rows", ("min", 1), ("max", 10_000)),
         _col("transfer_overhead_s", "u32", "rows", ("max", 3600)),
         _col("car_park_s", "u32", "rows", ("max", 3600)),
@@ -188,6 +189,7 @@ SCHEMA = {
         _col("crowding_penalty", "u16", "rows", ("max", 60_000)),
         _col("crowding_iterations", "u16", "rows", ("max", 100)),
         _col("building_node_max_cm", "u32", "rows", ("max", 1_000_000)),
+        _col("demand_load_bp", "u16", "rows", ("max", SHARE_ONE)),   # доля вместимости интервала по спросу (#44), 0 — базовые
     ]},
     "mobility_estimates": {"version": 1, "kind": "estimated", "unique": [], "columns": [
         _col("walk_detour", "u16", "rows", ("min", SHARE_ONE), ("max", 60_000)),
@@ -699,6 +701,7 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
         ("speed_mm_s", "u32", [_mm_s_from_kmh(mobility["transit_speed_kmh"][m]) for m in STOP_MODES]),
         ("capacity", "u32", [mobility["vehicle_capacity"][m]["capacity"] for m in STOP_MODES]),
         ("wagons", "u16", [mobility["vehicle_capacity"][m]["wagons"] for m in STOP_MODES]),
+        ("min_headway_s", "u32", [round_half_away(mobility["min_headway_minutes"][m] * 60) for m in STOP_MODES]),
     ]
     tables["transit_periods"] = [
         ("start_s", "u32", [_clock_seconds(headways["periods"][p][0]) for p in periods]),
@@ -726,6 +729,7 @@ def export_sim_tables(package_dir: Path, config: dict, census: dict, *, kind: st
         ("crowding_penalty", "u16", [round(mobility["crowding_penalty"] * SHARE_ONE)]),
         ("crowding_iterations", "u16", [mobility["crowding_iterations"]]),
         ("building_node_max_cm", "u32", [round(mobility["building_node_max_m"] * 100)]),
+        ("demand_load_bp", "u16", [round(mobility["demand_load_factor"] * SHARE_ONE)]),
     ]
     tables["mobility_estimates"] = [("walk_detour", "u16", [walk_detour])]
 
@@ -1324,14 +1328,14 @@ def _matches_reexport(sim_dir: Path, manifest: dict):
     _expect(config_asset["size_bytes"] <= MAX_INDEX_BYTES and config_path.stat().st_size <= MAX_INDEX_BYTES,
             f"build_config.json больше {MAX_INDEX_BYTES} байт")   # размер — до чтения
     config = parse_json_bytes(config_path.read_bytes(), config_path)
-    _expect(isinstance(config, dict) and config.get("config_version") == 2, "build_config.json пакета с ролью sim должен быть версии 2")
-    # Встроенная конфигурация проверяется той же схемой v2, что у build: ошибка структуры — сообщение, а не KeyError.
+    _expect(isinstance(config, dict) and config.get("config_version") == 3, "build_config.json пакета с ролью sim должен быть версии 3")
+    # Встроенная конфигурация проверяется той же схемой v3, что у build: ошибка структуры — сообщение, а не KeyError.
     # Те же правила, что у build и map-tile (строгие целые, связи полей), а не только схема.
     from .__main__ import load_config
     try:
-        load_config(package_dir / config_asset["path"], versions=(2,))
+        load_config(package_dir / config_asset["path"], versions=(3,))
     except ManifestError as error:
-        raise SimError(f"build_config.json пакета не соответствует конфигурации версии 2: {error}") from error
+        raise SimError(f"build_config.json пакета не соответствует конфигурации версии 3: {error}") from error
     source_roles = dict(config["sources"], config=f"build-config-{config['package_id']}")
     # Роль источника соответствует формату его карточки, как при сборке (_selected_sources): перепись — xlsx, OSM — pbf и т. д.
     from .__main__ import ROLE_FORMATS

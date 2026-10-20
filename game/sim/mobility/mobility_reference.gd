@@ -36,6 +36,7 @@ var now := 0
 var transit_key: int
 
 var plans: Array = []        # на жителя [туда, обратно] или []
+var ends: Array = []         # на жителя [дом, место] — концы поездок планировщика или []
 var no_path: PackedByteArray
 var trips: Array = []        # на жителя: [время, OUTBOUND|BACK] по возрастанию
 var trip_cursor: PackedInt32Array
@@ -49,6 +50,7 @@ var wait_pos: PackedInt32Array
 var ride_ix: PackedInt32Array
 var leg: PackedInt32Array
 var riding: PackedInt32Array  # номер рейса в runs
+var rerouted: Array = []      # новый путь текущей поездки после предела ожидания (#44) или {}
 
 var runs: Array = []          # {route, depart, day, number, pos, onboard}
 var queues: Array = []        # на позицию маршрута: ID ждущих по порядку прихода
@@ -85,6 +87,20 @@ func _init(scene_value: Dictionary, reverse_init := false) -> void:
 	for id in n:
 		_plan_resident(id)
 		loc.append(HOME)
+		rerouted.append({})
+	# Интервал по спросу (#44): по загрузке первого прохода, затем все поездки планируются заново.
+	if scene.params.demand_load_bp > 0:
+		var first := []
+		for id in n:
+			if not plans[id].is_empty():
+				var r: Dictionary = scene.residents[id]
+				first.append([plans[id][OUTBOUND], planner.period_at(r.arrive_by_s)])
+				first.append([plans[id][BACK], planner.period_at(r.leave_at_s)])
+		planner.apply_demand(first)
+		for id in n:
+			_choose_plans(id)
+	for id in n:
+		_make_trips(id)
 	_make_runs()
 	var order := range(n)
 	var run_order := range(runs.size())
@@ -103,15 +119,34 @@ func _init(scene_value: Dictionary, reverse_init := false) -> void:
 func _plan_resident(id: int) -> void:
 	var r: Dictionary = scene.residents[id]
 	trips.append([])
+	plans.append([])
+	ends.append([])
 	if r.place.is_empty():
-		plans.append([])
 		return
 	var home: Dictionary = planner.endpoint_building(r.home)
 	var place: Dictionary = planner.endpoint_building(r.place.building) if r.place.has("building") \
 			else planner.endpoint_gateway(r.place.gateway)
+	ends[id] = [home, place]
+	_choose_plans(id)
+
+
+func _choose_plans(id: int) -> void:
+	if ends[id].is_empty():
+		return
+	var r: Dictionary = scene.residents[id]
+	var home: Dictionary = ends[id][0]
+	var place: Dictionary = ends[id][1]
 	var out: Dictionary = planner.choose(r.profile, home, place, planner.period_at(r.arrive_by_s))
 	var back: Dictionary = planner.choose(r.profile, place, home, planner.period_at(r.leave_at_s))
-	plans.append([out, back])
+	plans[id] = [out, back]
+
+
+func _make_trips(id: int) -> void:
+	if plans[id].is_empty():
+		return
+	var r: Dictionary = scene.residents[id]
+	var out: Dictionary = plans[id][OUTBOUND]
+	var back: Dictionary = plans[id][BACK]
 	if out.mode == "none" or back.mode == "none":
 		no_path[id] = 1  # житель остаётся дома и не удаляется
 		return
@@ -138,11 +173,10 @@ func _plan_resident(id: int) -> void:
 func _make_runs() -> void:
 	var all := []
 	for r in scene.routes.size():
-		var mode: String = scene.routes[r].mode
 		var tm := 0
 		var phased := false
 		while tm < scene.duration_s:
-			var h: int = planner.headway(mode, planner.period_at(tm))
+			var h: int = planner.headway(r, planner.period_at(tm))
 			if h == 0:
 				tm = planner.next_boundary(tm)
 				phased = false
@@ -161,7 +195,7 @@ func _make_runs() -> void:
 			var nxt := tm + h
 			var b: int = planner.next_boundary(tm)
 			while nxt >= b:
-				var h2: int = planner.headway(mode, planner.period_at(b))
+				var h2: int = planner.headway(r, planner.period_at(b))
 				if h2 == 0:
 					nxt = b
 					break
@@ -237,13 +271,14 @@ func _settle(id: int, t: int) -> void:
 
 
 func _plan(id: int) -> Dictionary:
-	return plans[id][trip_which[id]]
+	return rerouted[id] if not rerouted[id].is_empty() else plans[id][trip_which[id]]
 
 
 func _begin_trip(id: int, which: int) -> void:
 	trip_which[id] = which
 	trip_start[id] = now
 	waited[id] = 0
+	rerouted[id] = {}
 	var p := _plan(id)
 	_log(id, "depart", [p.mode, which])
 	if p.mode == "transit":
@@ -315,17 +350,36 @@ func _resident_event(id: int) -> void:
 		WALK, CAR, RETURN:
 			_leg_done(id)
 		WAIT:
-			# Предел ожидания: отмена поездки и возвращение в начало поездки пройденным путём без
-			# времени ожидания (с первой остановки — это подход пешком). Другой путь — #44.
-			queues[wait_pos[id]].erase(id)
-			waited[id] += now - wait_since[id]
-			var back: int = now - trip_start[id] - waited[id]
-			_log(id, "cancel", [planner.pos_route[wait_pos[id]], planner.pos_index[wait_pos[id]]])
-			wait_pos[id] = NONE
-			_set_loc(id, RETURN)
-			_after(id, back)
+			_wait_limit(id)
 		_:
 			violations.append("житель %d: событие в состоянии %s" % [id, loc[id]])
+
+
+# Предел ожидания. Первый раз за поездку — новый путь от остановки ожидания к той же цели без куска
+# маршрута, на котором житель ждал (#44): транспортом (подход от этой остановки) или пешком. Если
+# пути нет или предел превышен второй раз — отмена и возвращение в начало поездки пройденным путём
+# без времени ожидания (с первой остановки — это подход пешком).
+func _wait_limit(id: int) -> void:
+	var k: int = wait_pos[id]
+	queues[k].erase(id)
+	waited[id] += now - wait_since[id]
+	wait_pos[id] = NONE
+	if rerouted[id].is_empty():
+		var to: Dictionary = ends[id][BACK if trip_which[id] == OUTBOUND else OUTBOUND]
+		var p: Dictionary = planner.reroute(planner.pos_stop[k], planner.pos_route[k], to, planner.period_at(now))
+		if p.mode != "none":
+			rerouted[id] = p
+			if p.mode == "transit":
+				_log(id, "reroute", [p.mode, p.start_stop, p.end_stop])
+				ride_ix[id] = 0
+				_walk(id, p.access_s, TO_STOP)
+			else:
+				_log(id, "reroute", [p.mode])
+				_walk(id, p.time_s, TO_DEST)
+			return
+	_log(id, "cancel", [planner.pos_route[k], planner.pos_index[k]])
+	_set_loc(id, RETURN)
+	_after(id, now - trip_start[id] - waited[id])
 
 
 func _run_event(r: int) -> void:

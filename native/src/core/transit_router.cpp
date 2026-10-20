@@ -42,7 +42,7 @@ TransitSearch::TransitSearch(const RouteNetwork &net) : net_(&net) {
 }
 
 void TransitSearch::run(const std::vector<TransitSeed> &seeds, uint32_t period, const std::vector<uint32_t> *targets,
-		const float *crowd) {
+		const float *crowd, uint32_t skip_route) {
 	for (uint32_t v : touched_) {
 		cost_[v] = time_[v] = kInf;
 		pred_[v] = kRouteNone;
@@ -99,8 +99,8 @@ void TransitSearch::run(const std::vector<TransitSeed> &seeds, uint32_t period, 
 			for (uint32_t i = net.board_first[u]; i < net.board_first[u + 1]; ++i) {
 				const uint32_t k = net.board_pos[i];
 				const uint32_t r = net.pos_route[k];
-				const uint32_t h = net.headway(net.route_mode[r], period);
-				if (h == 0 || k + 1 >= net.route_first[r + 1]) {
+				const uint32_t h = net.route_headway(r, period);
+				if (h == 0 || r == skip_route || k + 1 >= net.route_first[r + 1]) {
 					continue;
 				}
 				const uint64_t ride = h / 2 + net.pos_ride_s[k];
@@ -191,6 +191,10 @@ size_t PathKeyHash::operator()(const PathKey &k) const {
 		return z ^ (z >> 31);
 	};
 	return size_t(mix(mix(k.origin) ^ (uint64_t(k.end_stop) << 16 | uint64_t(k.period) << 8 | uint64_t(k.tree))));
+}
+
+uint64_t reroute_origin(uint32_t stop, uint32_t skip_route) {
+	return uint64_t(stop) << 32 | skip_route;
 }
 
 uint64_t cell_key(const RouteNetwork &net, const RoutePoint &p) {

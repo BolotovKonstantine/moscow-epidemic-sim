@@ -2,7 +2,7 @@
   "format": "mesim-sim-index",
   "format_version": 1,
   "package_id": "synthetic-mini-city",
-  "package_version": "0.7.0",
+  "package_version": "0.8.0",
   "plane": {
     "origin_metric": [
       376000.0,
@@ -124,7 +124,7 @@
       "schema_version": 1,
       "rows": 14,
       "size_bytes": 3008,
-      "sha256": "9f121bbac721500b48eefd36c8a3af3ba17e922e6da66901457589b0245587f5",
+      "sha256": "d213740d85956326a6fb9fcd4b47a9909973305c54f1dcd992b7cd0ea6c25a19",
       "data_kind": "estimated",
       "source_ids": [
         "build-config-synthetic-mini-city",
@@ -141,7 +141,7 @@
       "schema_version": 1,
       "rows": 3393,
       "size_bytes": 68736,
-      "sha256": "53defaac6382dde14e5f662fb518daaf59734a1a25bd4f66aec5c72f51103d4b",
+      "sha256": "61665608197f2b9fd309b5a1301ea1f65ef157ae5f1036ce2780a8e8e4787cc3",
       "data_kind": "estimated",
       "source_ids": [
         "build-config-synthetic-mini-city",
@@ -158,7 +158,7 @@
       "schema_version": 1,
       "rows": 14,
       "size_bytes": 1344,
-      "sha256": "7c245a583fba4f836bcbd653dd9236d2b7464744f14f2f20e9960009fa2f3eb7",
+      "sha256": "689bf6458ee3777304b4f371bbd59d6966c8d3358cd4d3ccb4ca3f085d05d6d3",
       "data_kind": "estimated",
       "source_ids": [
         "build-config-synthetic-mini-city",
@@ -175,7 +175,7 @@
       "schema_version": 1,
       "rows": 18,
       "size_bytes": 1984,
-      "sha256": "0ce43c6514cea639e47935bf484a50866c4cf2eba125c9337a85ba1cb87c729e",
+      "sha256": "ee226c5dfbb7c255e86ef14afd342b22f558760b7ee00041a088372705c4fa46",
       "data_kind": "estimated",
       "source_ids": [
         "build-config-synthetic-mini-city",
@@ -192,7 +192,7 @@
       "schema_version": 1,
       "rows": 8,
       "size_bytes": 1152,
-      "sha256": "3ba5cfd4c6da4508845b920e4a79afcfdc6a6cb91f7e39d0b7edd8c5c604331d",
+      "sha256": "7998923a2693fd665d247111e544507e48ff6b3ba090048c30fb130f00e04a95",
       "data_kind": "estimated",
       "source_ids": [
         "build-config-synthetic-mini-city",
@@ -209,7 +209,7 @@
       "schema_version": 1,
       "rows": 9,
       "size_bytes": 1088,
-      "sha256": "8553aa4ff878f864f235cb2fc50b8db9a758f2f2c17b63cb09383c937a758d3b",
+      "sha256": "5151b5e396462334d303ce71a626ed08cf27cbd20ca140ff44ac1e0c51692ca1",
       "data_kind": "estimated",
       "source_ids": [
         "build-config-synthetic-mini-city",
@@ -226,7 +226,7 @@
       "schema_version": 1,
       "rows": 1,
       "size_bytes": 768,
-      "sha256": "033ccf17e57cb0bc1c43d7ce1710dcd4875c35241e207c0a699f40399a9e4925",
+      "sha256": "e9c2a45a1cfa6fbc6f7e50234202307843581dd1b90511fbaf66a37a254ca455",
       "data_kind": "estimated",
       "source_ids": [
         "build-config-synthetic-mini-city",
@@ -243,7 +243,7 @@
       "schema_version": 1,
       "rows": 5,
       "size_bytes": 1280,
-      "sha256": "300930792d2c991a52ede7fd67ca5bdbe3633c2a9a68d43fe0cf76f1d2f9312d",
+      "sha256": "3c9d77b3091d060850d8407fa3a9c93959dd7cc70f75f36cb938e6246e6bfb16",
       "data_kind": "estimated",
       "source_ids": [
         "build-config-synthetic-mini-city",
@@ -260,7 +260,7 @@
       "schema_version": 1,
       "rows": 2,
       "size_bytes": 1408,
-      "sha256": "1f8315800f0fedea158e2ad2e646a1e50cd3bdeacbd1e57ddc70861c4755aed1",
+      "sha256": "2fec90c23afc4e933b837fd36ae80f80ee84d7f7fa7d1ad2d90dfbfa6c7b507e",
       "data_kind": "estimated",
       "source_ids": [
         "build-config-synthetic-mini-city",
@@ -277,7 +277,7 @@
       "schema_version": 1,
       "rows": 8,
       "size_bytes": 256,
-      "sha256": "7c3557842e5d858111a1833a25498e9bb6a2abcc4889b6555c02ed5a4809495e",
+      "sha256": "5f4717016d57077a33a8e4e4ebe9dcffc8cdc3d1c1fdd518eda4ce7e1fd37d41",
       "data_kind": "game_setting",
       "source_ids": [
         "build-config-synthetic-mini-city"
@@ -286,10 +286,10 @@
     {
       "name": "transit_modes",
       "path": "transit_modes.mtab",
-      "schema_version": 1,
+      "schema_version": 2,
       "rows": 8,
-      "size_bytes": 512,
-      "sha256": "7de3c5c59a90a7170618dff46612138ef2438b8c01337882b65bf22124238cae",
+      "size_bytes": 640,
+      "sha256": "8aee3b0cff774a9359d142f72590dd750b0df5af767109355cc106d181b37c9e",
       "data_kind": "game_setting",
       "source_ids": [
         "build-config-synthetic-mini-city"
@@ -301,7 +301,7 @@
       "schema_version": 1,
       "rows": 6,
       "size_bytes": 384,
-      "sha256": "29c2c69ff2191019e0b1d8945739e1fb140fc8564c61f187d535a4c407dee172",
+      "sha256": "744a252483a620e87e96e4be9a68e8286c0ca86e6058fee7f9d17058fc26eb05",
       "data_kind": "game_setting",
       "source_ids": [
         "build-config-synthetic-mini-city"
@@ -313,7 +313,7 @@
       "schema_version": 1,
       "rows": 48,
       "size_bytes": 640,
-      "sha256": "74796ca371191d8f6471cf15a2cf59e0f5aae0eaceffbd336a07c37b93b88b7c",
+      "sha256": "0ece88d85790a949ec1210f23f978f6c795a77dcc1cb2bd04021f8c12fb9b1be",
       "data_kind": "game_setting",
       "source_ids": [
         "build-config-synthetic-mini-city"
@@ -322,10 +322,10 @@
     {
       "name": "mobility",
       "path": "mobility.mtab",
-      "schema_version": 1,
+      "schema_version": 2,
       "rows": 1,
-      "size_bytes": 1792,
-      "sha256": "67ce9e85435ad516ced5609a96389fd8a73e3dfdd84e574306041e73b50610f2",
+      "size_bytes": 1920,
+      "sha256": "26c6f64098feff2546ba7581e6ddc0ee00b5824787a878c3ef863e22b71e5625",
       "data_kind": "game_setting",
       "source_ids": [
         "build-config-synthetic-mini-city"
@@ -337,7 +337,7 @@
       "schema_version": 1,
       "rows": 1,
       "size_bytes": 256,
-      "sha256": "b2918a90954699efde7d9a59504ea1b3866928217a1f6bcc15f7fbef8ce903b8",
+      "sha256": "f5e3850d86a629c7b849493451f90a7f1d7574b5f2cf770167f1c3fdf99703e9",
       "data_kind": "estimated",
       "source_ids": [
         "build-config-synthetic-mini-city"
@@ -353,7 +353,7 @@
       "schema_version": 1,
       "rows": 36,
       "size_bytes": 768,
-      "sha256": "2ef2f7c02f7dbe90b0efe27ae224b6debc8d0e0d1a5dbc8611ae37b4b4108591",
+      "sha256": "95e681282bbf5ac247f7fce1539c3956b93b2745c61865a5169b74dd00a30821",
       "data_kind": "game_setting",
       "source_ids": [
         "synthetic-mini-city"
@@ -365,7 +365,7 @@
       "schema_version": 1,
       "rows": 12,
       "size_bytes": 640,
-      "sha256": "16b91a6af2780dce7603e46e2102253d6f30e64e282c4519bc09e6ce2f1403e8",
+      "sha256": "c28ee4c5e1816f65a00e37ac46234570eb9bfccdf4c29fdd8b7d45bb41a7f870",
       "data_kind": "game_setting",
       "source_ids": [
         "synthetic-mini-city"
@@ -377,7 +377,7 @@
       "schema_version": 1,
       "rows": 10,
       "size_bytes": 1024,
-      "sha256": "5ce8f81d3b42c57d3f49ac181e0e69ee162c3f1778803c0367684c9b3eb3946c",
+      "sha256": "aabafe079f91ff625460702d2b6d2f6707d9f5c883d8209c92bc612a7baa8600",
       "data_kind": "game_setting",
       "source_ids": [
         "synthetic-mini-city"
@@ -389,7 +389,7 @@
       "schema_version": 1,
       "rows": 16,
       "size_bytes": 896,
-      "sha256": "e51e02e4dc854510c203f2a7b41a2eb8f9cb0b69554b2c53a6c5b1b56584f752",
+      "sha256": "ae4399e444afeacc2dad2cd5798ae7cd5258b0e9c89bc28fc3c2c9cba32d179f",
       "data_kind": "game_setting",
       "source_ids": [
         "synthetic-mini-city"
@@ -401,7 +401,7 @@
       "schema_version": 1,
       "rows": 30,
       "size_bytes": 1472,
-      "sha256": "7c7d56e962043bf52281bf2a0ef0d2204caf6c60dd0ee17f029849d0431b57d9",
+      "sha256": "d41f275bee6806fac003a6d7450fa34677da9535261e3858960311021070c34e",
       "data_kind": "game_setting",
       "source_ids": [
         "synthetic-mini-city"
