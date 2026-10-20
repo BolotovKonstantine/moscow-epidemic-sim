@@ -6,6 +6,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -52,6 +53,7 @@ public:
 	// Не чаще одного снимка за столько миллисекунд при продвижении (изменение запроса — сразу).
 	void set_snapshot_period_ms(int period_ms);
 	// Новый опубликованный снимок (версия больше прочитанной) или пустой словарь; force — последний.
+	// Точки снимка ещё и разложены по участкам 2 км в меши для карты (point_tiles, #46).
 	Dictionary get_snapshot(bool force = false);
 
 private:

@@ -2,13 +2,18 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
+#include <vector>
 
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/packed_int64_array.hpp>
+#include <godot_cpp/variant/packed_vector2_array.hpp>
+#include <godot_cpp/variant/vector2.hpp>
+#include <godot_cpp/variant/vector2i.hpp>
 
 #include "mesim/population.h"
 
@@ -37,6 +42,79 @@ String hex64(uint64_t value) {
 	char text[17];
 	std::snprintf(text, sizeof text, "%016llx", (unsigned long long)value);
 	return String(text);
+}
+
+// Точки снимка по участкам 2 км (#46): {Vector2i(ix, iy): {vertices, uv, indices, ids}} — меш из квадратов
+// по точке: четыре вершины в положении жителя, UV.x = угол (±1) + 4 × вид местонахождения, UV.y = угол
+// (шейдер game/shaders/map_person.gdshader раздвигает углы на радиус в пикселях и берёт цвет вида из
+// палитры). ids — ID точек в порядке квадратов (по возрастанию). Участок точки — по её положению, как в ядре.
+// MultiMesh здесь не годится: в Compatibility-рендере 2D MultiMesh на сотнях тысяч экземпляров в 20 раз
+// медленнее такого меша (замер #46).
+Dictionary point_tiles(const mesim::Snapshot &s) {
+	const size_t n = s.point_id.size();
+	std::vector<uint64_t> key(n);
+	std::vector<uint64_t> keys;
+	for (size_t i = 0; i < n; ++i) {
+		const int32_t ix = int32_t(std::floor(s.point_xy[i * 2] / float(mesim::kSnapshotTileM)));
+		const int32_t iy = int32_t(std::floor(s.point_xy[i * 2 + 1] / float(mesim::kSnapshotTileM)));
+		key[i] = uint64_t(uint32_t(iy)) << 32 | uint32_t(ix);
+		keys.push_back(key[i]);
+	}
+	std::sort(keys.begin(), keys.end());
+	keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+	std::vector<uint32_t> count(keys.size(), 0), slot(n);
+	for (size_t i = 0; i < n; ++i) {
+		slot[i] = uint32_t(std::lower_bound(keys.begin(), keys.end(), key[i]) - keys.begin());
+		++count[slot[i]];
+	}
+	struct Tile {
+		PackedVector2Array vertices, uv;
+		PackedInt32Array indices, ids;
+		Vector2 *v = nullptr, *t = nullptr;
+		int32_t *x = nullptr, *id = nullptr;
+		int32_t next = 0;
+	};
+	std::vector<Tile> tiles(keys.size());
+	for (size_t k = 0; k < keys.size(); ++k) {
+		Tile &t = tiles[k];
+		t.vertices.resize(int64_t(count[k]) * 4);
+		t.uv.resize(int64_t(count[k]) * 4);
+		t.indices.resize(int64_t(count[k]) * 6);
+		t.ids.resize(int64_t(count[k]));
+		t.v = t.vertices.ptrw();
+		t.t = t.uv.ptrw();
+		t.x = t.indices.ptrw();
+		t.id = t.ids.ptrw();
+	}
+	static const float kCorner[4][2] = { { -1, -1 }, { 1, -1 }, { 1, 1 }, { -1, 1 } };
+	for (size_t i = 0; i < n; ++i) {
+		Tile &t = tiles[slot[i]];
+		const Vector2 p(s.point_xy[i * 2], s.point_xy[i * 2 + 1]);
+		const float code = 4.0f * float(s.point_where[i]);
+		const int32_t base = t.next * 4;
+		for (int c = 0; c < 4; ++c) {
+			t.v[base + c] = p;
+			t.t[base + c] = Vector2(kCorner[c][0] + code, kCorner[c][1]);
+		}
+		int32_t *x = t.x + t.next * 6;
+		x[0] = base;
+		x[1] = base + 1;
+		x[2] = base + 2;
+		x[3] = base;
+		x[4] = base + 2;
+		x[5] = base + 3;
+		t.id[t.next++] = int32_t(s.point_id[i]);
+	}
+	Dictionary out;
+	for (size_t k = 0; k < keys.size(); ++k) {
+		Dictionary tile;
+		tile["vertices"] = tiles[k].vertices;
+		tile["uv"] = tiles[k].uv;
+		tile["indices"] = tiles[k].indices;
+		tile["ids"] = tiles[k].ids;
+		out[Vector2i(int32_t(uint32_t(keys[k])), int32_t(uint32_t(keys[k] >> 32)))] = tile;
+	}
+	return out;
 }
 
 } // namespace
@@ -404,6 +482,7 @@ Dictionary SimSession::get_snapshot(bool force) {
 	out["point_id"] = ids;
 	out["point_where"] = where;
 	out["points_total"] = int64_t(s.points_total);
+	out["point_tiles"] = point_tiles(s);
 	Array selected;
 	for (const mesim::SelectedPerson &p : s.selected) {
 		Dictionary d;

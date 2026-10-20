@@ -4,7 +4,8 @@ extends PanelContainer
 # Переключатель слоёв карты с легендой (#16): у каждого включённого слоя — обозначения, источник
 # данных и пометка оценок и модельных значений. Цвета берутся из MapTheme, тексты — здесь.
 # Слой без данных в наборе участков (пакеты до 0.4.0) недоступен. Заголовок «Слои» сворачивает панель,
-# чтобы она не закрывала край карты.
+# чтобы она не закрывала край карты. Слой «Жители сейчас» (#46) — не данные пакета, а снимок городской
+# сессии: доступен, пока она идёт; в легенде — время снимка, число точек и предел.
 
 const WIDTH := 290.0
 const MARGIN := 8.0
@@ -15,7 +16,7 @@ const ESTIMATED := Color("#7a6f63")
 const TITLES := {
 	"functions": "Функции зданий", "population": "Ночное население", "roads": "Дороги по классам",
 	"transit": "Транспорт: маршруты и остановки", "facilities": "Учреждения", "zones": "Зоны 1 км",
-	"boundary": "Граница региона и Москвы",
+	"boundary": "Граница региона и Москвы", "people": "Жители сейчас (сессия)",
 }
 # Источник данных слоя и пометка: observed — данные OSM, estimated — оценка пакета, model — разбивка для модели,
 # setting — игровая настройка.
@@ -27,16 +28,22 @@ const SOURCES := {
 	"facilities": ["OSM (amenity, healthcare); дубли точки, корпуса и территории объединены пайплайном, точка учреждения — оценка (facilities пакета)", "estimated"],
 	"zones": ["Сетка пакета: квадраты 1 км в EPSG:32637 — разбивка для модели, не данные", "model"],
 	"boundary": ["контур Москвы — OSM; граница региона — Москва и 30 км от внешнего края МКАД (решение автора, boundary.geojson пакета)", "setting"],
+	"people": ["снимок городской сессии ядра: синтетические жители, места и поездки модели (не наблюдения); в пути — точка на прямой между концами участка пути", "model"],
 }
 const ROAD_NAMES := {"motorway": "магистраль", "trunk": "скоростная дорога", "primary": "главная", "secondary": "второстепенная",
 	"tertiary": "районная", "residential": "местная", "pedestrian": "пешеходная", "service": "проезд"}
 const TRANSIT_NAMES := {"subway": "метро (схема)", "train": "электричка", "tram": "трамвай и монорельс",
 	"trolleybus": "троллейбус", "bus": "автобус и маршрутка"}
 const FACILITY_NAMES := {"medical": "медицина", "education": "образование", "police": "полиция"}
+const PERSON_NAMES := {"home": "дома", "place": "на работе или учёбе", "visit": "в гостях и магазинах",
+	"outside": "вне региона", "walk": "пешком", "car": "на машине", "wait": "ждут транспорт", "ride": "в транспорте",
+	"return": "возвращаются после отмены"}
 
 var _map: MapView
 var _boxes := {}     # слой → CheckBox
 var _legends := {}   # слой → VBoxContainer
+var _people_status := Label.new()   # время снимка, точки и предел слоя «Жители сейчас»
+var _people_moving := CheckBox.new()
 var _list := VBoxContainer.new()
 var _scroll := ScrollContainer.new()
 var _header := Button.new()
@@ -92,10 +99,7 @@ func bind(map: MapView) -> void:
 		box.add_theme_color_override("font_hover_pressed_color", Color("#000000"))
 		box.add_theme_color_override("font_disabled_color", Color("#9a948c"))
 		box.focus_mode = Control.FOCUS_NONE
-		var available := map.layer_available(layer)
-		box.disabled = not available
-		if not available:
-			box.tooltip_text = "Нет данных в наборе участков (пакеты до 0.4.0)"
+		_set_available(box, layer)
 		box.toggled.connect(func(on: bool): _map.set_layer(layer, on))
 		_list.add_child(box)
 		_boxes[layer] = box
@@ -103,6 +107,7 @@ func bind(map: MapView) -> void:
 		_list.add_child(legend)
 		_legends[layer] = legend
 	map.layers_changed.connect(sync)
+	map.people.status_changed.connect(_sync_people)
 	sync()
 
 
@@ -120,7 +125,38 @@ func sync() -> void:
 		var on: bool = _map.layers[layer]
 		_boxes[layer].set_pressed_no_signal(on)
 		_legends[layer].visible = on
+	_sync_people()
 	_fit()
+
+
+func _set_available(box: CheckBox, layer: String) -> void:
+	var available := _map.layer_available(layer)
+	box.disabled = not available
+	box.tooltip_text = "" if available else ("Запустите город: слой показывает снимок идущей сессии" if layer == "people"
+		else "Нет данных в наборе участков (пакеты до 0.4.0)")
+
+
+## Доступность и строка состояния слоя «Жители сейчас»: время снимка, вблизи — точки и предел.
+func _sync_people() -> void:
+	if not _boxes.has("people"):
+		return
+	_set_available(_boxes.people, "people")
+	var people := _map.people
+	var text := ""
+	if not people.available():
+		text = "Город не запущен."
+	elif people.snapshot_time < 0:
+		text = "Ждём снимок ядра…"
+	else:
+		text = "Снимок: %s." % SimSessionClient.format_time(people.snapshot_time, people.snapshot_weekday)
+		if people.points_mode:
+			text += " Точки: %s из %s в окне" % [_number(people.shown_points), _number(people.window_points)]
+			if people.window_points > people.shown_points:
+				text += " — предел %s точек, приблизьте" % _number(MapTheme.PEOPLE_MAX_POINTS)
+			text += "."
+		else:
+			text += " Общий вид — участки 2 км; точки — при %.0f м/пикс. и ближе." % MapTheme.PEOPLE_POINTS_MAX_MPP
+	_people_status.text = text
 
 
 ## Текст легенды слоя (для тестов): все подписи через перевод строки.
@@ -176,18 +212,45 @@ func _legend(layer: String) -> VBoxContainer:
 		"boundary":
 			_row(box, [MapTheme.line_style("boundary_region")[0]], "регион", margin)
 			_row(box, [MapTheme.line_style("boundary_moscow")[0]], "Москва", margin)
+		"people":
+			_people_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			_people_status.custom_minimum_size = Vector2(WIDTH - 24 - margin, 0)
+			_people_status.add_theme_font_size_override("font_size", 11)
+			_people_status.add_theme_color_override("font_color", Color("#2b2b2b"))
+			var status_row := HBoxContainer.new()
+			var spacer := Control.new()
+			spacer.custom_minimum_size = Vector2(margin, 0)
+			status_row.add_child(spacer)
+			status_row.add_child(_people_status)
+			box.add_child(status_row)
+			_note(box, "Вблизи — точка на жителя по виду местонахождения:", margin)
+			for where: String in SimSessionClient.WHEREABOUTS:
+				_row(box, [MapTheme.PERSON_COLORS[where]], PERSON_NAMES[where], margin)
+			_note(box, "Общий вид — жителей на км² участка 2 км по положению на время снимка (не ночное население пакета):", margin)
+			_ramp(box, MapTheme.PEOPLE_DENSITY_BREAKS, margin, MapTheme.PEOPLE_COLORS)
+			_people_moving.text = "только в пути"
+			_people_moving.focus_mode = Control.FOCUS_NONE
+			_people_moving.add_theme_font_size_override("font_size", 12)
+			_people_moving.add_theme_color_override("font_color", Color("#333333"))
+			_people_moving.toggled.connect(func(on: bool): _map.people.set_only_moving(on))
+			var moving_row := HBoxContainer.new()
+			var moving_spacer := Control.new()
+			moving_spacer.custom_minimum_size = Vector2(margin, 0)
+			moving_row.add_child(moving_spacer)
+			moving_row.add_child(_people_moving)
+			box.add_child(moving_row)
 	var source: Array = SOURCES[layer]
 	var mark: String = {"estimated": "Оценка. ", "model": "Модельная разбивка. ", "setting": "Игровая настройка. ", "observed": ""}[source[1]]
 	_note(box, "%sИсточник: %s" % [mark, source[0]], margin, source[1] != "observed")
 	return box
 
 
-func _ramp(box: VBoxContainer, breaks: Array, margin: float) -> void:
+func _ramp(box: VBoxContainer, breaks: Array, margin: float, colors: Array = MapTheme.POPULATION_COLORS) -> void:
 	for i in breaks.size():
 		var low: float = breaks[i]
 		var text := ("%s+" % _number(low)) if i == breaks.size() - 1 else \
 			(_number(low) if breaks[i + 1] - low <= 1.0 else "%s–%s" % [_number(low), _number(breaks[i + 1] - 1.0)])
-		_row(box, [MapTheme.POPULATION_COLORS[i]], text, margin)
+		_row(box, [colors[i]], text, margin)
 
 
 static func _number(value: float) -> String:

@@ -221,6 +221,23 @@ struct Session::State {
 		return a.stop ? &stop_xy[size_t(a.index) * 2] : &endpoint_xy[size_t(a.index) * 2];
 	}
 	uint32_t anchor_tile(const Anchor &a) const { return a.stop ? stop_tile[a.index] : endpoint_tile[a.index]; }
+	// Положение жителя (#46): точка на прямой между точками привязки и её участок (kRouteNone — вне сетки).
+	uint32_t place(uint32_t id, float &x, float &y) const {
+		if (!is_moving(sim.where(id))) {
+			const Anchor a = sim.anchor(id);
+			const float *xy = anchor_xy(a);
+			x = xy[0];
+			y = xy[1];
+			return anchor_tile(a);
+		}
+		const Placement p = sim.placement(id);
+		const float *a = anchor_xy(p.from), *b = anchor_xy(p.to);
+		x = a[0] + (b[0] - a[0]) * p.along;
+		y = a[1] + (b[1] - a[1]) * p.along;
+		const int64_t tx = tile_of(x) - tile_x0, ty = tile_of(y) - tile_y0;
+		return tx >= 0 && ty >= 0 && tx < int64_t(tile_nx) && ty < int64_t(tile_ny) ? uint32_t(ty) * tile_nx + uint32_t(tx)
+																					: kRouteNone;
+	}
 	void build_grid();
 };
 
@@ -666,7 +683,8 @@ void Session::fill_snapshot(const SnapshotRequest &request, Snapshot &out) const
 		uint64_t total = 0;
 		const size_t end = std::min(n, (c + 1) * kSnapshotChunk);
 		for (size_t id = c * kSnapshotChunk; id < end; ++id) {
-			uint32_t tile = s.anchor_tile(sim.anchor(uint32_t(id)));
+			float x, y;
+			uint32_t tile = s.place(uint32_t(id), x, y);
 			const bool inside = tile != kRouteNone;
 			tile = inside ? tile : uint32_t(tiles);
 			++pr[tile];
@@ -703,9 +721,7 @@ void Session::fill_snapshot(const SnapshotRequest &request, Snapshot &out) const
 	out.point_where.resize(out.point_id.size());
 	for (size_t i = 0; i < out.point_id.size(); ++i) {
 		const uint32_t id = out.point_id[i];
-		const float *xy = s.anchor_xy(sim.anchor(id));
-		out.point_xy[i * 2] = xy[0];
-		out.point_xy[i * 2 + 1] = xy[1];
+		s.place(id, out.point_xy[i * 2], out.point_xy[i * 2 + 1]);
 		out.point_where[i] = uint8_t(sim.where(id));
 	}
 
@@ -725,9 +741,7 @@ void Session::fill_snapshot(const SnapshotRequest &request, Snapshot &out) const
 		p.home = s.population.home[id];
 		p.place = s.trips.place[id];
 		p.location = sim.location(id);
-		const float *xy = s.anchor_xy(sim.anchor(id));
-		p.x = xy[0];
-		p.y = xy[1];
+		s.place(id, p.x, p.y);
 		const std::vector<uint32_t> &journal_ids = s.scenario.journal_ids;
 		p.journaled = std::find(journal_ids.begin(), journal_ids.end(), id) != journal_ids.end();
 		if (p.journaled) {

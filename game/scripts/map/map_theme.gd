@@ -129,6 +129,22 @@ const POINT_OUTLINE := Color(1, 1, 1, 0.95)
 const POINT_FAR_MPP := 40.0     # дальше — точки мельче и без обводки, иначе учреждения сливаются в пятно
 const POINT_FAR_SCALE := 0.5
 
+# Жители сейчас (#46): точки по виду местонахождения ядра (Whereabouts) вблизи и жители участков 2 км по
+# положению на время снимка на общем виде. Шкала агрегатов — холодная, чтобы не путать её с ночным
+# населением пакета (POPULATION_COLORS). Пороги, радиус и предел точек — настройки отображения.
+const PERSON_COLORS := {
+	"home": Color("#7d8a99"), "place": Color("#6a4fb3"), "outside": Color("#9a948c"), "visit": Color("#c2508a"),
+	"walk": Color("#1f9e6e"), "car": Color("#e0791f"), "wait": Color("#d62f2f"), "ride": Color("#2a6fd6"),
+	"return": Color("#8c1a1a"),
+}
+const PERSON_RADIUS_PX := 1.8
+const PEOPLE_POINTS_MAX_MPP := 3.0      # точки — на уровне подробности 2, дальше — агрегаты участков
+const PEOPLE_MAX_POINTS := 1 << 20      # не больше стольких точек в снимке (ядро — до 2²¹)
+const PEOPLE_COLORS := [Color("#f1f3f8"), Color("#d4dcef"), Color("#a9bbe0"), Color("#7895cc"),
+	Color("#4d6db3"), Color("#2e4791"), Color("#1a2660")]
+const PEOPLE_DENSITY_BREAKS := [0.0, 1.0, 500.0, 2000.0, 5000.0, 10000.0, 20000.0]   # жителей на км²
+const PEOPLE_ALPHA := 0.7
+
 # Уровень подробности по масштабу (метров на пиксель): уровень 2 до 3 м/пикс., 1 — до 14.
 const LEVEL_MAX_MPP := {2: 3.0, 1: 14.0}
 const MIN_MPP := 0.25   # предельное приближение: дома и дворы различимы (пожелание автора, #12)

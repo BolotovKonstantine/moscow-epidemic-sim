@@ -152,6 +152,17 @@ struct Anchor {
 	uint32_t index = 0;
 };
 
+// Положение жителя для снимка (#46): прямая между концами текущего участка пути и доля пройденного
+// на now(). Дома, на месте, на посещении, вне региона и в очереди — from = to = точка привязки,
+// along = 0. Пешком: от начала поездки или остановки выхода к остановке посадки или цели (после
+// нового пути #44 — от остановки ожидания); на машине — от начала к цели; в рейсе — между соседними
+// остановками рейса; возвращение после отмены — от остановки ожидания к началу поездки. Доля — по
+// времени участка: только чтение состояния, расчётных событий нет.
+struct Placement {
+	Anchor from, to;
+	float along = 0.0f;  // [0, 1]
+};
+
 struct ActiveRun {
 	RunInfo run;
 	uint32_t next_pos = 0;
@@ -244,6 +255,7 @@ public:
 	Whereabouts where(uint32_t id) const { return Whereabouts(loc_[id]); }
 	Location location(uint32_t id) const;
 	Anchor anchor(uint32_t id) const;
+	Placement placement(uint32_t id) const;
 	const uint64_t *counts() const { return counts_; }
 	std::vector<ActiveRun> active_runs() const;   // рейсы с пассажирами по (сутки, номер)
 	std::vector<WaitingQueue> queues() const;     // непустые очереди по позиции
@@ -314,7 +326,9 @@ private:
 	// now − moved_ (пройденный путь без ожидания). Время прихода в очередь не хранится: в очереди
 	// событие жителя — предел ожидания, приход = его время − max_wait.
 	Buffer<uint32_t> moved_;
-	Buffer<uint32_t> ref_;      // wait — позиция очереди; ride — слот рейса; посещение — здание
+	// wait — позиция очереди; ride — слот рейса; посещение — здание; после предела ожидания (новый
+	// путь или возвращение) — позиция очереди, где ждал (начало участка для положения в снимке).
+	Buffer<uint32_t> ref_;
 	Buffer<uint32_t> path_;     // закреплённая запись кеша на время поездки транспортом
 	uint64_t counts_[kWhereabouts] = {};
 

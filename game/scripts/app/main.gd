@@ -5,11 +5,12 @@ extends Node
 # нового пакета в data/packages/ рядом с проектом, иначе data/processed/map-test/ (`city_pipeline map-tile`).
 # Лимит памяти кеша участков — `--map-cache-mb=<МБ>`. F3 — отладочный оверлей. Клик по зданию
 # вблизи открывает его карточку справа (#15), Esc снимает выбор. Слева — переключатель слоёв
-# с легендой (#16); клавиши 1–7 переключают слои по порядку. `--bench-map=<маршрут> --bench-out=<файл>` —
+# с легендой (#16); клавиши 1–8 переключают слои по порядку. `--bench-map=<маршрут> --bench-out=<файл>` —
 # замер просмотра карты (#17, MapBench): сценарии по маршруту, результат в файл, затем выход.
 # Городская сессия (#45) — панель внизу: запуск по кнопке или флагом `--session[=<сценарий.json>]`
 # (по умолчанию res://scenarios/test_week.json), пакет — каталог карты без map/ или `--package=<каталог>`,
 # хранилище мест и планов — user://session-store или `--session-store=<каталог>`; пробел — пауза.
+# Жители идущей сессии — слой карты «Жители сейчас» (#46): точки вблизи, агрегаты участков на общем виде.
 
 const PACKAGES_DIR := "../data/packages"
 const DEFAULT_MAP_DIR := "../data/processed/map-test"
@@ -88,6 +89,7 @@ func _ready() -> void:
 ## Городская сессия: пакет — `--package=<каталог>` или пакет каталога карты; `--session` запускает сразу.
 func _setup_session(args: PackedStringArray, map_dir: String) -> void:
 	add_child(_session)
+	_map.people.bind(_session)
 	$Hud.add_child(_session_panel)
 	var credit: Control = $Hud/Attribution
 	credit.resized.connect(func(): _session_panel.set_bottom(credit.size.y))
@@ -193,7 +195,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_SPACE:
 				if _session.status.get("state") == "ready":
 					_session.toggle_pause()
-			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7:
+			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8:
 				var layer: String = MapView.LAYER_NAMES[event.keycode - KEY_1]
 				if _map.streamer != null and _map.layer_available(layer):
 					_map.set_layer(layer, not _map.layers[layer])

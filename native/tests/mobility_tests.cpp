@@ -17,10 +17,12 @@
 #include "mesim/session_trips.h"
 #include "mesim/sim_clock.h"
 #include "mesim/trip_planner.h"
+#include "placement_check.h"
 #include "scene_loader.h"
 
 using namespace mesim;
 using namespace mesim::scene_test;
+using mesim::placement_test::PlacementCheck;
 
 namespace {
 
@@ -492,6 +494,41 @@ void test_release_pins(const std::string &dir) {
 	CHECK(cache.stats().pinned == 0);
 }
 
+// Положение для снимка (#46): по секундам всей сцены доля в [0, 1], не в пути — точка привязки, доля
+// на участке не убывает, конец участка — начало следующего; чтение положения не меняет состояние.
+void test_placement(const std::string &dir, const std::string &name) {
+	Prepared p;
+	CHECK(prepare(dir + "/" + name + "/scene.json", p));
+	if (g_failures > 0) {
+		return;
+	}
+	PathCache cache;
+	FixedSchedule schedule(p.pop, p.arrive_by.data(), p.leave_at.data(), p.scene.duration);
+	MobilityOptions options;
+	options.horizon = p.scene.duration;
+	MobilitySim sim;
+	CHECK(sim.init(p.planner, cache, p.scene.fleet, p.scene.seed, p.pop, schedule, options).ok());
+	PlacementCheck check(p.scene.net, sim.persons());
+	for (uint32_t t = 1; t <= p.scene.duration; ++t) {
+		CHECK(sim.advance_to(t).ok());
+		check.observe(sim);
+	}
+	std::printf("%s: положений в пути %llu (внутри участка %llu; пешком %llu, машина %llu, рейс %llu, возвращение %llu), "
+				"наибольший сдвиг на смене участка %.3f м\n",
+			name.c_str(), (unsigned long long)check.observed, (unsigned long long)check.partial,
+			(unsigned long long)check.by_where[size_t(Whereabouts::walk)], (unsigned long long)check.by_where[size_t(Whereabouts::car)],
+			(unsigned long long)check.by_where[size_t(Whereabouts::ride)], (unsigned long long)check.by_where[size_t(Whereabouts::back)],
+			check.worst_jump_m);
+	CHECK(check.failures() == 0);
+	CHECK(check.partial > 0 && check.by_where[size_t(Whereabouts::ride)] > 0);
+	// Тот же прогон без чтения положений — тот же хеш.
+	PathCache cache2;
+	MobilitySim plain;
+	CHECK(plain.init(p.planner, cache2, p.scene.fleet, p.scene.seed, p.pop, schedule, options).ok());
+	CHECK(plain.advance_to(p.scene.duration).ok());
+	CHECK(plain.state_hash() == sim.state_hash());
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -505,6 +542,9 @@ int main(int argc, char **argv) {
 	test_scene(dir, "mobility_reroute");
 	test_rejects(dir);
 	test_release_pins(dir);
+	test_placement(dir, "mobility_edge");
+	test_placement(dir, "mobility_mini");
+	test_placement(dir, "mobility_reroute");
 	std::printf("%s: %d проверок, %d ошибок\n", g_failures ? "FAIL" : "OK", g_checks, g_failures);
 	return g_failures ? 1 : 0;
 }
