@@ -7,11 +7,15 @@ extends Node
 # вблизи открывает его карточку справа (#15), Esc снимает выбор. Слева — переключатель слоёв
 # с легендой (#16); клавиши 1–7 переключают слои по порядку. `--bench-map=<маршрут> --bench-out=<файл>` —
 # замер просмотра карты (#17, MapBench): сценарии по маршруту, результат в файл, затем выход.
+# Городская сессия (#45) — панель внизу: запуск по кнопке или флагом `--session[=<сценарий.json>]`
+# (по умолчанию res://scenarios/test_week.json), пакет — каталог карты без map/ или `--package=<каталог>`,
+# хранилище мест и планов — user://session-store или `--session-store=<каталог>`; пробел — пауза.
 
 const PACKAGES_DIR := "../data/packages"
 const DEFAULT_MAP_DIR := "../data/processed/map-test"
 const EXPORT_HINT := "Соберите пакет: .venv/bin/python -m tools.city_pipeline build data/manifests/moscow-2021.json\nили укажите каталог участков: godot --path game -- --map-dir=<путь>"
 const DEBUG_PERIOD_USEC := 1000000   # окно, за которое оверлей показывает худший кадр
+const CREDIT_MAX_WIDTH := 420.0      # длинные строки атрибуции переносятся, а не тянут подпись через всё окно
 
 @onready var _map: MapView = $Map
 @onready var _status: Label = $Hud/Status
@@ -21,11 +25,31 @@ const DEBUG_PERIOD_USEC := 1000000   # окно, за которое оверл�
 
 var _card := BuildingCard.new()
 var _layers := MapLayerPanel.new()
+var _session := SimSessionClient.new()
+var _session_panel := SessionPanel.new()
 var _core_text := ""
 var _frame_max_usec := 0      # худший кадр текущего окна
 var _frame_shown_usec := 0    # худший кадр прошлого окна (показывается)
 var _window_started := 0
 var _last_frame := 0
+
+
+## Строки атрибуции без повторов в исходном порядке: пакет 0.8.0 пишет строку Росстата на каждую таблицу переписи.
+static func credit_text(attribution: PackedStringArray) -> String:
+	var lines := PackedStringArray()
+	for line in attribution:
+		if not lines.has(line):
+			lines.append(line)
+	return "\n".join(lines)
+
+
+func _set_credit(text: String) -> void:
+	_credit.text = text
+	_credit.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_credit.custom_minimum_size.x = 0.0
+	if _credit.get_minimum_size().x > CREDIT_MAX_WIDTH:
+		_credit.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_credit.custom_minimum_size.x = CREDIT_MAX_WIDTH
 
 
 func _ready() -> void:
@@ -40,7 +64,7 @@ func _ready() -> void:
 	var problem := _map.load_map(map_dir, cache_limit_from_args(args) << 20)
 	if _map.index != null and not _map.index.attribution.is_empty():
 		# Все источники: участки несут не только геометрию OSM, но и производные данные (жители — GHS-POP).
-		_credit.text = "\n".join(_map.index.attribution)
+		_set_credit(credit_text(_map.index.attribution))
 	if _map.index != null and _map.streamer != null:
 		$Hud.add_child(_layers)
 		_layers.bind(_map)
@@ -57,6 +81,46 @@ func _ready() -> void:
 	var bench := MapBench.from_args(args)
 	if not bench.is_empty():
 		_start_bench(bench, problem)
+		return
+	_setup_session(args, map_dir)
+
+
+## Городская сессия: пакет — `--package=<каталог>` или пакет каталога карты; `--session` запускает сразу.
+func _setup_session(args: PackedStringArray, map_dir: String) -> void:
+	add_child(_session)
+	$Hud.add_child(_session_panel)
+	var credit: Control = $Hud/Attribution
+	credit.resized.connect(func(): _session_panel.set_bottom(credit.size.y))
+	_session_panel.set_bottom(credit.size.y)
+	var package := project_path(arg_value(args, "--package="))
+	if package.is_empty():
+		package = SimSessionClient.package_dir_for_map(map_dir)
+	var scenario := SimSessionClient.DEFAULT_SCENARIO
+	var autostart := false
+	for arg in args:
+		if arg == "--session" or arg.begins_with("--session="):
+			autostart = true
+			if arg.begins_with("--session="):
+				scenario = arg.trim_prefix("--session=")
+				if not scenario.begins_with("res://") and not scenario.begins_with("user://"):
+					scenario = project_path(scenario)
+	_session_panel.bind(_session, package, scenario, project_path(arg_value(args, "--session-store=")))
+	if autostart:
+		_session_panel.start()
+
+
+## Относительный путь из командной строки — от каталога проекта game/, как у остальных путей данных.
+static func project_path(path: String) -> String:
+	if path.is_empty() or path.is_absolute_path():
+		return path
+	return ProjectSettings.globalize_path("res://").path_join(path).simplify_path()
+
+
+static func arg_value(args: PackedStringArray, prefix: String) -> String:
+	for arg in args:
+		if arg.begins_with(prefix):
+			return arg.trim_prefix(prefix)
+	return ""
 
 
 ## Замер карты (#17): оверлей скрыт, чтобы не входить в кадр; ошибка — выход с кодом 1.
@@ -126,6 +190,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				_debug.visible = not _debug.visible
 			KEY_ESCAPE:
 				_map.set_selection({})
+			KEY_SPACE:
+				if _session.status.get("state") == "ready":
+					_session.toggle_pause()
 			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7:
 				var layer: String = MapView.LAYER_NAMES[event.keycode - KEY_1]
 				if _map.streamer != null and _map.layer_available(layer):

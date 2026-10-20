@@ -18,6 +18,7 @@ enum class StatusCode : uint8_t {
 	limit_exceeded,
 	invalid_argument,
 	invalid_state,
+	cancelled,  // подготовка прервана по запросу (закрытие или повторный старт сессии)
 };
 
 struct Status {

@@ -130,12 +130,13 @@ def source_credits(manifest):
 
     Участки несут не только геометрию OSM, но и производные данные других источников
     (жители зданий — из сетки GHS-POP), поэтому их условия перечисляются вместе.
+    Одинаковые строки (несколько таблиц переписи одного владельца) пишутся один раз, порядок сохраняется.
     """
     credits = [MAP_CREDIT]
     for source in sorted(manifest["sources"], key=lambda item: item["source_id"]):
         if source.get("source_type") == "external":
             credits.append(f"{source['owner']} — {source['license']}")
-    return credits
+    return list(dict.fromkeys(credits))
 
 
 def _reject_constant(value):

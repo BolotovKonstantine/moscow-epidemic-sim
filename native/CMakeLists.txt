@@ -60,6 +60,10 @@ add_executable(mesim_schedule_tests tests/schedule_tests.cpp)
 target_compile_options(mesim_schedule_tests PRIVATE ${MESIM_FLAGS})
 target_link_libraries(mesim_schedule_tests PRIVATE mesim_core)
 
+add_executable(mesim_session_tests tests/session_tests.cpp)
+target_compile_options(mesim_session_tests PRIVATE ${MESIM_FLAGS})
+target_link_libraries(mesim_session_tests PRIVATE mesim_core)
+
 add_executable(mesim_load_city ../benchmarks/city_load/load_city.cpp)
 target_compile_options(mesim_load_city PRIVATE ${MESIM_FLAGS})
 target_link_libraries(mesim_load_city PRIVATE mesim_core)
@@ -84,6 +88,10 @@ add_executable(mesim_sched_bench ../benchmarks/schedules/sched_bench.cpp)
 target_compile_options(mesim_sched_bench PRIVATE ${MESIM_FLAGS})
 target_link_libraries(mesim_sched_bench PRIVATE mesim_core)
 
+add_executable(mesim_session_bench ../benchmarks/session/session_bench.cpp)
+target_compile_options(mesim_session_bench PRIVATE ${MESIM_FLAGS})
+target_link_libraries(mesim_session_bench PRIVATE mesim_core)
+
 enable_testing()
 add_test(NAME core_tests COMMAND mesim_core_tests ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/sim_mini)
 add_test(NAME clock_tests COMMAND mesim_clock_tests ${CMAKE_CURRENT_SOURCE_DIR}/../tests/scenarios)
@@ -91,4 +99,5 @@ add_test(NAME route_tests COMMAND mesim_route_tests ${CMAKE_CURRENT_SOURCE_DIR}/
 add_test(NAME mobility_tests COMMAND mesim_mobility_tests ${CMAKE_CURRENT_SOURCE_DIR}/../tests/scenarios)
 add_test(NAME schedule_tests COMMAND mesim_schedule_tests ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/sim_mini ${CMAKE_CURRENT_BINARY_DIR})
 add_test(NAME assignment_tests COMMAND mesim_assignment_tests ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/sim_mini)
+add_test(NAME session_tests COMMAND mesim_session_tests ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/sim_mini ${CMAKE_CURRENT_BINARY_DIR})
 add_test(NAME population_tests COMMAND mesim_population_tests ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/sim_mini)

@@ -1091,6 +1091,12 @@ Status assign_places(const PlacesInput &input, const TripPlanner &planner, const
 	a.build_pools();
 	a.build_rows();
 	report.matrix_s = seconds_since(t0);
+	auto cancelled = [&params]() { return params.cancel != nullptr && params.cancel->load(std::memory_order_relaxed); };
+	const Status cancel_status = Status::error(StatusCode::cancelled, "Назначение мест прервано");
+	if (cancelled()) {
+		places.clear();
+		return cancel_status;
+	}
 
 	// Назначение по жителям в порядке ID; затем проверка пути и повторное назначение тех, у кого его нет.
 	const size_t n = population.persons();
@@ -1108,6 +1114,10 @@ Status assign_places(const PlacesInput &input, const TripPlanner &planner, const
 		minutes[k].assign(241, 0);
 	}
 	for (int round = 0; round <= params.reassign_rounds && !todo.empty(); ++round) {
+		if (cancelled()) {
+			places.clear();
+			return cancel_status;
+		}
 		t0 = std::chrono::steady_clock::now();
 		for (uint32_t id : todo) {
 			uint8_t flags = 0;
@@ -1129,6 +1139,7 @@ Status assign_places(const PlacesInput &input, const TripPlanner &planner, const
 		PlanOptions po;
 		po.threads = a.threads;
 		po.fill_cache = false;
+		po.cancel = params.cancel;
 		PlanStats ps;
 		st = planner.plan(req.data(), req.size(), plans.data(), nullptr, po, ps);
 		if (!st.ok()) {

@@ -327,6 +327,8 @@ Status TripPlanner::plan(const TripRequest *requests, size_t n, TripPlan *out, P
 		ws.emplace_back(new RouteWorkspace(net));
 	}
 	stats.trips = n;
+	auto cancelled = [&options]() { return options.cancel != nullptr && options.cancel->load(std::memory_order_relaxed); };
+	const Status cancel_status = Status::error(StatusCode::cancelled, "Планирование поездок прервано");
 
 	// 1. Машина для профиля «автомобиль»; кто без пути на машине — к транспорту и пешком.
 	auto t0 = std::chrono::steady_clock::now();
@@ -402,6 +404,9 @@ Status TripPlanner::plan(const TripRequest *requests, size_t n, TripPlan *out, P
 	std::vector<uint8_t> need_origin(n, 0);
 	std::vector<uint64_t> settled(threads, 0);
 	for (size_t g0 = 0; g0 < groups; g0 += kGroupBatch) {
+		if (cancelled()) {
+			return cancel_status;
+		}
 		const size_t g1 = std::min(groups, g0 + kGroupBatch);
 		std::vector<Found> found(g1 - g0);
 		parallel_for(g1 - g0, threads, 1, [&](size_t gi, unsigned w) {
@@ -476,6 +481,9 @@ Status TripPlanner::plan(const TripRequest *requests, size_t n, TripPlan *out, P
 	const size_t origin_groups = bounds.size() - 1;
 	stats.origin_trees = origin_groups;
 	for (size_t g0 = 0; g0 < origin_groups; g0 += kGroupBatch) {
+		if (cancelled()) {
+			return cancel_status;
+		}
 		const size_t g1 = std::min(origin_groups, g0 + kGroupBatch);
 		std::vector<Found> found(g1 - g0);
 		parallel_for(g1 - g0, threads, 1, [&](size_t gi, unsigned w) {

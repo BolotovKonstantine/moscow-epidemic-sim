@@ -45,6 +45,9 @@ struct PlaceParams {
 	int reassign_rounds = 3;        // повторных назначений после проверки пути
 	uint32_t group_size[kPlaceKinds] = { 12, 20, 25, 25 };  // рабочая команда, группа сада, класс, учебная группа
 	unsigned threads = 0;           // 0 — по числу ядер; результат от числа потоков не зависит
+	// Флаг отмены (не параметр модели, в ключ хранилища не входит): проверяется между этапами и в
+	// планировании проверки путей; поднятый — назначение прерывается с кодом cancelled.
+	const std::atomic<bool> *cancel = nullptr;
 };
 
 Status validate_place_params(const PlaceParams &params);
