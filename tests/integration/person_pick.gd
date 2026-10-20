@@ -233,8 +233,19 @@ func _test_mini() -> void:
 	print("OK: мини-город — перекрывающихся в точке %d, журнал с выбора, карточка %.0f×%.0f в окне %s" % [
 		stack.size(), card.size.x, card.size.y, window])
 
+	# ID полного региона (больше 2²⁴) не округляются: точный порядок и значения перекрывающихся.
+	var big := MapPeopleLayer.new()
+	var at := Vector2(1000.5, 1000.5)
+	big.tile_vertices[Vector2i(0, 0)] = PackedVector2Array([at, at, at, at, at, at, at, at, at, at, at, at])
+	big.tile_ids[Vector2i(0, 0)] = PackedInt32Array([17286717, 16777217, 16777218])
+	var exact := big.people_at(at, 1.0)
+	check(exact == PackedInt32Array([16777217, 16777218, 17286717]), "большие ID без округления: %s" % exact)
+	big.free()
+
+	# Остановка сессии снимает выбор и на карте, и в карточке.
 	client.stop()
 	await process_frame
+	check(map.person_id == -1 and not card.visible and client.selected_id == -1, "остановка сессии снимает выбор")
 	map.queue_free()
 	card.queue_free()
 	client.queue_free()

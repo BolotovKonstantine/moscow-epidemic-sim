@@ -15,6 +15,7 @@ extends Node2D
 # снимка (положение и геометрия ядра) на любом масштабе, в том числе на общем виде.
 
 signal status_changed
+signal selection_reset   # сессия остановлена или заменена: выбор жителя снят (#47)
 
 const PERSON_SHADER := preload("res://shaders/map_person.gdshader")
 
@@ -215,7 +216,7 @@ func show_selected() -> void:
 ## по ID (у перекрывающихся точек — одно положение, например дом). Смотрит только участки 2 км,
 ## задевающие круг радиуса, и только их меши — не всё население.
 func people_at(map_point: Vector2, radius_m: float) -> PackedInt32Array:
-	var hits: Array[Vector2] = []   # (квадрат расстояния, ID)
+	var hits: Array[Array] = []   # [квадрат расстояния, ID]: ID — целое (во float32 ID больше 2²⁴ округляются)
 	var tiles := tiles_in(Rect2(map_point - Vector2(radius_m, radius_m), Vector2(radius_m, radius_m) * 2.0))
 	for i in range(0, tiles.size(), 2):
 		var key := Vector2i(tiles[i], tiles[i + 1])
@@ -224,11 +225,11 @@ func people_at(map_point: Vector2, radius_m: float) -> PackedInt32Array:
 		var vertices: PackedVector2Array = tile_vertices[key]
 		var ids: PackedInt32Array = tile_ids[key]
 		for index in ClassDB.class_call_static("SimSession", "points_near", vertices, map_point, radius_m):
-			hits.append(Vector2(vertices[index * 4].distance_squared_to(map_point), ids[index]))
-	hits.sort_custom(func(a: Vector2, b: Vector2): return a.x < b.x or (a.x == b.x and a.y < b.y))
+			hits.append([vertices[index * 4].distance_squared_to(map_point), ids[index]])
+	hits.sort_custom(func(a: Array, b: Array): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
 	var out := PackedInt32Array()
 	for hit in hits:
-		out.append(int(hit.y))
+		out.append(hit[1])
 	return out
 
 
@@ -239,6 +240,7 @@ func _on_status(status: Dictionary) -> void:
 		_selection.show_person({})
 		snapshot_time = -1
 		window_points = 0
+		selection_reset.emit()
 	status_changed.emit()
 
 

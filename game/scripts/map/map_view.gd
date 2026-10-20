@@ -72,6 +72,8 @@ func _init() -> void:
 	add_child(overlay)
 	people.z_index = overlay.z_index   # агрегаты — как заливка зон, точки — под остановками и учреждениями
 	add_child(people)
+	# Остановка или замена сессии: выбор жителя снимается и на карте, и в карточке.
+	people.selection_reset.connect(_on_selection_reset)
 	_highlight.name = "Selection"
 	_highlight.z_index = (MapTile.MAX_LEVEL + 2) * MapTileView.LEVEL_Z_STEP   # над участками и слоями обзора
 	add_child(_highlight)
@@ -357,6 +359,11 @@ func select_person_among(candidates: PackedInt32Array) -> bool:
 		index = (candidates.find(person_id) + 1) % candidates.size()
 	set_person(candidates[index], candidates)
 	return true
+
+
+func _on_selection_reset() -> void:
+	if person_id >= 0:
+		set_person(-1)
 
 
 ## Выбрать жителя по ID (-1 — снять): выбор здания снимается, сессия получает ID (журнал и маршрут).

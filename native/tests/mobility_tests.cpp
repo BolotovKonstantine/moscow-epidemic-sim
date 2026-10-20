@@ -567,6 +567,37 @@ struct RouteCheck {
 	}
 };
 
+// Маршрут после предела ожидания на пересадке (#47): вид с нулевой вместимостью — после первого рейса
+// житель упирается в предел ожидания и уходит новым путём (в том числе пешком к цели); маршрут для
+// карточки должен остаться на каждом шаге.
+void test_route_after_transfer(const std::string &dir, const std::string &name) {
+	Prepared p;
+	CHECK(prepare(dir + "/" + name + "/scene.json", p));
+	if (g_failures > 0) {
+		return;
+	}
+	uint64_t rerouted = 0;
+	for (size_t mode = 0; mode < p.scene.fleet.capacity.size(); ++mode) {
+		FleetParams fleet = p.scene.fleet;
+		fleet.capacity[mode] = 0;
+		PathCache cache;
+		FixedSchedule schedule(p.pop, p.arrive_by.data(), p.leave_at.data(), p.scene.duration);
+		MobilityOptions options;
+		options.horizon = p.scene.duration;
+		MobilitySim sim;
+		CHECK(sim.init(p.planner, cache, fleet, p.scene.seed, p.pop, schedule, options).ok());
+		RouteCheck routes(p.scene.net);
+		RouteWorkspace ws(p.scene.net);
+		for (uint32_t t = 1; t <= p.scene.duration; t += 5) {
+			CHECK(sim.advance_to(t).ok());
+			routes.observe(sim, ws);
+		}
+		CHECK(routes.failures == 0);
+		rerouted += routes.rerouted;
+	}
+	std::printf("%s: маршрут при закрытом виде транспорта — шагов с новым путём %llu\n", name.c_str(), (unsigned long long)rerouted);
+}
+
 // Журнал по команде (#47): включается на границе и пишет с неё те же записи, что полный журнал;
 // выключение стирает его, повторное включение начинает заново; журнал сценария не выключается;
 // сверх предела — отказ; команды журнала состояние не меняют.
@@ -690,6 +721,8 @@ int main(int argc, char **argv) {
 	test_placement(dir, "mobility_mini");
 	test_placement(dir, "mobility_reroute");
 	test_journal_commands(dir);
+	test_route_after_transfer(dir, "mobility_mini");
+	test_route_after_transfer(dir, "mobility_edge");
 	std::printf("%s: %d проверок, %d ошибок\n", g_failures ? "FAIL" : "OK", g_checks, g_failures);
 	return g_failures ? 1 : 0;
 }

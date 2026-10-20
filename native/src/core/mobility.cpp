@@ -1271,17 +1271,17 @@ Status MobilitySim::trip_route(uint32_t id, RouteWorkspace &ws, TripRoute &out) 
 	if (out.current && (kind_[id] & kRerouted)) {
 		out.rerouted = true;
 		const RoutePoint &to = net.endpoint_pos[request.to];
-		// Остановка ожидания известна, пока житель идёт от неё (ref_ — позиция очереди); дальше путь — с
-		// начальной остановки нового пути.
-		const bool from_wait = w == Whereabouts::walk && ride_ix_[id] == 0;
 		if (path_[id] == kRouteNone) {
+			// Новый путь пешком: от остановки ожидания к цели (ref_ — позиция очереди), как и положение в
+			// снимке — и после уже проеханного рейса (ride_ix_ > 0 на пересадке).
 			out.mode = TripMode::walk;
-			if (from_wait) {
-				const RoutePoint &a = net.stop_pos[net.pos_stop[ref_[id]]];
-				walk_leg(a, to, walk_s(a, to));
-			}
+			const RoutePoint &a = net.stop_pos[net.pos_stop[ref_[id]]];
+			walk_leg(a, to, walk_s(a, to));
 			return Status::success();
 		}
+		// Остановка ожидания известна, пока житель идёт от неё к первой посадке нового пути (ref_ —
+		// позиция очереди); дальше путь — с начальной остановки нового пути.
+		const bool from_wait = w == Whereabouts::walk && ride_ix_[id] == 0;
 		const TransitPath path = cache_->path(path_[id]);
 		const RoutePoint &first = net.stop_pos[path.start_stop];
 		const RoutePoint &a = from_wait ? net.stop_pos[net.pos_stop[ref_[id]]] : first;
