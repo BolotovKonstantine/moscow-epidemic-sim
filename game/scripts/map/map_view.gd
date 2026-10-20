@@ -15,6 +15,7 @@ extends Node2D
 signal view_changed(meters_per_pixel: float, level: int)
 signal tiles_changed
 signal selection_changed(selection: Dictionary)   # {} — выбор снят
+signal person_changed(id: int, candidates: PackedInt32Array)   # выбранный житель (#47); -1 — выбор снят
 signal layers_changed
 
 # Слои в порядке переключателя; functions и population перекрашивают здания и исключают друг друга.
@@ -36,6 +37,8 @@ var max_meters_per_pixel := 500.0
 var region_rect := Rect2()
 var load_stats: Dictionary = {}   # загрузка обзора: usec, static_bytes, tiles, errors
 var selection: Dictionary = {}    # выбранное здание: {id, attributes, outlines, area_m2}; {} — нет
+var person_id := -1               # выбранный житель (#47) или -1; выбор здания и жителя взаимоисключающие
+var person_candidates := PackedInt32Array()   # жители под последним кликом (перекрывающиеся точки)
 var layers := {"functions": false, "population": false, "roads": true, "transit": false, "facilities": false,
 	"zones": false, "boundary": true, "people": true}
 var overlay := MapDataOverlay.new()
@@ -319,6 +322,11 @@ func building_at(map_point: Vector2) -> Dictionary:
 func select_at(map_point: Vector2) -> bool:
 	if level_for(meters_per_pixel) < 2:
 		return false
+	# Жители (#47): точка жителя под курсором важнее здания под ней.
+	if people.enabled and people.points_mode:
+		var hit_people := people.people_at(map_point, MapTheme.PERSON_PICK_PX * meters_per_pixel)
+		if not hit_people.is_empty():
+			return select_person_among(hit_people)
 	if streamer != null:
 		var size: float = MapTile.LEVEL_TILE_M[2]
 		var cell := Vector2i(floori(map_point.x / size), floori(map_point.y / size))
@@ -331,14 +339,42 @@ func select_at(map_point: Vector2) -> bool:
 						and (bounds as Rect2).grow(BBOX_TOLERANCE_M).has_point(map_point):
 					return false
 	var hit := building_at(map_point)
+	if hit.is_empty() and person_id >= 0:
+		set_person(-1)
+		set_selection(hit)
+		return true
 	if hit.get("id") == selection.get("id"):
 		return false
 	set_selection(hit)
 	return true
 
 
+## Клик по точкам жителей (ID по расстоянию, затем по ID): первый из них, а повторный клик по тому же
+## месту — следующий из перекрывающихся по кругу.
+func select_person_among(candidates: PackedInt32Array) -> bool:
+	var index := 0
+	if candidates == person_candidates:
+		index = (candidates.find(person_id) + 1) % candidates.size()
+	set_person(candidates[index], candidates)
+	return true
+
+
+## Выбрать жителя по ID (-1 — снять): выбор здания снимается, сессия получает ID (журнал и маршрут).
+func set_person(id: int, candidates := PackedInt32Array()) -> void:
+	person_id = id
+	person_candidates = candidates if id >= 0 else PackedInt32Array()
+	if id >= 0 and not selection.is_empty():
+		set_selection({})
+	if people.client != null:
+		people.client.select_person(id)
+	people.show_selected()
+	person_changed.emit(person_id, person_candidates)
+
+
 ## Выбрать здание (результат building_at) или снять выбор ({}).
 func set_selection(value: Dictionary) -> void:
+	if not value.is_empty() and person_id >= 0:
+		set_person(-1)
 	selection = value
 	_highlight.outlines = value.get("outlines", [] as Array[PackedVector2Array])
 	_highlight.queue_redraw()

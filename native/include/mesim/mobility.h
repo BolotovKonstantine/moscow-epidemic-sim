@@ -163,6 +163,22 @@ struct Placement {
 	float along = 0.0f;  // [0, 1]
 };
 
+// Маршрут жителя для карточки (#47): текущая поездка или, если житель стоит, следующая по расписанию.
+// Геометрия — как TripPlanner::expand по плану поездки; после нового пути (#44) — от остановки ожидания
+// по закреплённому пути, при возвращении после отмены — от остановки ожидания к началу поездки по
+// прямой (как положение в снимке). Только чтение: события и состояние не меняются.
+struct TripRoute {
+	bool current = false;         // поездка идёт сейчас; иначе — следующая
+	TripKind kind = TripKind::outbound;
+	TripMode mode = TripMode::none;  // none — поездок больше нет
+	bool rerouted = false;
+	bool returning = false;
+	uint32_t depart = kNoEvent;   // следующая поездка: время выезда
+	uint32_t from = kRouteNone;   // концы поездки (коды сети); при возвращении to — начало поездки
+	uint32_t to = kRouteNone;
+	TripGeometry geometry;
+};
+
 struct ActiveRun {
 	RunInfo run;
 	uint32_t next_pos = 0;
@@ -180,9 +196,11 @@ struct MobilityOptions {
 	bool keep_intervals = false;  // хранить интервалы присутствия (малые сцены)
 	bool keep_runs = false;       // хранить список рейсов (малые сцены)
 	bool reverse_init = false;    // регистрация в обратном порядке — только для проверки независимости
-	// Полный журнал выбранных ID (нулевой пациент и до 64 выбранных): кольцо на ID.
+	// Полный журнал выбранных ID (нулевой пациент и до 64 выбранных): кольцо на ID. Эти журналы
+	// идут с начала и не выключаются; остальные включаются командой (kCommandJournalOn) с её границы.
 	std::vector<uint32_t> journal_ids;
 	uint32_t journal_capacity = 4096;
+	uint32_t journal_limit = 64;  // журналов одновременно, вместе с journal_ids
 	// Новые пути после предела ожидания (#44) считаются заранее порциями по окну времени в нескольких
 	// потоках: одно дерево на (позиция очереди, период). Результат от окна и числа потоков не зависит —
 	// путь зависит только от остановки, маршрута, периода и цели; без готового — тот же расчёт на месте.
@@ -226,6 +244,12 @@ struct MobilityViolations {
 	uint64_t path = 0;         // путь транспорта не получен
 };
 
+// Команды движения (Command::kind, target — ID жителя). Журнал выбранного (#47) включается и
+// выключается на границе интервала: запись начинается с неё, прежней истории нет. Журнал состояния
+// не меняет (в хеш не входит). Включение сверх journal_limit не выполняется (journal_refused).
+constexpr uint32_t kCommandJournalOn = 1;
+constexpr uint32_t kCommandJournalOff = 2;
+
 class MobilitySim {
 public:
 	MobilitySim() = default;
@@ -242,7 +266,7 @@ public:
 	Status advance_to(uint32_t t);
 
 	// Модель для SimClock::advance_to: начало интервала создаёт рейсы новых суток.
-	void apply_command(const Command &) {}
+	void apply_command(const Command &command);
 	void begin_interval(int64_t begin);
 	void on_event(const Event &event);
 	// Посчитать заранее новые пути ждущих, чей предел ожидания в [begin, end) (#44); begin_interval и
@@ -261,6 +285,14 @@ public:
 	std::vector<WaitingQueue> queues() const;     // непустые очереди по позиции
 	const std::vector<LogRecord> &log() const { return log_; }
 	std::vector<LogRecord> journal(uint32_t id) const;  // по времени
+	// Время начала журнала жителя или kNoEvent, если журнала нет (кольцо хранит последние записи).
+	uint32_t journal_since(uint32_t id) const;
+	size_t journal_count() const { return journals_.size(); }
+	uint64_t journal_refused() const { return journal_refused_; }
+	// Маршрут текущей или следующей поездки (TripRoute); ws — буфер вызывающего потока.
+	Status trip_route(uint32_t id, RouteWorkspace &ws, TripRoute &out) const;
+	// Маршрут, на котором житель ждёт или едет, иначе kRouteNone.
+	uint32_t current_route(uint32_t id) const;
 	const std::vector<PresenceInterval> &intervals() const { return intervals_; }
 	const std::vector<RunInfo> &runs() const { return run_list_; }
 	const MobilityStats &stats() const { return stats_; }
@@ -298,6 +330,8 @@ private:
 	struct Journal {
 		uint32_t id = 0;
 		uint32_t head = 0;
+		uint32_t since = 0;
+		bool pinned = false;  // из journal_ids: не выключается
 		std::vector<LogRecord> ring;
 	};
 
@@ -343,7 +377,8 @@ private:
 	std::vector<uint32_t> pending_;                   // буфер событий рейсов одного номера
 
 	std::vector<LogRecord> log_;
-	std::vector<Journal> journals_;
+	std::vector<Journal> journals_;  // по возрастанию ID
+	uint64_t journal_refused_ = 0;
 	std::vector<PresenceInterval> intervals_;
 	std::vector<RunInfo> run_list_;
 	MobilityStats stats_;

@@ -153,6 +153,9 @@ Status set_route_headways(RouteNetwork &net, std::vector<uint32_t> headways);
 Status build_route_network(const CityData &city, RouteNetwork &out,
 		uint32_t walk_fallback_max_s = kWalkFallbackMaxDefault);
 
+// Код вида транспорта пакета (route_mode): bus, share_taxi, …, subway; вне кодов — «?».
+const char *transit_mode_name(uint8_t mode);
+
 // Период суток для времени t (секунды от начала сценария).
 uint32_t route_period_at(const RouteNetwork &net, uint64_t t);
 

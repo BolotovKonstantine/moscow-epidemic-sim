@@ -186,7 +186,9 @@ uint64_t Snapshot::memory_bytes() const {
 	b += (tile_present.capacity() + tile_moving.capacity()) * sizeof(uint32_t);
 	b += point_xy.capacity() * sizeof(float) + point_id.capacity() * sizeof(uint32_t) + point_where.capacity();
 	for (const SelectedPerson &p : selected) {
-		b += sizeof(SelectedPerson) + p.journal.capacity() * sizeof(LogRecord);
+		b += sizeof(SelectedPerson) + p.journal.capacity() * sizeof(LogRecord) +
+				p.trip.geometry.points.capacity() * sizeof(RoutePoint) + p.trip.geometry.legs.capacity() * sizeof(TripLeg) +
+				p.trip.geometry.car_arcs.capacity() * sizeof(uint32_t);
 	}
 	return b;
 }
@@ -216,6 +218,27 @@ struct Session::State {
 	uint32_t tile_nx = 0, tile_ny = 0;
 	std::vector<float> endpoint_xy, stop_xy;
 	std::vector<uint32_t> endpoint_tile, stop_tile;
+	// Внешние ID для карточки выбранного (#47): номер OSM × 4 + тип (n, w, r) у зданий и остановок,
+	// маршрут OSM и номер куска у маршрутов сети. Таблицы пакета после подготовки освобождаются.
+	std::vector<uint64_t> building_osm, stop_osm, route_osm;
+	std::vector<uint16_t> route_piece;
+	std::unique_ptr<RouteWorkspace> ws;  // маршрут выбранных в снимке (поток расчёта)
+
+	std::string endpoint_ref(uint32_t index) const {
+		if (index == kRouteNone) {
+			return std::string();
+		}
+		return index < building_osm.size() ? osm_ref(building_osm[index])
+										   : "gateway:" + std::to_string(index - net.buildings);
+	}
+	std::string route_ref(uint32_t route) const {
+		return route < route_osm.size() ? "r" + std::to_string(route_osm[route]) + ":" + std::to_string(route_piece[route])
+										: std::string();
+	}
+	static std::string osm_ref(uint64_t packed) {
+		static const char kTypes[] = { 'n', 'w', 'r', '?' };
+		return kTypes[packed & 3] + std::to_string(packed >> 2);
+	}
 
 	const float *anchor_xy(const Anchor &a) const {
 		return a.stop ? &stop_xy[size_t(a.index) * 2] : &endpoint_xy[size_t(a.index) * 2];
@@ -385,6 +408,26 @@ Status Session::create(const std::string &package_dir, const ScenarioConfig &sce
 	if (!st.ok()) {
 		return fail(st);
 	}
+	{
+		auto osm = [&](TableId table, std::vector<uint64_t> &out) {
+			const auto type = city.table(table).column<uint8_t>("osm_type");
+			const auto id = city.table(table).column<uint64_t>("osm_id");
+			out.resize(type.size);
+			for (size_t i = 0; i < type.size; ++i) {
+				out[i] = id[i] << 2 | std::min<uint8_t>(type[i], 3);
+			}
+		};
+		osm(TableId::buildings, s->building_osm);
+		osm(TableId::stops, s->stop_osm);
+		const auto route = city.table(TableId::route_pieces).column<uint64_t>("route_osm_id");
+		const auto piece = city.table(TableId::route_pieces).column<uint16_t>("piece");
+		s->route_osm.assign(route.begin(), route.end());
+		s->route_piece.assign(piece.begin(), piece.end());
+		s->ws.reset(new (std::nothrow) RouteWorkspace(s->net));
+		if (!s->ws) {
+			return fail(Status::error(StatusCode::limit_exceeded, "Сессия: нет памяти под буферы путей"));
+		}
+	}
 	if (cancelled()) {
 		return fail(cancel_status);
 	}
@@ -518,6 +561,7 @@ Status Session::create(const std::string &package_dir, const ScenarioConfig &sce
 	MobilityOptions mo;
 	mo.horizon = horizon;
 	mo.journal_ids = scenario.journal_ids;
+	mo.journal_limit = uint32_t(kMaxJournalIds);
 	mo.threads = options.threads;
 	mo.reroute_window_s = options.reroute_window_s;
 	st = s->sim.init(s->planner, *s->cache, s->fleet, scenario.seed, s->trips.pop, s->schedule, mo);
@@ -572,6 +616,9 @@ Status Session::submit(const Command &command, int64_t &applied_at) {
 	if (command.time >= end_time()) {
 		return Status::error(StatusCode::invalid_state, "Команда после конца сценария");
 	}
+	if ((command.kind != kCommandJournalOn && command.kind != kCommandJournalOff) || command.target >= persons()) {
+		return Status::error(StatusCode::invalid_argument, "Команда: неизвестный вид или житель");
+	}
 	return s_->clock.submit(command, applied_at);
 }
 
@@ -615,7 +662,9 @@ uint64_t Session::memory_bytes() const {
 	return s.population.memory_bytes() + s.net.memory_bytes() + s.places.memory_bytes() + s.visits.memory_bytes() +
 			s.trips.memory_bytes() + s.sim.memory_bytes() + (s.cache ? s.cache->allocated_bytes() : 0) +
 			(s.endpoint_xy.capacity() + s.stop_xy.capacity()) * sizeof(float) +
-			(s.endpoint_tile.capacity() + s.stop_tile.capacity()) * sizeof(uint32_t);
+			(s.endpoint_tile.capacity() + s.stop_tile.capacity()) * sizeof(uint32_t) +
+			(s.building_osm.capacity() + s.stop_osm.capacity() + s.route_osm.capacity()) * sizeof(uint64_t) +
+			s.route_piece.capacity() * sizeof(uint16_t);
 }
 
 // ---------- Снимок ----------
@@ -634,6 +683,8 @@ void Session::fill_snapshot(const SnapshotRequest &request, Snapshot &out) const
 	out.point_where.clear();
 	out.points_total = 0;
 	out.selected.clear();
+	out.journals = 0;
+	out.journal_refused = 0;
 	out.has_hash = false;
 	out.state_hash = 0;
 	if (!s_) {
@@ -725,7 +776,10 @@ void Session::fill_snapshot(const SnapshotRequest &request, Snapshot &out) const
 		out.point_where[i] = uint8_t(sim.where(id));
 	}
 
-	// Выбранные жители.
+	// Выбранные жители (#47).
+	out.journals = uint32_t(sim.journal_count());
+	out.journal_refused = sim.journal_refused();
+	const std::vector<uint32_t> &journal_ids = s.scenario.journal_ids;
 	for (size_t i = 0; i < request.selected.size() && out.selected.size() < kMaxJournalIds; ++i) {
 		const uint32_t id = request.selected[i];
 		if (id >= n) {
@@ -738,14 +792,59 @@ void Session::fill_snapshot(const SnapshotRequest &request, Snapshot &out) const
 		p.flags = s.population.flags[id];
 		p.profile = s.population.profile[id];
 		p.household = s.population.household[id];
+		p.household_size = s.population.household_first[p.household + 1] - s.population.household_first[p.household];
 		p.home = s.population.home[id];
+		p.home_ref = s.endpoint_ref(p.home);
 		p.place = s.trips.place[id];
+		p.place_ref = s.endpoint_ref(p.place);
+		p.place_index = s.population.place[id];
+		if (p.place_index < s.places.count()) {
+			p.place_kind = s.places.kind[p.place_index];
+			p.place_capacity = s.places.capacity[p.place_index];
+			p.group = s.places.person_group[id];
+			if (p.group != kGroupNone) {
+				p.group_size = s.places.group_first[p.group + 1] - s.places.group_first[p.group];
+			}
+		}
+		const PersonalTimes times = s.schedule.personal(id);
+		p.regular = times.regular;
+		p.arrive_s = times.arrive_s;
+		p.leave_s = times.leave_s;
+		p.pattern = uint8_t(times.pattern);
 		p.location = sim.location(id);
+		const Anchor anchor = sim.anchor(id);
+		p.location_ref = anchor.stop ? Session::State::osm_ref(s.stop_osm[anchor.index]) : s.endpoint_ref(anchor.index);
+		p.route = sim.current_route(id);
+		if (p.route != kRouteNone) {
+			p.route_mode = s.net.route_mode[p.route];
+			p.route_ref = s.route_ref(p.route);
+		}
 		s.place(id, p.x, p.y);
-		const std::vector<uint32_t> &journal_ids = s.scenario.journal_ids;
-		p.journaled = std::find(journal_ids.begin(), journal_ids.end(), id) != journal_ids.end();
+		p.trip_ok = sim.trip_route(id, *s_->ws, p.trip).ok();
+		p.trip_from_ref = s.endpoint_ref(p.trip.from);
+		p.trip_to_ref = s.endpoint_ref(p.trip.to);
+		for (const TripLeg &leg : p.trip.geometry.legs) {
+			const bool ride = leg.kind == LegKind::ride && leg.route != kRouteNone;
+			p.leg_refs.push_back(ride ? s.route_ref(leg.route) : std::string());
+			p.leg_modes.push_back(ride ? s.net.route_mode[leg.route] : 0);
+		}
+		const uint32_t since = sim.journal_since(id);
+		p.journaled = since != kNoEvent;
+		p.journal_pinned = std::find(journal_ids.begin(), journal_ids.end(), id) != journal_ids.end();
 		if (p.journaled) {
+			p.journal_since = since;
 			p.journal = sim.journal(id);
+			for (const LogRecord &rec : p.journal) {
+				if ((rec.event == LogEvent::queue || rec.event == LogEvent::cancel) && rec.a < s.net.route_count()) {
+					p.journal_routes.push_back(rec.a);
+				}
+			}
+			std::sort(p.journal_routes.begin(), p.journal_routes.end());
+			p.journal_routes.erase(std::unique(p.journal_routes.begin(), p.journal_routes.end()), p.journal_routes.end());
+			for (uint32_t route : p.journal_routes) {
+				p.journal_route_refs.push_back(s.route_ref(route));
+				p.journal_route_modes.push_back(s.net.route_mode[route]);
+			}
 		}
 		out.selected.push_back(std::move(p));
 	}

@@ -15,7 +15,9 @@
 #include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/vector2i.hpp>
 
+#include "mesim/assignment.h"
 #include "mesim/population.h"
+#include "mesim/schedule.h"
 
 namespace godot {
 
@@ -32,6 +34,133 @@ const char *log_event_name(mesim::LogEvent e) {
 	static const char *const kNames[] = { "depart", "queue", "board", "alight", "arrive", "cancel", "returned", "reroute" };
 	const size_t i = size_t(e);
 	return i < sizeof(kNames) / sizeof(kNames[0]) ? kNames[i] : "?";
+}
+
+// Коды карточки (#47): как в ядре (population.h, schedule.h, mobility.h, trip_planner.h).
+template <size_t N>
+String code_name(const char *const (&names)[N], size_t i) {
+	return String(i < N ? names[i] : "?");
+}
+const char *const kSocio[] = { "low", "middle", "upper_middle", "high" };
+const char *const kTransport[] = { "accompanied", "transit_walk", "car" };
+const char *const kContact[] = { "low", "medium", "high" };
+const char *const kHealth[] = { "robust", "typical", "chronic", "fragile" };
+const char *const kBehavior[] = { "careless", "average", "careful", "strict" };
+const char *const kPatterns[] = { "weekdays", "shifts", "nights" };
+const char *const kTripKinds[] = { "outbound", "back", "visit", "visit_back" };
+const char *const kLegKinds[] = { "walk", "car", "ride" };
+
+int64_t or_minus_one(uint32_t value, uint32_t none) {
+	return value == none ? int64_t(-1) : int64_t(value);
+}
+
+Dictionary trip_dict(const mesim::SelectedPerson &p) {
+	const mesim::TripRoute &r = p.trip;
+	Dictionary d;
+	d["ok"] = p.trip_ok;
+	d["current"] = r.current;
+	d["kind"] = code_name(kTripKinds, size_t(r.kind));
+	d["mode"] = String(mesim::trip_mode_name(r.mode));
+	d["rerouted"] = r.rerouted;
+	d["returning"] = r.returning;
+	d["depart"] = or_minus_one(r.depart, mesim::kNoEvent);
+	d["from_ref"] = String::utf8(p.trip_from_ref.c_str());
+	d["to_ref"] = String::utf8(p.trip_to_ref.c_str());
+	d["time_s"] = int64_t(r.geometry.time_s);
+	PackedVector2Array points;
+	points.resize(int64_t(r.geometry.points.size()));
+	for (size_t i = 0; i < r.geometry.points.size(); ++i) {
+		points.set(int64_t(i), Vector2(float(r.geometry.points[i].x), float(r.geometry.points[i].y)));
+	}
+	d["points"] = points;
+	Array legs;
+	for (size_t i = 0; i < r.geometry.legs.size(); ++i) {
+		const mesim::TripLeg &leg = r.geometry.legs[i];
+		Dictionary l;
+		l["kind"] = code_name(kLegKinds, size_t(leg.kind));
+		l["first"] = int64_t(leg.first);
+		l["count"] = int64_t(leg.count);
+		l["duration_s"] = int64_t(leg.duration_s);
+		if (leg.kind == mesim::LegKind::ride) {
+			l["route_ref"] = String::utf8(p.leg_refs[i].c_str());
+			l["mode"] = String(mesim::transit_mode_name(p.leg_modes[i]));
+			l["stops"] = int64_t(leg.alight - leg.board);
+		}
+		legs.push_back(l);
+	}
+	d["legs"] = legs;
+	return d;
+}
+
+Dictionary selected_dict(const mesim::SelectedPerson &p) {
+	Dictionary d;
+	d["id"] = int64_t(p.id);
+	d["age"] = int64_t(p.age);
+	d["role"] = String(mesim::role_name(mesim::Role(p.role)));
+	d["flags"] = int64_t(p.flags);
+	d["profile"] = int64_t(p.profile);
+	const mesim::ProfileCodes codes = mesim::decode_profile(p.profile);
+	d["socio"] = code_name(kSocio, codes.socio);
+	d["transport"] = code_name(kTransport, codes.transport);
+	d["contact"] = code_name(kContact, codes.contact);
+	d["health"] = code_name(kHealth, codes.health);
+	d["behavior"] = code_name(kBehavior, codes.behavior);
+	d["household"] = int64_t(p.household);
+	d["household_size"] = int64_t(p.household_size);
+	d["home"] = int64_t(p.home);
+	d["home_ref"] = String::utf8(p.home_ref.c_str());
+	d["place"] = or_minus_one(p.place, mesim::kRouteNone);
+	d["place_ref"] = String::utf8(p.place_ref.c_str());
+	d["place_index"] = or_minus_one(p.place_index, mesim::kPlaceNone);
+	const bool has_place = p.place_index != mesim::kPlaceNone && p.place_index != mesim::kPlaceUnknown;
+	d["place_kind"] = has_place ? String(mesim::place_kind_name(mesim::PlaceKind(p.place_kind))) : String();
+	d["place_capacity"] = int64_t(p.place_capacity);
+	d["group"] = or_minus_one(p.group, mesim::kGroupNone);
+	d["group_size"] = int64_t(p.group_size);
+	d["regular"] = p.regular;
+	d["arrive_s"] = int64_t(p.arrive_s);
+	d["leave_s"] = int64_t(p.leave_s);
+	d["pattern"] = code_name(kPatterns, p.pattern);
+	d["where"] = String(mesim::whereabouts_name(p.location.where));
+	d["a"] = int64_t(p.location.a);
+	d["b"] = int64_t(p.location.b);
+	d["c"] = int64_t(p.location.c);
+	d["location_ref"] = String::utf8(p.location_ref.c_str());
+	d["route"] = or_minus_one(p.route, mesim::kRouteNone);
+	d["route_ref"] = String::utf8(p.route_ref.c_str());
+	d["route_mode"] = p.route != mesim::kRouteNone ? String(mesim::transit_mode_name(p.route_mode)) : String();
+	d["x"] = p.x;
+	d["y"] = p.y;
+	d["trip"] = trip_dict(p);
+	d["journaled"] = p.journaled;
+	d["journal_pinned"] = p.journal_pinned;
+	d["journal_since"] = p.journal_since;
+	Array journal;
+	for (const mesim::LogRecord &r : p.journal) {
+		Dictionary e;
+		e["time"] = int64_t(r.time);
+		e["event"] = String(log_event_name(r.event));
+		e["a"] = int64_t(r.a);
+		e["b"] = int64_t(r.b);
+		e["c"] = int64_t(r.c);
+		journal.push_back(e);
+	}
+	d["journal"] = journal;
+	Dictionary routes;  // номер маршрута записи журнала → {ref, mode}
+	for (size_t i = 0; i < p.journal_routes.size(); ++i) {
+		Dictionary r;
+		r["ref"] = String::utf8(p.journal_route_refs[i].c_str());
+		r["mode"] = String(mesim::transit_mode_name(p.journal_route_modes[i]));
+		routes[int64_t(p.journal_routes[i])] = r;
+	}
+	d["journal_routes"] = routes;
+	if (p.route != mesim::kRouteNone) {
+		Dictionary r;
+		r["ref"] = String::utf8(p.route_ref.c_str());
+		r["mode"] = String(mesim::transit_mode_name(p.route_mode));
+		routes[int64_t(p.route)] = r;
+	}
+	return d;
 }
 
 double ms_since(Clock::time_point start) {
@@ -128,6 +257,8 @@ void SimSession::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("request_snapshot", "tiles", "max_points", "selected", "with_hash"), &SimSession::request_snapshot,
 			DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("set_snapshot_period_ms", "period_ms"), &SimSession::set_snapshot_period_ms);
+	ClassDB::bind_method(D_METHOD("set_journal", "id", "on"), &SimSession::set_journal);
+	ClassDB::bind_static_method("SimSession", D_METHOD("points_near", "vertices", "center", "radius"), &SimSession::points_near);
 	ClassDB::bind_method(D_METHOD("get_snapshot", "force"), &SimSession::get_snapshot, DEFVAL(false));
 	BIND_CONSTANT(kSpeedMax);
 }
@@ -161,6 +292,7 @@ Dictionary SimSession::start(const String &package_dir, const String &scenario_j
 		scenario_ = scenario;
 		speed_ = 0;
 		run_until_ = -1;
+		commands_.clear();
 		report_ = mesim::SessionReport();
 		package_context_.clear();
 		end_time_ = int64_t(scenario.days) * mesim::kSecondsPerDay;
@@ -196,6 +328,7 @@ void SimSession::stop() {
 		failure_ = mesim::Status::success();
 		speed_ = 0;
 		run_until_ = -1;
+		commands_.clear();
 	}
 	std::lock_guard<std::mutex> lock(snapshot_mutex_);
 	for (int i = 0; i < kBuffers; ++i) {
@@ -255,6 +388,13 @@ void SimSession::loop() {
 		if (cancel_.load()) {
 			break;
 		}
+		// Команды — на текущую границу: применятся в начале следующего исполненного интервала.
+		for (mesim::Command &command : commands_) {
+			int64_t applied_at = 0;
+			command.time = session_.now();
+			session_.submit(command, applied_at);  // после конца сценария — отказ, команда не нужна
+		}
+		commands_.clear();
 		const auto now = Clock::now();
 		const double dt = std::chrono::duration<double>(now - last).count();
 		last = now;
@@ -423,6 +563,37 @@ void SimSession::request_snapshot(const PackedInt32Array &tiles, int max_points,
 	wake_.notify_all();
 }
 
+void SimSession::set_journal(int64_t id, bool on) {
+	if (id < 0 || id >= (int64_t(1) << 31)) {
+		return;
+	}
+	{
+		std::lock_guard<std::mutex> lock(control_mutex_);
+		commands_.push_back(mesim::Command{ 0, on ? mesim::kCommandJournalOn : mesim::kCommandJournalOff, uint32_t(id), 0 });
+	}
+	wake_.notify_all();
+}
+
+PackedInt32Array SimSession::points_near(const PackedVector2Array &vertices, const Vector2 &center, double radius) {
+	std::vector<std::pair<double, int32_t>> hits;
+	const Vector2 *v = vertices.ptr();
+	const double r2 = radius * radius;
+	for (int64_t i = 0; i + 3 < vertices.size(); i += 4) {
+		const double dx = double(v[i].x) - center.x, dy = double(v[i].y) - center.y;
+		const double d2 = dx * dx + dy * dy;
+		if (d2 <= r2) {
+			hits.emplace_back(d2, int32_t(i / 4));
+		}
+	}
+	std::sort(hits.begin(), hits.end());
+	PackedInt32Array out;
+	out.resize(int64_t(hits.size()));
+	for (size_t i = 0; i < hits.size(); ++i) {
+		out.set(int64_t(i), hits[i].second);
+	}
+	return out;
+}
+
 void SimSession::set_snapshot_period_ms(int period_ms) {
 	std::lock_guard<std::mutex> lock(control_mutex_);
 	snapshot_period_ms_ = uint32_t(std::clamp(period_ms, 0, 60000));
@@ -485,36 +656,12 @@ Dictionary SimSession::get_snapshot(bool force) {
 	out["point_tiles"] = point_tiles(s);
 	Array selected;
 	for (const mesim::SelectedPerson &p : s.selected) {
-		Dictionary d;
-		d["id"] = int64_t(p.id);
-		d["age"] = int64_t(p.age);
-		d["role"] = String(mesim::role_name(mesim::Role(p.role)));
-		d["flags"] = int64_t(p.flags);
-		d["profile"] = int64_t(p.profile);
-		d["household"] = int64_t(p.household);
-		d["home"] = int64_t(p.home);
-		d["place"] = p.place == mesim::kRouteNone ? int64_t(-1) : int64_t(p.place);
-		d["where"] = String(mesim::whereabouts_name(p.location.where));
-		d["a"] = int64_t(p.location.a);
-		d["b"] = int64_t(p.location.b);
-		d["c"] = int64_t(p.location.c);
-		d["x"] = p.x;
-		d["y"] = p.y;
-		d["journaled"] = p.journaled;
-		Array journal;
-		for (const mesim::LogRecord &r : p.journal) {
-			Dictionary e;
-			e["time"] = int64_t(r.time);
-			e["event"] = String(log_event_name(r.event));
-			e["a"] = int64_t(r.a);
-			e["b"] = int64_t(r.b);
-			e["c"] = int64_t(r.c);
-			journal.push_back(e);
-		}
-		d["journal"] = journal;
-		selected.push_back(d);
+		selected.push_back(selected_dict(p));
 	}
 	out["selected"] = selected;
+	out["journals"] = int64_t(s.journals);
+	out["journal_refused"] = int64_t(s.journal_refused);
+	out["journal_limit"] = int64_t(mesim::kMaxJournalIds);
 	if (s.has_hash) {
 		out["state_hash"] = hex64(s.state_hash);
 	}

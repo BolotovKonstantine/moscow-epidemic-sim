@@ -156,6 +156,11 @@ public:
 	// пересадки и отход, пешком — по прямой. Время участков в сумме равно времени плана.
 	Status expand(RouteWorkspace &ws, const TripRequest &request, const TripPlan &plan, PathCache &cache,
 			TripGeometry &out) const;
+	// Часть транспорта expand: подход от from к начальной остановке, поездки с пересадками и отход к
+	// to с данными временами подхода и отхода; ожидание каждой посадки — ⌊интервал периода / 2⌋.
+	// Дописывает участки в out (для нового пути после предела ожидания #44 — от остановки ожидания).
+	void expand_transit(const RoutePoint &from, const RoutePoint &to, const TransitPath &path, uint32_t access_s,
+			uint32_t egress_s, uint8_t period, TripGeometry &out) const;
 
 private:
 	const RouteNetwork *net_ = nullptr;

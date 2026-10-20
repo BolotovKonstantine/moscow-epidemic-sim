@@ -27,6 +27,7 @@ var speed_index := 0
 var last_speed_index := 1        # ступень, к которой возвращает снятие паузы
 var point_tiles := PackedInt32Array()   # запрос точек карты (#46): участки 2 км парами (ix, iy)
 var point_limit := 0
+var selected_id := -1            # выбранный житель (#47): его карточка, маршрут и журнал в снимках
 var _status_key := ""
 var _failure := {}               # ошибка до ядра (сценарий не прочитан): держится до start или stop
 
@@ -60,6 +61,7 @@ func start(package_dir: String, scenario_path := DEFAULT_SCENARIO, store_dir := 
 	_failure = {}
 	speed_index = 0
 	snapshot = {}
+	selected_id = -1
 	var result: Dictionary = session.start(package_dir, text, store_dir)
 	if not result.get("ok", false):
 		_set_failure(result)
@@ -75,6 +77,7 @@ func stop() -> void:
 		_failure = {}
 		speed_index = 0
 		snapshot = {}
+		selected_id = -1
 		poll()
 
 
@@ -97,11 +100,39 @@ func run_until(time: int) -> void:
 
 
 ## Точки для карты (#46): участки 2 км окна и предел точек. Мост раскладывает их по участкам в меши
-## (point_tiles снимка).
+## (point_tiles снимка). Выбранный житель остаётся в запросе.
 func set_point_view(tiles: PackedInt32Array, max_points: int) -> void:
 	point_tiles = tiles
 	point_limit = max_points
-	request_snapshot(tiles, max_points)
+	_request_view()
+
+
+## Выбрать жителя по ID (-1 — снять выбор, #47): его подробности идут в каждом снимке, журнал прежнего
+## выключается, нового — включается на ближайшей границе интервала (на паузе — при продолжении).
+## Выбор — по ID, поэтому камера и выгрузка участков не меняют выбранного человека.
+func select_person(id: int) -> void:
+	if id == selected_id:
+		return
+	if session != null:
+		if selected_id >= 0:
+			session.set_journal(selected_id, false)   # журнал сценария ядро не выключает
+		if id >= 0:
+			session.set_journal(id, true)
+	selected_id = id
+	_request_view()
+
+
+## Подробности выбранного жителя из последнего снимка ({} — нет выбора или ещё нет снимка с ним).
+func selected_person() -> Dictionary:
+	for person: Dictionary in snapshot.get("selected", []):
+		if int(person.id) == selected_id:
+			return person
+	return {}
+
+
+func _request_view() -> void:
+	var selected := PackedInt32Array([selected_id]) if selected_id >= 0 else PackedInt32Array()
+	request_snapshot(point_tiles, point_limit, selected)
 
 
 ## Что класть в снимки: точки участков 2 км (пары ix, iy), их предел, выбранные ID, хеш состояния.
@@ -152,6 +183,11 @@ func _set_failure(result: Dictionary) -> void:
 func _exit_tree() -> void:
 	if session != null:
 		session.stop()
+
+
+## День недели момента time по снимку (его время и день недели).
+static func weekday_at(time: int, snap_time: int, snap_weekday: int) -> int:
+	return posmod(snap_weekday + time / SECONDS_PER_DAY - snap_time / SECONDS_PER_DAY, 7)
 
 
 ## «Сутки 1, пн 08:35» — сутки сценария с единицы, день недели и время суток.

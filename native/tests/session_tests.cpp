@@ -4,6 +4,7 @@
 // конец сценария, отмена подготовки и повторный старт.
 // Аргументы: каталог tests/fixtures/sim_mini и временный каталог.
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -132,6 +133,38 @@ void check_snapshot(const Session &session, const Snapshot &snap, const Snapshot
 	}
 }
 
+// Карточка выбранного (#47): семья, внешние ID дома и места, маршрут — у участков свой маршрут;
+// в пути положение — на маршруте (кроме машины: точка на прямой от начала к цели, #46).
+void check_selected(const SelectedPerson &p) {
+	CHECK(p.household_size >= 1);
+	CHECK(!p.home_ref.empty() && std::string("nwr").find(p.home_ref[0]) != std::string::npos);
+	CHECK(p.place_ref.empty() == (p.place == kRouteNone));
+	CHECK(!p.location_ref.empty());
+	CHECK((p.route != kRouteNone) == (p.location.where == Whereabouts::wait || p.location.where == Whereabouts::ride));
+	CHECK(p.route == kRouteNone || p.route_ref.rfind("r", 0) == 0);
+	CHECK(p.trip_ok && p.leg_refs.size() == p.trip.geometry.legs.size() && p.leg_modes.size() == p.leg_refs.size());
+	for (size_t i = 0; i < p.leg_refs.size(); ++i) {
+		CHECK(p.leg_refs[i].empty() == (p.trip.geometry.legs[i].kind != LegKind::ride));
+	}
+	if (!p.trip.current || p.trip.mode == TripMode::car) {
+		return;
+	}
+	double best = 1e18;
+	const std::vector<RoutePoint> &pts = p.trip.geometry.points;
+	for (const TripLeg &leg : p.trip.geometry.legs) {
+		for (uint32_t k = leg.first; k + 1 < leg.first + leg.count; ++k) {
+			const double ax = pts[k].x, ay = pts[k].y, bx = pts[k + 1].x - ax, by = pts[k + 1].y - ay;
+			const double len = bx * bx + by * by;
+			const double u = len > 0 ? std::clamp(((p.x - ax) * bx + (p.y - ay) * by) / len, 0.0, 1.0) : 0.0;
+			best = std::min(best, std::hypot(p.x - (ax + u * bx), p.y - (ay + u * by)));
+		}
+		if (leg.count == 1) {
+			best = std::min(best, std::hypot(p.x - pts[leg.first].x, p.y - pts[leg.first].y));
+		}
+	}
+	CHECK(best < 1.0);
+}
+
 SnapshotRequest all_tiles(const Snapshot &shape, uint32_t max_points) {
 	SnapshotRequest r;
 	for (uint32_t iy = 0; iy < shape.tile_ny; ++iy) {
@@ -206,6 +239,13 @@ void test_session(const std::string &fixture, const std::string &tmp) {
 	CHECK(a.submit(Command{ 0, 1, 0, 0 }, at).ok() && at == 0);
 	CHECK(a.submit(Command{ 150, 1, 0, 0 }, at).code == StatusCode::invalid_state);
 	CHECK(a.submit(Command{ 3 * kDay, 1, 0, 0 }, at).code == StatusCode::invalid_state);
+	CHECK(a.submit(Command{ 300, 99, 3, 0 }, at).code == StatusCode::invalid_argument);
+	CHECK(a.submit(Command{ 300, kCommandJournalOn, uint32_t(a.persons()), 0 }, at).code == StatusCode::invalid_argument);
+	// Журнал жителя 3 по команде (#47): с 6:00 первых суток до полудня вторых; журнал сценария (0) не выключается.
+	const int64_t on_at = 6 * 3600, off_at = kDay + 12 * 3600;
+	CHECK(a.submit(Command{ on_at, kCommandJournalOn, 3, 0 }, at).ok() && at == on_at);
+	CHECK(a.submit(Command{ off_at, kCommandJournalOff, 3, 0 }, at).ok());
+	CHECK(a.submit(Command{ off_at, kCommandJournalOff, 0, 0 }, at).ok());
 	CHECK(a.advance_to(450).code == StatusCode::invalid_argument);
 	CHECK(a.advance_to(4 * kDay).code == StatusCode::invalid_argument);
 
@@ -221,7 +261,8 @@ void test_session(const std::string &fixture, const std::string &tmp) {
 		half.tiles.push_back(every.tiles[i]);
 		half.tiles.push_back(every.tiles[i + 1]);
 	}
-	uint64_t max_moving = 0, max_fill = 0;
+	uint64_t max_moving = 0, max_fill = 0, current_trips = 0, next_trips = 0;
+	size_t third_records = 0;
 	bool hash_kept = true;
 	for (int64_t t = 300; t <= 2 * kDay; t += 300) {
 		CHECK(a.advance_to(t).ok());
@@ -235,8 +276,24 @@ void test_session(const std::string &fixture, const std::string &tmp) {
 		CHECK(snap.time == t && snap.weekday == uint32_t(t / kDay) % 7);
 		CHECK(snap.has_hash == r.with_hash);
 		CHECK(snap.selected.size() == 3 && snap.selected[0].id == 0 && snap.selected[2].id == 3);
-		CHECK(snap.selected[0].journaled && snap.selected[1].journaled && !snap.selected[2].journaled);
-		CHECK(snap.selected[2].journal.empty());
+		CHECK(snap.selected[0].journaled && snap.selected[1].journaled && snap.selected[0].journal_pinned);
+		CHECK(snap.selected[0].journal_since == 0 && !snap.selected[2].journal_pinned);
+		const SelectedPerson &third = snap.selected[2];
+		// Команда применяется в начале интервала со своей границы: на границе on_at она ещё ждёт.
+		if (t > on_at && t <= off_at) {
+			CHECK(third.journaled && third.journal_since == on_at && snap.journals == 3);
+			for (const LogRecord &rec : third.journal) {
+				CHECK(rec.id == 3 && rec.time >= on_at);
+			}
+			third_records = std::max(third_records, third.journal.size());
+		} else {
+			CHECK(!third.journaled && third.journal.empty() && third.journal_since == -1);
+		}
+		for (const SelectedPerson &sp : snap.selected) {
+			check_selected(sp);
+			current_trips += sp.trip.current;
+			next_trips += !sp.trip.current && sp.trip.mode != TripMode::none;
+		}
 		if (r.tiles.size() == half.tiles.size()) {
 			CHECK(snap.point_id.size() == snap.points_total);
 		} else if (r.max_points == kSnapshotPointLimit) {
@@ -250,6 +307,7 @@ void test_session(const std::string &fixture, const std::string &tmp) {
 	}
 	CHECK(hash_kept);
 	CHECK(max_moving > 0);  // в будний день кто-то в пути
+	CHECK(third_records > 0 && current_trips > 0 && next_trips > 0);
 	CHECK(!snap.selected[0].journal.empty());
 	CHECK(a.conserved() && a.violation_count() == 0);
 	std::printf("session: %llu жителей, участков %u×%u, в пути до %llu, снимок до %llu мкс\n",
