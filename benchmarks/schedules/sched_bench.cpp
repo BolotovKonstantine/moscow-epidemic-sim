@@ -82,13 +82,14 @@ int main(int argc, char **argv) {
 	const unsigned threads = argc > 3 ? unsigned(std::strtoul(argv[3], nullptr, 10)) : 0;
 	const uint32_t days = argc > 4 ? uint32_t(std::strtoul(argv[4], nullptr, 10)) : 7;
 	const std::string store = argc > 5 ? argv[5] : "data/processed/session-store";
-	const uint64_t cache_mib = argc > 6 ? std::strtoull(argv[6], nullptr, 10) : 256;
+	const uint64_t cache_mib = argc > 6 ? std::strtoull(argv[6], nullptr, 10) : 1024;
+	const uint32_t reroute_window = argc > 7 ? uint32_t(std::strtoul(argv[7], nullptr, 10)) : 300;
 	std::setvbuf(stdout, nullptr, _IOLBF, 0);
 	const uint64_t session_seed = seed + 6;  // места, расписания и рейсы (разные потоки RNG)
 	std::printf("{\n  \"core\": \"%s\", \"seed\": %llu, \"session_seed\": %llu, \"threads\": %u, \"days\": %u, "
-				"\"cache_limit_mib\": %llu,\n",
+				"\"cache_limit_mib\": %llu, \"reroute_window_s\": %u,\n",
 			core_version_string(), (unsigned long long)seed, (unsigned long long)session_seed, threads, days,
-			(unsigned long long)cache_mib);
+			(unsigned long long)cache_mib, reroute_window);
 
 	// Пакет, жители, сеть.
 	auto t0 = Clock::now();
@@ -228,12 +229,12 @@ int main(int argc, char **argv) {
 	if (!plans_cached) {
 		PlanOptions options;
 		options.threads = threads;
-		st = plan_with_crowding(planner, requests, trips.plans, cache, fleet, crowding, options, report, stats);
+		st = plan_with_crowding(net, planner, requests, trips.plans, cache, fleet, crowding, options, report, stats);
 		if (!st.ok()) {
 			return fail(st);
 		}
 		const auto ts = Clock::now();
-		st = save_plan_store(plan_path, plan_key, trips.plans, planner.crowding(), cache);
+		st = save_plan_store(plan_path, plan_key, net, trips.plans, planner.crowding(), cache);
 		if (!st.ok()) {
 			return fail(st);
 		}
@@ -260,7 +261,7 @@ int main(int argc, char **argv) {
 		for (size_t i = 0; i < report.replanned.size(); ++i) {
 			std::printf("%s%llu", i ? ", " : "", (unsigned long long)report.replanned[i]);
 		}
-		std::printf("]");
+		std::printf("], \"demand_changed\": %llu", (unsigned long long)report.demand_changed);
 	}
 	std::printf("}},\n");
 
@@ -269,6 +270,8 @@ int main(int argc, char **argv) {
 	MobilityOptions options;
 	options.horizon = horizon;
 	options.journal_ids = { 0 };
+	options.threads = threads;
+	options.reroute_window_s = reroute_window;
 	MobilitySim sim;
 	st = sim.init(planner, cache, fleet, session_seed, trips.pop, schedule, options);
 	if (!st.ok()) {
@@ -278,6 +281,26 @@ int main(int argc, char **argv) {
 	st = clock.init(ClockConfig(), 0);
 	if (!st.ok()) {
 		return fail(st);
+	}
+	// Интервалы маршрутов по спросу (#44): сколько пар (маршрут, период) чаще базового, по видам.
+	{
+		std::vector<uint64_t> changed(net.mode_count, 0), total(net.mode_count, 0), at_min(net.mode_count, 0);
+		for (uint32_t r = 0; r < net.route_count(); ++r) {
+			const uint32_t m = net.route_mode[r];
+			for (uint32_t q = 0; q < net.period_count(); ++q) {
+				const uint32_t base = net.headway(m, q), h = net.route_headway(r, q);
+				total[m] += base > 0;
+				changed[m] += h < base;
+				at_min[m] += h < base && m < fleet.min_headway_s.size() && h == fleet.min_headway_s[m];
+			}
+		}
+		// По виду: [чаще базового, из них на наименьшем интервале, всего пар (маршрут, период) с движением].
+		std::printf("  \"demand_headways\": {\"load_bp\": %u, \"more_frequent_by_mode\": [", fleet.demand_load_bp);
+		for (uint32_t m = 0; m < net.mode_count; ++m) {
+			std::printf("%s[%llu, %llu, %llu]", m ? ", " : "", (unsigned long long)changed[m], (unsigned long long)at_min[m],
+					(unsigned long long)total[m]);
+		}
+		std::printf("]},\n");
 	}
 	std::printf("  \"sim_init_s\": %.2f,\n  \"memory_mb\": {\"population\": %.1f, \"places\": %.1f, \"network\": %.1f, "
 				"\"session_trips\": %.1f, \"visits\": %.1f, \"mobility\": %.1f, \"cache_allocated\": %.1f, \"footprint\": %.1f},\n",
@@ -311,17 +334,27 @@ int main(int argc, char **argv) {
 		}
 		const MobilityStats &s = sim.stats();
 		std::printf("], \"wall_s\": %.2f, \"trips\": %llu, \"walk\": %llu, \"car\": %llu, \"transit\": %llu, "
-					"\"boardings\": %llu, \"left_behind\": %llu, \"cancelled\": %llu, \"path_rebuilds\": %llu, "
+					"\"boardings\": %llu, \"left_behind\": %llu, \"rerouted\": %llu, \"rerouted_walk\": %llu, "
+					"\"reroute_ready\": %llu, \"reroute_trees\": %llu, \"reroute_s\": %.1f, \"cancelled\": %llu, \"cancelled_back\": %llu, "
+					"\"groups\": %llu, \"path_rebuilds\": %llu, "
 					"\"resident_events\": %llu, \"run_events\": %llu, \"runs\": %llu, \"max_queue\": %llu, "
-					"\"max_onboard\": %llu, \"footprint_mb\": %.1f}%s\n",
+					"\"max_onboard\": %llu, \"max_group\": %llu, \"footprint_mb\": %.1f, \"cancelled_by_mode\": [",
 				seconds_since(td), (unsigned long long)(s.trips - prev.trips),
 				(unsigned long long)(s.by_mode[1] - prev.by_mode[1]), (unsigned long long)(s.by_mode[2] - prev.by_mode[2]),
 				(unsigned long long)(s.by_mode[3] - prev.by_mode[3]), (unsigned long long)(s.boardings - prev.boardings),
-				(unsigned long long)(s.left_behind - prev.left_behind), (unsigned long long)(s.cancelled - prev.cancelled),
+				(unsigned long long)(s.left_behind - prev.left_behind), (unsigned long long)(s.rerouted - prev.rerouted),
+				(unsigned long long)(s.rerouted_walk - prev.rerouted_walk),
+				(unsigned long long)(s.reroute_ready - prev.reroute_ready),
+				(unsigned long long)(s.reroute_trees - prev.reroute_trees), s.reroute_s - prev.reroute_s, (unsigned long long)(s.cancelled - prev.cancelled),
+				(unsigned long long)(s.cancelled_back - prev.cancelled_back), (unsigned long long)(s.groups - prev.groups),
 				(unsigned long long)(s.path_rebuilds - prev.path_rebuilds),
 				(unsigned long long)(s.resident_events - prev.resident_events),
 				(unsigned long long)(s.run_events - prev.run_events), (unsigned long long)(s.runs - prev.runs),
-				(unsigned long long)s.max_queue, (unsigned long long)s.max_onboard, footprint_mb(), d + 1 < days ? "," : "");
+				(unsigned long long)s.max_queue, (unsigned long long)s.max_onboard, (unsigned long long)s.max_group, footprint_mb());
+		for (uint32_t m = 0; m < net.mode_count && m < 16; ++m) {
+			std::printf("%s%llu", m ? ", " : "", (unsigned long long)(s.cancelled_by_mode[m] - prev.cancelled_by_mode[m]));
+		}
+		std::printf("]}%s\n", d + 1 < days ? "," : "");
 		prev = s;
 		std::fflush(stdout);
 	}

@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "mobility_mini",
   "seed": 20261019,
   "duration_s": 172800,
@@ -16,7 +16,8 @@
     "board_penalty_s": 180,
     "max_wait_s": 1800,
     "walk_only_max_s": 2400,
-    "walk_fallback_max_s": 4800
+    "walk_fallback_max_s": 4800,
+    "demand_load_bp": 0
   },
   "periods": [
     {"name": "night", "start_s": 3600},
@@ -27,8 +28,8 @@
     {"name": "evening", "start_s": 72000}
   ],
   "modes": {
-    "metro": {"speed_kmh": 40, "capacity": 40, "wagons": 2, "headway_s": [0, 600, 240, 420, 300, 600]},
-    "bus": {"speed_kmh": 20, "capacity": 12, "wagons": 1, "headway_s": [1800, 900, 480, 720, 600, 900]}
+    "metro": {"speed_kmh": 40, "capacity": 40, "wagons": 2, "headway_s": [0, 600, 240, 420, 300, 600], "min_headway_s": 60},
+    "bus": {"speed_kmh": 20, "capacity": 12, "wagons": 1, "headway_s": [1800, 900, 480, 720, 600, 900], "min_headway_s": 60}
   },
   "road_nodes": [
     [0, -2000], [1500, -2000], [3000, -2000], [4500, -2000],

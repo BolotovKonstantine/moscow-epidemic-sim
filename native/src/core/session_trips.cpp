@@ -15,7 +15,8 @@ namespace {
 
 constexpr char kStoreMagic[8] = { 'M', 'E', 'S', 'I', 'M', 'P', 'L', 'N' };
 constexpr char kPlacesMagic[8] = { 'M', 'E', 'S', 'I', 'M', 'P', 'L', 'C' };
-constexpr uint32_t kStoreVersion = 1;
+constexpr uint32_t kStoreVersion = 1;      // хранилище мест
+constexpr uint32_t kPlanStoreVersion = 2;  // хранилище планов: с интервалами маршрутов (#44)
 constexpr uint32_t kDay = kSecondsPerDay;
 
 double seconds_since(std::chrono::steady_clock::time_point t) {
@@ -158,7 +159,7 @@ void crowding_over_share(const RouteNetwork &net, const FleetParams &fleet, cons
 				continue;
 			}
 			const uint32_t mode = net.route_mode[net.pos_route[k]];
-			const uint32_t h = net.headway(mode, q);
+			const uint32_t h = net.route_headway(net.pos_route[k], q);
 			const double cap = h > 0 ? double(fleet.capacity[mode]) * window / h : 0.0;
 			total += x;
 			const double ratio = cap > 0.0 ? x / cap : 1e6;
@@ -171,13 +172,53 @@ void crowding_over_share(const RouteNetwork &net, const FleetParams &fleet, cons
 	over_share = total > 0.0 ? over / total : 0.0;
 }
 
-Status plan_with_crowding(TripPlanner &planner, const std::vector<TripRequest> &requests, std::vector<TripPlan> &plans,
-		PathCache &cache, const FleetParams &fleet, const CrowdingParams &crowding, const PlanOptions &options,
-		CrowdingReport &report, PlanStats &stats) {
+Status demand_headways(const RouteNetwork &net, const FleetParams &fleet, const std::vector<uint32_t> &load,
+		std::vector<uint32_t> &out) {
+	out.clear();
+	Status st = check_fleet_params(fleet, net.mode_count);
+	if (!st.ok()) {
+		return st;
+	}
+	const uint32_t periods = net.period_count();
+	const uint32_t P = net.pos_count();
+	if (load.size() != size_t(periods) * P) {
+		return Status::error(StatusCode::invalid_argument, "интервал по спросу: размер загрузки — периоды × позиции маршрутов");
+	}
+	out.resize(size_t(net.route_count()) * periods);
+	for (uint32_t r = 0; r < net.route_count(); ++r) {
+		const uint32_t mode = net.route_mode[r];
+		for (uint32_t q = 0; q < periods; ++q) {
+			const uint32_t base = net.headway(mode, q);
+			uint64_t most = 0;
+			for (uint32_t k = net.route_first[r]; k + 1 < net.route_first[r + 1]; ++k) {
+				most = std::max<uint64_t>(most, load[size_t(q) * P + k]);
+			}
+			uint32_t h = base;
+			if (fleet.demand_load_bp > 0 && base > 0 && most > 0 && fleet.capacity[mode] > 0) {
+				const uint64_t need = uint64_t(fleet.capacity[mode]) * fleet.demand_load_bp * period_length(net, q) /
+						(uint64_t(10000) * most);
+				h = uint32_t(std::min<uint64_t>(base, std::max<uint64_t>(fleet.min_headway_s[mode], need)));
+			}
+			out[size_t(r) * periods + q] = h;
+		}
+	}
+	return Status::success();
+}
+
+Status plan_with_crowding(RouteNetwork &net, TripPlanner &planner, const std::vector<TripRequest> &requests,
+		std::vector<TripPlan> &plans, PathCache &cache, const FleetParams &fleet, const CrowdingParams &crowding,
+		const PlanOptions &options, CrowdingReport &report, PlanStats &stats) {
 	const auto t0 = std::chrono::steady_clock::now();
 	report = CrowdingReport();
-	const RouteNetwork &net = planner.network();
+	if (&net != &planner.network()) {
+		return Status::error(StatusCode::invalid_argument, "учёт загрузки: сеть не та, что у планировщика");
+	}
 	Status st = check_fleet_params(fleet, net.mode_count);
+	if (!st.ok()) {
+		return st;
+	}
+	// Интервалы — базовые, пока спрос не известен: результат не зависит от прежних интервалов сети.
+	st = set_route_headways(net, {});
 	if (!st.ok()) {
 		return st;
 	}
@@ -195,12 +236,42 @@ Status plan_with_crowding(TripPlanner &planner, const std::vector<TripRequest> &
 	plans.assign(requests.size(), TripPlan());
 	PlanOptions opt = options;
 	opt.segment_load = &load;
-	opt.fill_cache = crowding.iterations == 0 && options.fill_cache;
+	const bool demand = fleet.demand_load_bp > 0;
+	opt.fill_cache = !demand && crowding.iterations == 0 && options.fill_cache;
 	st = planner.plan(requests.data(), requests.size(), plans.data(), &cache, opt, stats);
 	if (!st.ok()) {
 		return st;
 	}
 	report.replanned.push_back(requests.size());
+	if (demand) {
+		// Интервал по спросу (#44) — по загрузке первого прохода; затем все поездки заново: от
+		// интервала зависят ожидание и выбор пути.
+		double share = 0.0, ratio = 0.0;
+		crowding_over_share(net, fleet, load, share, ratio);
+		report.over_share.push_back(share);
+		report.max_ratio.push_back(ratio);
+		std::vector<uint32_t> headways;
+		st = demand_headways(net, fleet, load, headways);
+		if (st.ok()) {
+			st = set_route_headways(net, std::move(headways));
+		}
+		if (!st.ok()) {
+			return st;
+		}
+		for (uint32_t r = 0; r < net.route_count(); ++r) {
+			for (uint32_t q = 0; q < net.period_count(); ++q) {
+				report.demand_changed += net.route_headway(r, q) != net.headway(net.route_mode[r], q);
+			}
+		}
+		cache.clear();
+		std::fill(load.begin(), load.end(), 0u);
+		opt.fill_cache = crowding.iterations == 0 && options.fill_cache;
+		st = planner.plan(requests.data(), requests.size(), plans.data(), &cache, opt, stats);
+		if (!st.ok()) {
+			return st;
+		}
+		report.replanned.push_back(requests.size());
+	}
 	double share = 0.0, ratio = 0.0;
 	crowding_over_share(net, fleet, load, share, ratio);
 	report.over_share.push_back(share);
@@ -216,7 +287,7 @@ Status plan_with_crowding(TripPlanner &planner, const std::vector<TripRequest> &
 			for (size_t k = 0; k < P; ++k) {
 				const size_t i = size_t(q) * P + k;
 				const uint32_t mode = net.route_mode[net.pos_route[k]];
-				const uint32_t h = net.headway(mode, q);
+				const uint32_t h = net.route_headway(net.pos_route[k], q);
 				const double cap = h > 0 ? double(fleet.capacity[mode]) * window / h : 0.0;
 				const double x = cap > 0.0 ? load[i] / cap : (load[i] > 0 ? 1e6 : 0.0);
 				const double target = std::min(1000.0, crowding.penalty * std::max(0.0, x - 1.0));
@@ -267,7 +338,7 @@ std::string plan_store_key(const std::string &context, const RouteNetwork &net, 
 		const CrowdingParams &crowding, const std::vector<TripRequest> &requests) {
 	std::string b;
 	b.append(kStoreMagic, sizeof kStoreMagic);
-	put(b, kStoreVersion);
+	put(b, kPlanStoreVersion);
 	put(b, uint64_t(context.size()));
 	b += context;
 	const RouteParams &p = net.params;
@@ -298,6 +369,10 @@ std::string plan_store_key(const std::string &context, const RouteNetwork &net, 
 	for (uint8_t x : fleet.wagons) {
 		put(b, x);
 	}
+	put(b, fleet.demand_load_bp);
+	for (uint32_t x : fleet.min_headway_s) {
+		put(b, x);
+	}
 	put(b, crowding.penalty);
 	put(b, crowding.iterations);
 	// Запросы — упакованно (без выравнивания), порциями по миллиону: хеш хешей порций.
@@ -318,24 +393,30 @@ std::string plan_store_key(const std::string &context, const RouteNetwork &net, 
 	return to_hex(sha256(reinterpret_cast<const uint8_t *>(b.data()), b.size()));
 }
 
-Status save_plan_store(const std::string &path, const std::string &key, const std::vector<TripPlan> &plans,
-		const std::vector<float> &crowd, const PathCache &cache) {
+Status save_plan_store(const std::string &path, const std::string &key, const RouteNetwork &net,
+		const std::vector<TripPlan> &plans, const std::vector<float> &crowd, const PathCache &cache) {
 	if (key.size() != 64) {
 		return Status::error(StatusCode::invalid_argument, "хранилище планов: ключ — 64 шестнадцатеричные цифры");
 	}
 	const std::string tmp = path + ".tmp";
-	const std::vector<uint32_t> slots = cache.live_slots();
+	// Новые пути после предела ожидания (#44) принадлежат движению, а не планам: они не сохраняются.
+	std::vector<uint32_t> slots = cache.live_slots();
+	slots.erase(std::remove_if(slots.begin(), slots.end(),
+						[&](uint32_t slot) { return cache.key(slot).tree == TransitTree::reroute; }),
+			slots.end());
 	{
 		File out;
 		out.f = std::fopen(tmp.c_str(), "wb");
 		if (out.f == nullptr) {
 			return Status::error(StatusCode::io_error, "хранилище планов: не открыт для записи " + tmp);
 		}
-		const uint64_t counts[3] = { plans.size(), crowd.size(), slots.size() };
-		bool ok = write_all(out.f, kStoreMagic, sizeof kStoreMagic) && write_all(out.f, &kStoreVersion, sizeof kStoreVersion) &&
-				write_all(out.f, key.data(), key.size()) && write_all(out.f, counts, sizeof counts) &&
-				write_all(out.f, plans.data(), plans.size() * sizeof(TripPlan)) &&
-				write_all(out.f, crowd.data(), crowd.size() * sizeof(float));
+		const std::vector<uint32_t> &headways = net.route_headway_s;
+		const uint64_t counts[4] = { plans.size(), crowd.size(), slots.size(), headways.size() };
+		bool ok = write_all(out.f, kStoreMagic, sizeof kStoreMagic) &&
+				write_all(out.f, &kPlanStoreVersion, sizeof kPlanStoreVersion) && write_all(out.f, key.data(), key.size()) &&
+				write_all(out.f, counts, sizeof counts) && write_all(out.f, plans.data(), plans.size() * sizeof(TripPlan)) &&
+				write_all(out.f, crowd.data(), crowd.size() * sizeof(float)) &&
+				write_all(out.f, headways.data(), headways.size() * sizeof(uint32_t));
 		for (size_t i = 0; ok && i < slots.size(); ++i) {
 			const PathKey k = cache.key(slots[i]);
 			const uint8_t rides = uint8_t(cache.ride_count(slots[i]));
@@ -358,7 +439,7 @@ Status save_plan_store(const std::string &path, const std::string &key, const st
 	return Status::success();
 }
 
-Status load_plan_store(const std::string &path, const std::string &key, const RouteNetwork &net,
+Status load_plan_store(const std::string &path, const std::string &key, RouteNetwork &net,
 		std::vector<TripPlan> &plans, std::vector<float> &crowd, PathCache &cache) {
 	plans.clear();
 	crowd.clear();
@@ -370,9 +451,9 @@ Status load_plan_store(const std::string &path, const std::string &key, const Ro
 	char magic[8];
 	uint32_t version = 0;
 	std::string stored(64, '\0');
-	uint64_t counts[3] = {};
+	uint64_t counts[4] = {};
 	if (!read_all(in.f, magic, sizeof magic) || std::memcmp(magic, kStoreMagic, sizeof magic) != 0 ||
-			!read_all(in.f, &version, sizeof version) || version != kStoreVersion) {
+			!read_all(in.f, &version, sizeof version) || version != kPlanStoreVersion) {
 		return Status::error(StatusCode::version_mismatch, "хранилище планов: другой формат");
 	}
 	if (!read_all(in.f, &stored[0], stored.size()) || stored != key) {
@@ -385,21 +466,26 @@ Status load_plan_store(const std::string &path, const std::string &key, const Ro
 		return Status::error(StatusCode::format_error, std::string("хранилище планов: ") + what);
 	};
 	const size_t crowd_size = size_t(net.period_count()) * net.pos_count();
+	const size_t headway_size = size_t(net.period_count()) * net.route_count();
 	// Запись пути — не меньше 24 байт (ключ, заголовок, остановки) плюс поездки.
 	constexpr uint64_t kMinEntryBytes = sizeof(uint64_t) + 4 + 3 * sizeof(uint32_t);
 	if (!read_all(in.f, counts, sizeof counts) || counts[0] > (uint64_t(1) << 33) ||
-			(counts[1] != 0 && counts[1] != crowd_size) || counts[2] > (uint64_t(1) << 32)) {
+			(counts[1] != 0 && counts[1] != crowd_size) || counts[2] > (uint64_t(1) << 32) || counts[3] != headway_size) {
 		return bad("счётчики вне пределов");
 	}
 	const uint64_t left = remaining(in.f);
-	if (counts[0] > left / sizeof(TripPlan) || counts[1] > (left - counts[0] * sizeof(TripPlan)) / sizeof(float) ||
-			counts[2] > (left - counts[0] * sizeof(TripPlan) - counts[1] * sizeof(float)) / kMinEntryBytes) {
+	const uint64_t fixed = counts[3] * sizeof(uint32_t);
+	if (fixed > left || counts[0] > (left - fixed) / sizeof(TripPlan) ||
+			counts[1] > (left - fixed - counts[0] * sizeof(TripPlan)) / sizeof(float) ||
+			counts[2] > (left - fixed - counts[0] * sizeof(TripPlan) - counts[1] * sizeof(float)) / kMinEntryBytes) {
 		return bad("счётчики больше файла");
 	}
 	plans.resize(counts[0]);
 	crowd.resize(counts[1]);
+	std::vector<uint32_t> headways(counts[3]);
 	if (!read_all(in.f, plans.data(), plans.size() * sizeof(TripPlan)) ||
-			!read_all(in.f, crowd.data(), crowd.size() * sizeof(float))) {
+			!read_all(in.f, crowd.data(), crowd.size() * sizeof(float)) ||
+			!read_all(in.f, headways.data(), headways.size() * sizeof(uint32_t))) {
 		return bad("файл обрезан");
 	}
 	for (const TripPlan &p : plans) {
@@ -413,6 +499,9 @@ Status load_plan_store(const std::string &path, const std::string &key, const Ro
 		if (!(x >= 0.0f) || !(x <= 1000.0f)) {
 			return bad("штраф загрузки вне [0, 1000]");
 		}
+	}
+	if (!set_route_headways(net, std::move(headways)).ok()) {
+		return bad("интервалы маршрутов не согласованы с сетью");
 	}
 	cache.clear();
 	TransitPath path_value;

@@ -196,9 +196,35 @@ uint32_t PointGrid::nearest(const RoutePoint &p, const std::vector<uint8_t> *acc
 
 // ---------- Проверка и производные ----------
 
+Status set_route_headways(RouteNetwork &net, std::vector<uint32_t> headways) {
+	const uint32_t periods = net.period_count();
+	const uint32_t routes = net.route_count();
+	if (headways.empty()) {
+		headways.resize(size_t(routes) * periods);
+		for (uint32_t r = 0; r < routes; ++r) {
+			for (uint32_t q = 0; q < periods; ++q) {
+				headways[size_t(r) * periods + q] = net.headway(net.route_mode[r], q);
+			}
+		}
+	}
+	if (headways.size() != size_t(routes) * periods) {
+		return bad("интервал маршрута нужен для каждой пары (маршрут, период)");
+	}
+	for (uint32_t r = 0; r < routes; ++r) {
+		for (uint32_t q = 0; q < periods; ++q) {
+			const uint32_t h = headways[size_t(r) * periods + q];
+			if (h > 86400 || (h > 0) != (net.headway(net.route_mode[r], q) > 0)) {
+				return bad("интервал маршрута больше суток или движение не совпадает с видом");
+			}
+		}
+	}
+	net.route_headway_s = std::move(headways);
+	return Status::success();
+}
+
 uint64_t RouteNetwork::memory_bytes() const {
 	auto v = [](const auto &x) { return uint64_t(x.capacity()) * sizeof(x[0]); };
-	return v(period_start) + v(headway_s) + v(node_pos) + v(car_first) + v(car_to) + v(car_ds) + v(car_source) +
+	return v(period_start) + v(headway_s) + v(route_headway_s) + v(node_pos) + v(car_first) + v(car_to) + v(car_ds) + v(car_source) +
 			v(endpoint_pos) + v(endpoint_depart) + v(endpoint_arrive) + v(endpoint_parking) + v(stop_pos) +
 			v(stop_inside) + v(route_first) + v(route_mode) + v(pos_stop) + v(pos_ride_s) + v(area_transfers) +
 			v(pos_route) + v(pos_index) + v(board_first) + v(board_pos) + v(transfer_first) + v(transfer_to) +
@@ -309,6 +335,14 @@ Status finalize_route_network(RouteNetwork &net) {
 			}
 			net.pos_route[k] = r;
 			net.pos_index[k] = k - a;
+		}
+	}
+	{
+		const std::vector<uint32_t> given = std::move(net.route_headway_s);
+		net.route_headway_s.clear();
+		const Status st = set_route_headways(net, given);
+		if (!st.ok()) {
+			return st;
 		}
 	}
 	// Позиции на остановке по возрастанию; посадка — с любой не последней, выход — на не первой.

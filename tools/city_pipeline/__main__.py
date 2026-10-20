@@ -57,9 +57,10 @@ def work_dir(root: Path, package_id) -> Path:
 
 
 # Версия 1 — пакеты до 0.7.0 (без расчётных таблиц): читается для map-tile и fetch их пакетов.
-# Версия 2 — с переписью и параметрами поездок; её требует build, потому что он пишет sim/ (#36).
-CONFIG_SCHEMAS = {version: Path(__file__).parent / "schemas" / f"build-config-v{version}.schema.json" for version in (1, 2)}
-BUILD_CONFIG_VERSION = 2
+# Версия 2 — с переписью и параметрами поездок (пакет 0.7.0, #36): читается для map-tile и fetch.
+# Версия 3 — ещё с интервалом по спросу (#44); её требует build, потому что он пишет sim/ этой схемы.
+CONFIG_SCHEMAS = {version: Path(__file__).parent / "schemas" / f"build-config-v{version}.schema.json" for version in (1, 2, 3)}
+BUILD_CONFIG_VERSION = 3
 
 # В схеме конфигурации integer — только целые Python (60, а не 60.0): дальше значения идут в numpy
 # (размер выборки, seed), где float падает лишь в конце сборки. bool целым не считается.
@@ -140,6 +141,11 @@ def load_config(path: Path, data: bytes | None = None, *, versions=tuple(CONFIG_
                      for period, value in sorted(by_period.items()) if value is not None and round_half_away(value * 60) < 1]
     if problems:
         raise ManifestError(f"{path}: model_assumptions.headway_minutes: " + "; ".join(problems))
+    if version >= 3:   # наименьший интервал вида тоже пишется целыми секундами
+        small = [f"{mode}: {value} мин меньше секунды" for mode, value in
+                 sorted(config["model_assumptions"]["mobility"]["min_headway_minutes"].items()) if round_half_away(value * 60) < 1]
+        if small:
+            raise ManifestError(f"{path}: model_assumptions.mobility.min_headway_minutes: " + "; ".join(small))
     return config
 
 
@@ -233,7 +239,7 @@ def command_build(args) -> int:
         raise ManifestError("Не найдена утилита osmium (osmium-tool)")
     registry = load_registry(args.registry)
     config_bytes = args.config.read_bytes()   # один снимок: из него и разбор, и хеш в паспорте
-    config = load_config(args.config, config_bytes, versions=(BUILD_CONFIG_VERSION,))   # build пишет sim/: нужна версия 2
+    config = load_config(args.config, config_bytes, versions=(BUILD_CONFIG_VERSION,))   # build пишет sim/: нужна версия 3
     # ID и версия проверяются до любой записи на диск: и рабочий, и выходной каталог — внутри своих корней.
     out = package_dir(args.out, config.get("package_id"), config.get("package_version"))
     # Отдельный рабочий каталог на версию и конфигурацию: разные сборки не делят вырезку.

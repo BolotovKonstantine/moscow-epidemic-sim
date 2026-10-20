@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "mobility_edge",
   "seed": 20261018,
   "duration_s": 172800,
@@ -16,7 +16,8 @@
     "board_penalty_s": 180,
     "max_wait_s": 1800,
     "walk_only_max_s": 2400,
-    "walk_fallback_max_s": 4800
+    "walk_fallback_max_s": 4800,
+    "demand_load_bp": 0
   },
   "periods": [
     {"name": "night", "start_s": 0},
@@ -25,10 +26,10 @@
     {"name": "late", "start_s": 82800}
   ],
   "modes": {
-    "bus": {"speed_kmh": 36, "capacity": 1, "wagons": 1, "headway_s": [0, 600, 1200, 0]},
-    "tram": {"speed_kmh": 18, "capacity": 100, "wagons": 2, "headway_s": [1800, 600, 900, 1800]},
-    "shuttle": {"speed_kmh": 36, "capacity": 10, "wagons": 1, "headway_s": [0, 0, 600, 0]},
-    "slow": {"speed_kmh": 9, "capacity": 100, "wagons": 1, "headway_s": [1800, 600, 900, 1800]}
+    "bus": {"speed_kmh": 36, "capacity": 1, "wagons": 1, "headway_s": [0, 600, 1200, 0], "min_headway_s": 60},
+    "tram": {"speed_kmh": 18, "capacity": 100, "wagons": 2, "headway_s": [1800, 600, 900, 1800], "min_headway_s": 60},
+    "shuttle": {"speed_kmh": 36, "capacity": 10, "wagons": 1, "headway_s": [0, 0, 600, 0], "min_headway_s": 60},
+    "slow": {"speed_kmh": 9, "capacity": 100, "wagons": 1, "headway_s": [1800, 600, 900, 1800], "min_headway_s": 60}
   },
   "road_nodes": [[0, 200], [3000, 200], [3000, 1200], [0, 1200], [6000, 200], [9000, 9000]],
   "road_edges": [

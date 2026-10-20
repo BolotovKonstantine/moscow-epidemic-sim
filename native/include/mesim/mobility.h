@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -31,12 +32,15 @@ const char *whereabouts_name(Whereabouts w);
 // возвращение с посещения. Номера туда/обратно — как в журнале эталона (0, 1).
 enum class TripKind : uint8_t { outbound, back, visit, visit_back, count };
 
-// Транспорт (game_setting, таблицы transit_modes и mobility пакета): вместимость рейса и число
-// вагонов по виду, предел ожидания в очереди.
+// Транспорт (game_setting, таблицы transit_modes и mobility пакета): вместимость рейса (0 — рейс
+// никого не берёт) и число вагонов по виду, предел ожидания в очереди, интервал по спросу (#44):
+// доля вместимости в б.п. (0 — интервалы базовые) и наименьший интервал вида.
 struct FleetParams {
 	std::vector<uint32_t> capacity;
 	std::vector<uint8_t> wagons;  // 1..16
 	uint32_t max_wait_s = 1800;
+	uint32_t demand_load_bp = 0;          // 0..10000
+	std::vector<uint32_t> min_headway_s;  // по виду; нужен, если demand_load_bp > 0
 };
 
 // Учёт загрузки при выборе пути (docs/mobility.md): штраф и число итераций метода последовательных средних.
@@ -108,10 +112,11 @@ private:
 	uint32_t horizon_;
 };
 
-enum class LogEvent : uint8_t { depart, queue, board, alight, arrive, cancel, returned };
+enum class LogEvent : uint8_t { depart, queue, board, alight, arrive, cancel, returned, reroute };
 
 // Запись журнала: depart — (вид поездки TripMode, TripKind); queue и cancel — (маршрут, позиция);
-// board и alight — (сутки рейса, номер, вагон); arrive — (Whereabouts).
+// board и alight — (сутки рейса, номер, вагон); arrive — (Whereabouts); reroute — (вид нового пути
+// TripMode, начальная и конечная остановки транспортом, у пешего 0, 0).
 struct LogRecord {
 	uint32_t time = 0;
 	uint32_t id = 0;
@@ -157,6 +162,11 @@ struct MobilityOptions {
 	// Полный журнал выбранных ID (нулевой пациент и до 64 выбранных): кольцо на ID.
 	std::vector<uint32_t> journal_ids;
 	uint32_t journal_capacity = 4096;
+	// Новые пути после предела ожидания (#44) считаются заранее порциями по окну времени в нескольких
+	// потоках: одно дерево на (позиция очереди, период). Результат от окна и числа потоков не зависит —
+	// путь зависит только от остановки, маршрута, периода и цели; без готового — тот же расчёт на месте.
+	uint32_t reroute_window_s = 300;
+	unsigned threads = 0;  // 0 — по числу ядер
 };
 
 struct MobilityStats {
@@ -166,7 +176,14 @@ struct MobilityStats {
 	uint64_t boardings = 0;
 	uint64_t left_behind = 0;   // не поместились при приходе рейса
 	uint64_t cancelled = 0;
+	uint64_t cancelled_back = 0;  // из них обратных: житель остаётся на месте до следующей поездки
+	uint64_t cancelled_by_mode[16] = {};  // по виду транспорта очереди, где сработал предел
 	uint64_t returned = 0;
+	uint64_t rerouted = 0;        // новый путь после предела ожидания (#44): всего
+	uint64_t rerouted_walk = 0;   // из них пешком
+	uint64_t reroute_trees = 0;   // деревьев новых путей (заранее и на месте)
+	uint64_t reroute_ready = 0;   // взято готовых, посчитанных заранее
+	double reroute_s = 0.0;       // время расчёта новых путей заранее (замер, на результат не влияет)
 	uint64_t intervals = 0;
 	uint64_t runs = 0;          // рейсов создано
 	uint64_t run_events = 0;
@@ -174,6 +191,8 @@ struct MobilityStats {
 	uint64_t path_rebuilds = 0;  // путь не нашёлся в кеше и восстановлен деревом
 	uint64_t max_queue = 0;
 	uint64_t max_onboard = 0;
+	uint64_t groups = 0;        // групп (рейс, вагон) хотя бы с одним пассажиром у завершённых рейсов
+	uint64_t max_group = 0;     // наибольшее число пассажиров группы за рейс
 	uint64_t violations = 0;
 };
 
@@ -205,6 +224,9 @@ public:
 	void apply_command(const Command &) {}
 	void begin_interval(int64_t begin);
 	void on_event(const Event &event);
+	// Посчитать заранее новые пути ждущих, чей предел ожидания в [begin, end) (#44); begin_interval и
+	// advance_to вызывают её сами по окну reroute_window_s.
+	void prepare_reroutes(uint32_t begin, uint32_t end);
 	void end_interval(int64_t end) { now_ = uint32_t(end); }
 	EventQueue &queue() { return queue_; }
 
@@ -238,11 +260,17 @@ private:
 		uint32_t pos = 0;
 		bool active = false;
 		std::vector<Rider> onboard;
+		std::array<uint32_t, 16> wagon_riders{};  // пассажиров вагона за рейс (группа (рейс, вагон))
 	};
 	struct RouteGen {  // состояние генератора рейсов маршрута между сутками
 		uint32_t tm = 0;
 		bool phased = false;
 		bool done = false;
+	};
+	struct Reroute {  // новый путь, посчитанный заранее: житель, позиция очереди, время предела
+		uint32_t id = 0, pos = 0, time = 0;
+		uint32_t slot = kRouteNone;  // закреплённая запись кеша для транспорта
+		TripPlan plan;
 	};
 	struct Journal {
 		uint32_t id = 0;
@@ -259,6 +287,8 @@ private:
 	MobilityOptions options_;
 	uint64_t transit_key_ = 0;
 	std::unique_ptr<RouteWorkspace> ws_;
+	std::vector<std::unique_ptr<RouteWorkspace>> pool_;  // буферы потоков для новых путей
+	std::vector<Reroute> ready_;                         // по возрастанию ID
 
 	EventQueue queue_;
 	uint32_t now_ = 0;
@@ -266,7 +296,7 @@ private:
 
 	// Жители (SoA).
 	Buffer<uint8_t> loc_;       // Whereabouts
-	Buffer<uint8_t> kind_;      // TripKind текущей или запланированной поездки
+	Buffer<uint8_t> kind_;      // TripKind текущей или запланированной поездки | kRerouted
 	Buffer<uint8_t> leg_;       // 0 — к очереди посадки, 1 — к цели
 	Buffer<uint8_t> ride_ix_;
 	// Начало поездки плюс всё время ожидания в очередях: возвращение после отмены идёт
@@ -311,6 +341,12 @@ private:
 	void release_all_paths();
 	void reset();
 	uint32_t wait_since(uint32_t id) const { return queue_.next_time(id) - fleet_.max_wait_s; }
+	static constexpr uint8_t kRerouted = 0x80;  // у поездки уже был новый путь после предела ожидания
+	TripKind kind(uint32_t id) const { return TripKind(kind_[id] & ~kRerouted); }
+	uint32_t destination_endpoint(uint32_t id) const;
+	void wait_limit(uint32_t id);
+	bool take_reroute(uint32_t id, uint32_t pos, Reroute &out);
+	void release_ready();
 	Whereabouts origin_of(uint32_t id) const;
 	Whereabouts destination_of(uint32_t id) const;
 	Whereabouts place_kind(uint32_t id) const;

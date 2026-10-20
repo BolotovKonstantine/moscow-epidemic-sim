@@ -128,9 +128,19 @@ public:
 	TripPlan plan_one(RouteWorkspace &ws, const TripRequest &request) const;
 
 	// Путь транспорта поездки: из кеша или заново тем же деревом; запись закрепляется (pin), её
-	// нужно освободить cache.unpin(slot), когда поездка закончится.
+	// нужно освободить cache.unpin(slot), когда поездка закончится. Новый путь после предела ожидания
+	// (tree reroute) так не восстанавливается: его запись закреплена, пока по нему едут.
 	Status acquire_path(RouteWorkspace &ws, const TripRequest &request, const TripPlan &plan, PathCache &cache,
 			uint32_t &slot) const;
+
+	// Новый путь после предела ожидания (#44): житель ждёт на остановке stop куска маршрута
+	// skip_route; для целей to[0..n) (коды концов) в периоде period — одно дерево от остановок не дальше
+	// access_radius_m от stop (подход пешком от неё) без skip_route. Вид — правило выбора без машины:
+	// пешком от stop, если не дольше walk_only_max_s и не медленнее транспорта; иначе транспорт (tree —
+	// reroute, путь — в paths[i]); иначе пешком до walk_fallback_max_s; иначе none. Результат цели не
+	// зависит от остальных целей группы (дерево останавливается только после всех их выходов).
+	void reroute(RouteWorkspace &ws, uint32_t stop, uint32_t skip_route, uint8_t period, const uint32_t *to, size_t n,
+			TripPlan *plans, TransitPath *paths) const;
 
 	// Штраф загрузки перегонов для выбора пути транспорта (учёт загрузки, docs/mobility.md): по
 	// периоду × позиции маршрута, пустой — без штрафа. Меняет пути, поэтому кеш, заполненный при

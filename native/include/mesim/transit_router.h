@@ -55,8 +55,9 @@ public:
 	// результат для этих остановок тот же, что у полного дерева. crowd — штраф загрузки перегонов
 	// периода (по позиции маршрута, перегон к следующей): стоимость перегона — round(время × (1 + штраф)),
 	// время пути не меняется (учёт загрузки при выборе, docs/mobility.md); nullptr — без штрафа.
+	// skip_route — кусок маршрута, на который садиться нельзя (новый путь после предела ожидания, #44).
 	void run(const std::vector<TransitSeed> &seeds, uint32_t period, const std::vector<uint32_t> *targets = nullptr,
-			const float *crowd = nullptr);
+			const float *crowd = nullptr, uint32_t skip_route = kRouteNone);
 	// Достигнут ли выход на остановке, его стоимость (с штрафами) и время.
 	bool reached(uint32_t stop) const { return cost_[net_->stop_count() + stop] != kInf; }
 	uint64_t alight_cost(uint32_t stop) const { return cost_[net_->stop_count() + stop]; }
@@ -76,9 +77,12 @@ private:
 	uint64_t settled_ = 0;
 };
 
-// Ключ пути в кеше: дерево ячейки (origin — упакованные индексы ячейки) или дерево самой точки
-// начала (origin — код конца поездки), конечная остановка и период.
-enum class TransitTree : uint8_t { cell, origin };
+// Ключ пути в кеше: дерево ячейки (origin — упакованные индексы ячейки), дерево самой точки
+// начала (origin — код конца поездки) или новый путь после предела ожидания (origin — остановка
+// ожидания << 32 | исключённый маршрут, #44), конечная остановка и период.
+enum class TransitTree : uint8_t { cell, origin, reroute };
+
+uint64_t reroute_origin(uint32_t stop, uint32_t skip_route);
 
 struct PathKey {
 	uint64_t origin = 0;
@@ -120,7 +124,8 @@ struct PathCacheStats {
 // участки пула входят в предел; когда их становится много, пул уплотняется.
 class PathCache {
 public:
-	explicit PathCache(uint64_t limit_bytes = uint64_t(256) << 20);
+	// Предел по умолчанию — 1 ГиБ (решение автора по #44: регулярным поездкам всего региона нужно ~0,9 ГБ).
+	explicit PathCache(uint64_t limit_bytes = uint64_t(1) << 30);
 
 	uint32_t find(const PathKey &key);  // kRouteNone, если записи нет; отмечает использование
 	uint32_t insert(const PathKey &key, const TransitPath &path);  // существующая запись не меняется

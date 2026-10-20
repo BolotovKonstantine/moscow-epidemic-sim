@@ -246,6 +246,64 @@ TripPlan TripPlanner::plan_one(RouteWorkspace &ws, const TripRequest &r) const {
 	return choose(r, car, ok, total, access, egress, end_stop, tree, reasons);
 }
 
+void TripPlanner::reroute(RouteWorkspace &ws, uint32_t stop, uint32_t skip_route, uint8_t period, const uint32_t *to,
+		size_t n, TripPlan *plans, TransitPath *paths) const {
+	const RouteNetwork &net = *net_;
+	const RoutePoint &from = net.stop_pos[stop];
+	transit_seeds(net, from, net.params.access_radius_m, ws.seeds);
+	ws.targets.clear();
+	if (!ws.seeds.empty()) {
+		for (size_t i = 0; i < n; ++i) {
+			add_targets(ws, net, net.endpoint_pos[to[i]]);
+		}
+		if (!ws.targets.empty()) {
+			ws.transit.run(ws.seeds, period, &ws.targets, crowd_row(period), skip_route);
+		}
+	}
+	for (size_t i = 0; i < n; ++i) {
+		const RoutePoint &dest = net.endpoint_pos[to[i]];
+		TransitPath &path = paths[i];
+		path = TransitPath();
+		uint8_t reasons = 0;
+		uint32_t end_stop = kRouteNone, egress = 0, access = 0, total = 0;
+		bool ok = false;
+		if (ws.seeds.empty()) {
+			reasons |= trip_no_access_stop;
+		} else {
+			// Без целей дерево не строилось: path_from_tree тогда отвечает «нет остановки у цели».
+			ok = path_from_tree(ws, dest, end_stop, egress, reasons) && ws.transit.extract(end_stop, path);
+			if (!ok && end_stop != kRouteNone) {
+				reasons |= trip_transit_unreachable;  // путь не помещается в запись
+			}
+		}
+		if (ok) {
+			access = route_walk_s(net.params, route_distance(from, net.stop_pos[path.start_stop]));
+			total = access + path.core_s + egress;
+		}
+		TripPlan &p = plans[i];
+		p = TripPlan();
+		p.period = period;
+		p.reasons = reasons;
+		const uint32_t walk = route_walk_s(net.params, route_distance(from, dest));
+		if ((walk <= net.params.walk_only_max_s && (!ok || walk <= total)) || (!ok && walk <= net.params.walk_fallback_max_s)) {
+			p.mode = TripMode::walk;
+			p.time_s = walk;
+		} else if (ok) {
+			p.mode = TripMode::transit;
+			p.time_s = total;
+			p.access_s = uint16_t(access);
+			p.egress_s = uint16_t(egress);
+			p.end_stop = end_stop;
+			p.tree = TransitTree::reroute;
+		} else {
+			p.reasons |= trip_walk_too_long;
+		}
+		if (p.mode != TripMode::transit) {
+			path = TransitPath();
+		}
+	}
+}
+
 Status TripPlanner::plan(const TripRequest *requests, size_t n, TripPlan *out, PathCache *cache,
 		const PlanOptions &options, PlanStats &stats) const {
 	stats = PlanStats();
@@ -505,8 +563,8 @@ bool TripPlanner::rebuild(RouteWorkspace &ws, const TripRequest &r, const TripPl
 Status TripPlanner::acquire_path(RouteWorkspace &ws, const TripRequest &request, const TripPlan &plan, PathCache &cache,
 		uint32_t &slot) const {
 	slot = kRouteNone;
-	if (plan.mode != TripMode::transit) {
-		return Status::error(StatusCode::invalid_argument, "путь в кеше есть только у поездки транспортом");
+	if (plan.mode != TripMode::transit || plan.tree == TransitTree::reroute) {
+		return Status::error(StatusCode::invalid_argument, "путь в кеше по запросу есть только у плана поездки транспортом");
 	}
 	const PathKey key = trip_path_key(*net_, request, plan);
 	slot = cache.find(key);
@@ -589,7 +647,7 @@ Status TripPlanner::expand(RouteWorkspace &ws, const TripRequest &r, const TripP
 			for (size_t i = 0; i < path.rides.size(); ++i) {
 				const TransitRide &ride = path.rides[i];
 				const uint32_t first = net.route_first[ride.route];
-				uint32_t duration = net.headway(net.route_mode[ride.route], plan.period) / 2;
+				uint32_t duration = net.route_headway(ride.route, plan.period) / 2;
 				for (uint32_t k = first + ride.board; k < first + ride.alight; ++k) {
 					duration += net.pos_ride_s[k];
 				}

@@ -1,6 +1,6 @@
 {
   "package_id": "synthetic-mini-city",
-  "package_version": "0.7.0",
+  "package_version": "0.8.0",
   "kind": "fixture",
   "assets": [
     {
@@ -9,7 +9,7 @@
       "path": "sim/index.json",
       "format": "mesim-sim-index",
       "size_bytes": 14233,
-      "sha256": "2249d148e713245937dfde86c599fd42eb7bfd9f33a3bc319ef5cd1c54b4db08",
+      "sha256": "df91281dcb310c6813b42ee1a2813be5af4bc01b783202b9da433487b3b02d78",
       "source_ids": [
         "build-config-synthetic-mini-city",
         "synthetic-mini-city"

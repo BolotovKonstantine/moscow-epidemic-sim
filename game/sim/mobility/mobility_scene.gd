@@ -5,7 +5,7 @@ extends RefCounted
 # нормализованный словарь с целыми там, где схема требует целых. Формат — tests/scenarios/README.md.
 # Ошибка — текст в "error", без падения.
 
-const SCHEMA_VERSION := 1
+const SCHEMA_VERSION := 2
 const MAX_TIME := 0x7FFFFFFF  # время в секундах от начала сценария, как u32 ядра (с запасом на знак)
 const DAY := 86400
 
@@ -14,8 +14,8 @@ const TOP_KEYS := ["schema_version", "name", "seed", "duration_s", "checkpoints_
 		"residents"]
 const PARAM_KEYS := ["walk_speed_mps", "walk_detour", "parking_s", "attach_radius_m", "access_radius_m",
 		"access_stops_max", "transfer_radius_m", "cell_size_m", "board_penalty_s", "max_wait_s",
-		"walk_only_max_s", "walk_fallback_max_s"]
-const MODE_KEYS := ["speed_kmh", "capacity", "wagons", "headway_s"]
+		"walk_only_max_s", "walk_fallback_max_s", "demand_load_bp"]
+const MODE_KEYS := ["speed_kmh", "capacity", "wagons", "headway_s", "min_headway_s"]
 const EDGE_KEYS := ["from", "to", "length_m", "speed_kmh", "oneway"]
 const STOP_KEYS := ["x", "y", "outside"]
 const RESIDENT_KEYS := ["home", "profile", "place", "arrive_by_s", "leave_at_s"]
@@ -148,6 +148,7 @@ class _Validator:
 			"max_wait_s": whole(d.max_wait_s, 1, DAY, "params.max_wait_s"),
 			"walk_only_max_s": whole(d.walk_only_max_s, 0, DAY, "params.walk_only_max_s"),
 			"walk_fallback_max_s": whole(d.walk_fallback_max_s, 0, DAY, "params.walk_fallback_max_s"),
+			"demand_load_bp": whole(d.demand_load_bp, 0, 10000, "params.demand_load_bp"),
 		}
 		if s.params.walk_fallback_max_s < s.params.walk_only_max_s:
 			fail("params.walk_fallback_max_s меньше walk_only_max_s")
@@ -186,9 +187,10 @@ class _Validator:
 				headways.append(whole(raw[q], 0, DAY, "%s.headway_s[%d]" % [where, q]))
 			s.modes[name] = {
 				"speed_kmh": number(m.speed_kmh, 0.0, 300.0, where + ".speed_kmh", true),
-				"capacity": whole(m.capacity, 1, 100000, where + ".capacity"),
+				"capacity": whole(m.capacity, 0, 100000, where + ".capacity"),
 				"wagons": whole(m.wagons, 1, 16, where + ".wagons"),
 				"headway_s": headways,
+				"min_headway_s": whole(m.min_headway_s, 1, DAY, where + ".min_headway_s"),
 			}
 
 	func _roads(d: Dictionary, s: Dictionary) -> void:
