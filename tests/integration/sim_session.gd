@@ -275,6 +275,15 @@ func _test_client_and_panel() -> void:
 		await process_frame
 		rate = maxf(rate, float(client.status.get("intervals_per_s", 0.0)))
 	check(rate >= 2.0 and rate <= 6.0, "измеренная скорость при 4 интерв./с: %.2f" % rate)
+	# Период снимков 1 с при скорости 4: за ~2 с — не больше 3 снимков, а не по снимку на интервал.
+	client.session.set_snapshot_period_ms(1000)
+	var versions := {}
+	started = Time.get_ticks_msec()
+	while Time.get_ticks_msec() - started < 2100:
+		await process_frame
+		versions[client.snapshot.get("version", 0)] = true
+	check(versions.size() <= 4, "снимков при периоде 1 с за 2 с: %d" % (versions.size() - 1))
+	client.session.set_snapshot_period_ms(100)
 	client.set_speed_index(0)
 	client.run_until(9 * 3600)
 	started = Time.get_ticks_msec()

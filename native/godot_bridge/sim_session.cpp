@@ -205,7 +205,8 @@ void SimSession::loop() {
 		const bool request_changed = request_version_ != published_request;
 		const bool time_changed = t != published_time;
 		const bool period_passed = ms_since(last_publish) >= snapshot_period_ms_;
-		const bool publish_due = request_changed || (time_changed && (!advance || period_passed));
+		// Период снимков соблюдается и в ожидании темпа; сразу — только смена запроса и настоящая остановка.
+		const bool publish_due = request_changed || (time_changed && (stopped || period_passed));
 		if (!advance && !publish_due) {
 			const double wait_s = speed_ > 0 && !at_end ? std::max(0.001, (1.0 - budget) / speed_) : 1.0;
 			wake_.wait_for(lock, std::chrono::duration<double>(wait_s));
