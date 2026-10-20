@@ -24,6 +24,7 @@ var snapshot := {}
 var speed_index := 0
 var last_speed_index := 1        # ступень, к которой возвращает снятие паузы
 var _status_key := ""
+var _failure := {}               # ошибка до ядра (сценарий не прочитан): держится до start или stop
 
 
 func _init() -> void:
@@ -52,6 +53,7 @@ func start(package_dir: String, scenario_path := DEFAULT_SCENARIO, store_dir := 
 		return problem
 	if store_dir.is_empty():
 		store_dir = ProjectSettings.globalize_path(DEFAULT_STORE)
+	_failure = {}
 	speed_index = 0
 	snapshot = {}
 	var result: Dictionary = session.start(package_dir, text, store_dir)
@@ -66,6 +68,7 @@ func start(package_dir: String, scenario_path := DEFAULT_SCENARIO, store_dir := 
 func stop() -> void:
 	if session != null:
 		session.stop()
+		_failure = {}
 		speed_index = 0
 		snapshot = {}
 		poll()
@@ -118,6 +121,8 @@ func poll() -> void:
 	if session == null:
 		return
 	status = session.get_status()
+	if not _failure.is_empty() and status.get("state") == "idle":
+		status = _failure  # ядро не запускалось: показываем ошибку клиента, а не «idle»
 	var key := "%s|%s|%s|%s|%s|%s" % [status.get("state"), status.get("stage"), status.get("time"), status.get("speed"),
 		status.get("message"), snappedf(float(status.get("intervals_per_s", 0.0)), 0.1)]
 	if key != _status_key:
@@ -127,6 +132,7 @@ func poll() -> void:
 
 func _set_failure(result: Dictionary) -> void:
 	status = {"state": "failed", "code": result.get("code", ""), "message": result.get("message", "")}
+	_failure = status
 	_status_key = ""
 	status_changed.emit(status)
 

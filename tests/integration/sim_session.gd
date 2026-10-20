@@ -254,6 +254,8 @@ func _test_client_and_panel() -> void:
 	root.add_child(panel)
 	panel.bind(client, fixture, "res://../tests/fixtures/missing-scenario.json", store)
 	panel.start()
+	for i in 3:
+		await process_frame  # опрос ядра в _process не должен стирать ошибку клиента
 	check(client.status.state == "failed" and panel._info.text.contains("Сценарий не прочитан"), "панель показывает ошибку сценария: %s" % panel._info.text)
 	var path := ProjectSettings.globalize_path("user://test-scenario.json")
 	var file := FileAccess.open(path, FileAccess.WRITE)
@@ -265,7 +267,14 @@ func _test_client_and_panel() -> void:
 	while not client.is_ready() and Time.get_ticks_msec() - started < WAIT_MSEC:
 		await process_frame
 	check(client.is_ready() and panel._info.text.contains("сутки 1, пн 00:00"), "панель: %s" % panel._info.text)
+	# Скорость 4 на мини-городе: ядро быстрее темпа, замер скорости не должен обнуляться между интервалами.
 	client.set_speed_index(2)
+	var rate := 0.0
+	started = Time.get_ticks_msec()
+	while Time.get_ticks_msec() - started < 2500:
+		await process_frame
+		rate = maxf(rate, float(client.status.get("intervals_per_s", 0.0)))
+	check(rate >= 2.0 and rate <= 6.0, "измеренная скорость при 4 интерв./с: %.2f" % rate)
 	client.set_speed_index(0)
 	client.run_until(9 * 3600)
 	started = Time.get_ticks_msec()

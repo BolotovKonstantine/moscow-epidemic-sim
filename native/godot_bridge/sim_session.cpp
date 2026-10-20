@@ -200,6 +200,8 @@ void SimSession::loop() {
 		} else {
 			budget = 0.0;
 		}
+		// Настоящая остановка (пауза или конец сценария), а не ожидание следующего интервала по темпу.
+		const bool stopped = at_end || (speed_ == 0 && run_until_ <= t);
 		const bool request_changed = request_version_ != published_request;
 		const bool time_changed = t != published_time;
 		const bool period_passed = ms_since(last_publish) >= snapshot_period_ms_;
@@ -234,7 +236,7 @@ void SimSession::loop() {
 				rate_count = 0;
 				rate_start = Clock::now();
 			}
-		} else {
+		} else if (stopped) {
 			std::lock_guard<std::mutex> guard(control_mutex_);
 			intervals_per_s_ = 0.0;
 			rate_count = 0;
