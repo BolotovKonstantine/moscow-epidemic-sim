@@ -77,7 +77,7 @@ struct SelectedPerson {
 	uint32_t household = 0, home = 0;
 	uint32_t place = kRouteNone;  // конец поездки места (здание или внешний вход) или kRouteNone
 	Location location;
-	float x = 0.0f, y = 0.0f;     // точка привязки (Anchor) в метрах плоскости карты
+	float x = 0.0f, y = 0.0f;     // положение (MobilitySim::placement) в метрах плоскости карты
 	bool journaled = false;       // житель из journal_ids сценария: журнал полный
 	std::vector<LogRecord> journal;
 };
@@ -90,13 +90,15 @@ struct Snapshot {
 	// Агрегаты по участкам: сетка [tile_x0, tile_x0 + tile_nx) × [tile_y0, tile_y0 + tile_ny), по строкам.
 	int32_t tile_x0 = 0, tile_y0 = 0;
 	uint32_t tile_nx = 0, tile_ny = 0;
-	std::vector<uint32_t> tile_present;  // жителей с точкой привязки в участке
+	// Положение жителя — его точка привязки (Anchor), а в пути — точка на прямой участка пути на время
+	// снимка (MobilitySim::placement, #46).
+	std::vector<uint32_t> tile_present;  // жителей с положением в участке
 	std::vector<uint32_t> tile_moving;   // из них в пути: пешком, на машине, в очереди, в рейсе, возвращаются
-	// Точка привязки вне сетки — остановка маршрута за границей региона (рейс или очередь там):
-	// сетка строится по зданиям, входам и остановкам внутри региона. tile_present + beyond = persons.
+	// Положение вне сетки — у остановки маршрута за границей региона (рейс или очередь там): сетка
+	// строится по зданиям, входам и остановкам внутри региона. tile_present + beyond = persons.
 	uint64_t beyond = 0;
 	uint64_t beyond_moving = 0;
-	// Точки запрошенных участков в порядке ID, не больше max_points; points_total — всего в этих участках.
+	// Точки (положения) запрошенных участков в порядке ID, не больше max_points; points_total — всего в этих участках.
 	std::vector<float> point_xy;
 	std::vector<uint32_t> point_id;
 	std::vector<uint8_t> point_where;

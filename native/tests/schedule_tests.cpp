@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "placement_check.h"
 #include "mesim/assignment.h"
 #include "mesim/city_data.h"
 #include "mesim/mobility.h"
@@ -465,6 +466,30 @@ void test_week(World &w) {
 	}
 }
 
+// Положение для снимка (#46) в утренний час пик понедельника по секундам: транспорт, очереди, новые
+// пути после предела ожидания и возвращения после отмены (PlacementCheck).
+void test_placement(World &w) {
+	PathCache cache;
+	MobilityOptions options;
+	options.horizon = 2 * kDay;
+	MobilitySim sim;
+	CHECK(sim.init(w.planner, cache, w.fleet, kSeed, w.trips.pop, w.schedule, options).ok());
+	CHECK(sim.advance_to(6 * 3600).ok());
+	placement_test::PlacementCheck check(w.net, sim.persons());
+	for (uint32_t t = 6 * 3600 + 1; t <= 10 * 3600; ++t) {
+		CHECK(sim.advance_to(t).ok());
+		check.observe(sim);
+	}
+	std::printf("положение в час пик: в пути %llu (внутри участка %llu; пешком %llu, машина %llu, рейс %llu, "
+				"возвращение %llu), новых путей %llu, отмен %llu, наибольший сдвиг на смене участка %.3f м\n",
+			(unsigned long long)check.observed, (unsigned long long)check.partial,
+			(unsigned long long)check.by_where[size_t(Whereabouts::walk)], (unsigned long long)check.by_where[size_t(Whereabouts::car)],
+			(unsigned long long)check.by_where[size_t(Whereabouts::ride)], (unsigned long long)check.by_where[size_t(Whereabouts::back)],
+			(unsigned long long)sim.stats().rerouted, (unsigned long long)sim.stats().cancelled, check.worst_jump_m);
+	CHECK(check.failures() == 0);
+	CHECK(check.by_where[size_t(Whereabouts::ride)] > 0 && check.by_where[size_t(Whereabouts::walk)] > 0);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -483,6 +508,7 @@ int main(int argc, char **argv) {
 		test_empty_population(w);
 		test_crowding_and_store(w, argv[2]);
 		test_week(w);
+		test_placement(w);
 	}
 	std::printf("%s: %d проверок, %d ошибок\n", g_failures ? "FAIL" : "OK", g_checks, g_failures);
 	return g_failures ? 1 : 0;

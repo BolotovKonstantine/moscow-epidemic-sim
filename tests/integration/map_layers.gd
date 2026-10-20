@@ -93,7 +93,10 @@ func _test_fixture(fixture: String) -> void:
 	map.fit_region()
 	map.load_visible_now()
 	for name: String in MapView.LAYER_NAMES:
-		check(map.layer_available(name), "слой %s доступен в наборе со слоями данных" % name)
+		if name == "people":   # снимок сессии, а не данные пакета (#46): без запущенного города недоступен
+			check(not map.layer_available(name), "слой people без сессии недоступен")
+		else:
+			check(map.layer_available(name), "слой %s доступен в наборе со слоями данных" % name)
 	var overlay := map.overlay
 	check(overlay.counts == {"zones": 4, "stations": 2, "stops": 2, "facilities": 3}, "слои обзора: %s" % [overlay.counts])
 	check(not overlay.zone_fill.visible and not overlay.zone_outline.visible and not overlay.facilities.visible,

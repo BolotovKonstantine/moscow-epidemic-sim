@@ -9,6 +9,8 @@ extends Node2D
 # карточки и переживает выгрузку участка.
 # Слои (#16): set_layer переключает слои по данным пакета без перезагрузки участков — режим общего
 # материала зданий, видимость классов линий, узлы линий маршрутов и слои обзора (MapDataOverlay).
+# Жители сейчас (#46) — слой people (MapPeopleLayer): точки снимка городской сессии вблизи и агрегаты
+# участков 2 км на общем виде; доступен, пока идёт сессия; вид карты меняет только запрос снимка.
 
 signal view_changed(meters_per_pixel: float, level: int)
 signal tiles_changed
@@ -16,7 +18,7 @@ signal selection_changed(selection: Dictionary)   # {} — выбор снят
 signal layers_changed
 
 # Слои в порядке переключателя; functions и population перекрашивают здания и исключают друг друга.
-const LAYER_NAMES := ["functions", "population", "roads", "transit", "facilities", "zones", "boundary"]
+const LAYER_NAMES := ["functions", "population", "roads", "transit", "facilities", "zones", "boundary", "people"]
 const ROAD_CLASSES := ["service", "pedestrian", "residential", "tertiary", "secondary", "primary", "trunk", "motorway"]
 const BOUNDARY_CLASSES := ["boundary_moscow", "boundary_region"]
 
@@ -35,8 +37,9 @@ var region_rect := Rect2()
 var load_stats: Dictionary = {}   # загрузка обзора: usec, static_bytes, tiles, errors
 var selection: Dictionary = {}    # выбранное здание: {id, attributes, outlines, area_m2}; {} — нет
 var layers := {"functions": false, "population": false, "roads": true, "transit": false, "facilities": false,
-	"zones": false, "boundary": true}
+	"zones": false, "boundary": true, "people": true}
 var overlay := MapDataOverlay.new()
+var people := MapPeopleLayer.new()
 
 var _line_style: MapLineStyle
 var _transit_style: MapLineStyle
@@ -64,6 +67,8 @@ func _init() -> void:
 	overlay.name = "DataOverlay"
 	overlay.z_index = (MapTile.MAX_LEVEL + 1) * MapTileView.LEVEL_Z_STEP   # над всеми участками
 	add_child(overlay)
+	people.z_index = overlay.z_index   # агрегаты — как заливка зон, точки — под остановками и учреждениями
+	add_child(people)
 	_highlight.name = "Selection"
 	_highlight.z_index = (MapTile.MAX_LEVEL + 2) * MapTileView.LEVEL_Z_STEP   # над участками и слоями обзора
 	add_child(_highlight)
@@ -168,6 +173,8 @@ func layer_available(name: String) -> bool:
 			return overlay.has_layer("transit") or _transit_lines
 		"facilities", "zones":
 			return overlay.has_layer(name)
+		"people":
+			return people.available()
 	return index != null
 
 
@@ -177,6 +184,8 @@ func set_layer(name: String, on: bool) -> void:
 		push_error("Неизвестный слой карты %s" % name)
 		return
 	layers[name] = on
+	if name == "people":
+		people.set_enabled(on)
 	if on and name == "functions":
 		layers.population = false
 	elif on and name == "population":
@@ -365,6 +374,7 @@ func _view_moved() -> void:
 			rect.size.x * MapTileStreamer.PREFETCH, rect.size.y * MapTileStreamer.PREFETCH,
 			rect.size.x * MapTileStreamer.PREFETCH, rect.size.y * MapTileStreamer.PREFETCH), level))
 		_apply_visibility()
+	people.update_view(view_rect(), meters_per_pixel)
 	_labels.update_view(_camera.position, meters_per_pixel, level_for(meters_per_pixel), _view_size())
 
 

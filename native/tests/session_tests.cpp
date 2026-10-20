@@ -5,6 +5,7 @@
 // Аргументы: каталог tests/fixtures/sim_mini и временный каталог.
 
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -107,11 +108,6 @@ void check_snapshot(const Session &session, const Snapshot &snap, const Snapshot
 	for (size_t i = 1; i < snap.point_id.size(); ++i) {
 		CHECK(snap.point_id[i - 1] < snap.point_id[i]);
 	}
-	for (size_t i = 0; i < snap.point_id.size(); ++i) {
-		const int64_t ix = int64_t(snap.point_xy[i * 2] / kSnapshotTileM) - snap.tile_x0;
-		const int64_t iy = int64_t(snap.point_xy[i * 2 + 1] / kSnapshotTileM) - snap.tile_y0;
-		CHECK(ix >= 0 && iy >= 0 && ix < int64_t(snap.tile_nx) && iy < int64_t(snap.tile_ny));
-	}
 	uint64_t requested = 0;
 	std::vector<uint8_t> seen(snap.tile_present.size(), 0);
 	for (size_t i = 0; i + 1 < request.tiles.size(); i += 2) {
@@ -122,6 +118,18 @@ void check_snapshot(const Session &session, const Snapshot &snap, const Snapshot
 		}
 	}
 	CHECK(snap.points_total == requested);
+	// Точка — положение жителя (#46) в одном из запрошенных участков; у выбранного то же положение.
+	for (size_t i = 0; i < snap.point_id.size(); ++i) {
+		const int64_t ix = int64_t(std::floor(snap.point_xy[i * 2] / kSnapshotTileM)) - snap.tile_x0;
+		const int64_t iy = int64_t(std::floor(snap.point_xy[i * 2 + 1] / kSnapshotTileM)) - snap.tile_y0;
+		const bool inside = ix >= 0 && iy >= 0 && ix < int64_t(snap.tile_nx) && iy < int64_t(snap.tile_ny);
+		CHECK(inside && seen[size_t(iy) * snap.tile_nx + size_t(ix)]);
+		for (const SelectedPerson &p : snap.selected) {
+			if (p.id == snap.point_id[i]) {
+				CHECK(p.x == snap.point_xy[i * 2] && p.y == snap.point_xy[i * 2 + 1]);
+			}
+		}
+	}
 }
 
 SnapshotRequest all_tiles(const Snapshot &shape, uint32_t max_points) {
@@ -207,12 +215,18 @@ void test_session(const std::string &fixture, const std::string &tmp) {
 	check_snapshot(a, snap, SnapshotRequest());
 	const SnapshotRequest every = all_tiles(snap, kSnapshotPointLimit);
 	const SnapshotRequest few = all_tiles(snap, 7);
+	SnapshotRequest half = every;  // каждый второй участок: точки только из них
+	half.tiles.clear();
+	for (size_t i = 0; i + 1 < every.tiles.size(); i += 4) {
+		half.tiles.push_back(every.tiles[i]);
+		half.tiles.push_back(every.tiles[i + 1]);
+	}
 	uint64_t max_moving = 0, max_fill = 0;
 	bool hash_kept = true;
 	for (int64_t t = 300; t <= 2 * kDay; t += 300) {
 		CHECK(a.advance_to(t).ok());
 		const uint64_t before = a.state_hash();
-		SnapshotRequest r = (t / 300) % 2 ? every : few;
+		SnapshotRequest r = (t / 300) % 3 == 0 ? half : (t / 300) % 2 ? every : few;
 		r.selected = { 0, 5, 3, uint32_t(a.persons()), 0x7FFFFFFFu };
 		r.with_hash = (t % 3600) == 0;
 		a.fill_snapshot(r, snap);
@@ -223,7 +237,9 @@ void test_session(const std::string &fixture, const std::string &tmp) {
 		CHECK(snap.selected.size() == 3 && snap.selected[0].id == 0 && snap.selected[2].id == 3);
 		CHECK(snap.selected[0].journaled && snap.selected[1].journaled && !snap.selected[2].journaled);
 		CHECK(snap.selected[2].journal.empty());
-		if (r.max_points == kSnapshotPointLimit) {
+		if (r.tiles.size() == half.tiles.size()) {
+			CHECK(snap.point_id.size() == snap.points_total);
+		} else if (r.max_points == kSnapshotPointLimit) {
 			CHECK(snap.points_total + snap.beyond == a.persons() && snap.point_id.size() == snap.points_total);
 		} else {
 			CHECK(snap.point_id.size() == 7);

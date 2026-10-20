@@ -16,6 +16,8 @@ const SPEED_NAMES: Array[String] = ["пауза", "1", "4", "16", "макс"]
 const DEFAULT_SCENARIO := "res://scenarios/test_week.json"
 const DEFAULT_STORE := "user://session-store"
 const WEEKDAYS: Array[String] = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+## Виды местонахождения ядра (Whereabouts) по порядку: point_where снимка — номер в этом списке.
+const WHEREABOUTS: Array[String] = ["home", "place", "outside", "visit", "walk", "car", "wait", "ride", "return"]
 const SECONDS_PER_DAY := 86400
 
 var session: RefCounted = null   # SimSession; null — нативное ядро не загружено
@@ -23,6 +25,8 @@ var status := {}
 var snapshot := {}
 var speed_index := 0
 var last_speed_index := 1        # ступень, к которой возвращает снятие паузы
+var point_tiles := PackedInt32Array()   # запрос точек карты (#46): участки 2 км парами (ix, iy)
+var point_limit := 0
 var _status_key := ""
 var _failure := {}               # ошибка до ядра (сценарий не прочитан): держится до start или stop
 
@@ -90,6 +94,14 @@ func toggle_pause() -> void:
 func run_until(time: int) -> void:
 	if session != null:
 		session.run_until(time)
+
+
+## Точки для карты (#46): участки 2 км окна и предел точек. Мост раскладывает их по участкам в меши
+## (point_tiles снимка).
+func set_point_view(tiles: PackedInt32Array, max_points: int) -> void:
+	point_tiles = tiles
+	point_limit = max_points
+	request_snapshot(tiles, max_points)
 
 
 ## Что класть в снимки: точки участков 2 км (пары ix, iy), их предел, выбранные ID, хеш состояния.

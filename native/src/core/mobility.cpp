@@ -635,7 +635,7 @@ void MobilitySim::wait_limit(uint32_t id) {
 	std::vector<uint32_t> &q = waiting_[k];
 	q.erase(std::find(q.begin(), q.end(), id));
 	moved_[id] += fleet_.max_wait_s;  // событие предела: ждал ровно max_wait
-	ref_[id] = kRouteNone;
+	// ref_ остаётся позицией очереди: от этой остановки идёт новый путь или возвращение (положение в снимке).
 	Reroute r;
 	if (!(kind_[id] & kRerouted) && take_reroute(id, k, r)) {
 		release_path(id);
@@ -1092,6 +1092,91 @@ Anchor MobilitySim::anchor(uint32_t id) const {
 			break;
 	}
 	return out;
+}
+
+Placement MobilitySim::placement(uint32_t id) const {
+	Placement out;
+	const RouteNetwork &net = *net_;
+	auto endpoint = [](uint32_t index) { return Anchor{ false, index }; };
+	auto stop_at = [&](uint32_t route, uint32_t index) { return Anchor{ true, net.pos_stop[net.route_first[route] + index] }; };
+	auto point = [&](const Anchor &a) -> const RoutePoint & { return a.stop ? net.stop_pos[a.index] : net.endpoint_pos[a.index]; };
+	auto walk_s = [&](const Anchor &a, const Anchor &b) { return route_walk_s(net.params, route_distance(point(a), point(b))); };
+	// Доля участка [end − duration, end] на now_.
+	auto along = [&](uint32_t end, uint32_t duration) {
+		if (duration == 0 || end <= now_) {
+			return 1.0f;
+		}
+		const uint32_t left = end - now_;
+		return left >= duration ? 0.0f : float(double(duration - left) / double(duration));
+	};
+	const bool rerouted = kind_[id] & kRerouted;
+	switch (Whereabouts(loc_[id])) {
+		case Whereabouts::ride: {
+			const Run &run = runs_[ref_[id]];
+			const uint32_t k = net.route_first[run.route] + run.pos;  // следующая позиция рейса
+			out.from = Anchor{ true, net.pos_stop[k - 1] };
+			out.to = Anchor{ true, net.pos_stop[k] };
+			out.along = along(run.next_time, net.pos_ride_s[k - 1]);
+			return out;
+		}
+		case Whereabouts::walk: {
+			const uint32_t end = queue_.next_time(id);
+			const uint32_t ix = ride_ix_[id];
+			const TransitRide *rides = path_[id] != kRouteNone ? cache_->rides(path_[id]) : nullptr;
+			TripPlan plan;
+			TripRequest request;
+			plan_for(id, plan, request);
+			uint32_t duration = 0;
+			if (leg_[id] == kToStop && rides != nullptr) {
+				out.to = stop_at(rides[ix].route, rides[ix].board);
+				if (ix > 0) {  // пересадка
+					out.from = stop_at(rides[ix - 1].route, rides[ix - 1].alight);
+					duration = rides[ix - 1].walk_after_s;
+				} else if (rerouted) {  // подход нового пути от остановки ожидания
+					out.from = Anchor{ true, net.pos_stop[ref_[id]] };
+					duration = walk_s(out.from, out.to);
+				} else {
+					out.from = endpoint(request.from);
+					duration = plan.access_s;
+				}
+			} else if (leg_[id] == kToDest && rides != nullptr && ix > 0) {  // от остановки выхода к цели
+				out.from = stop_at(rides[ix - 1].route, rides[ix - 1].alight);
+				out.to = endpoint(request.to);
+				duration = rerouted ? walk_s(out.from, out.to) : plan.egress_s;
+			} else if (leg_[id] == kToDest && rides == nullptr) {  // вся поездка пешком
+				out.to = endpoint(request.to);
+				out.from = rerouted ? Anchor{ true, net.pos_stop[ref_[id]] } : endpoint(request.from);
+				duration = rerouted ? walk_s(out.from, out.to) : plan.time_s;
+			} else {
+				out.from = out.to = anchor(id);
+				return out;
+			}
+			out.along = along(end, duration);
+			return out;
+		}
+		case Whereabouts::car: {
+			TripPlan plan;
+			TripRequest request;
+			plan_for(id, plan, request);
+			out.from = endpoint(request.from);
+			out.to = endpoint(request.to);
+			out.along = along(queue_.next_time(id), plan.time_s);
+			return out;
+		}
+		case Whereabouts::back: {
+			// Возвращение длится столько, сколько житель был в пути без ожидания: moved_ — начало поездки
+			// плюс ожидание, конец = отмена + (отмена − moved_), отсюда отмена = (конец + moved_) / 2.
+			const uint32_t end = queue_.next_time(id);
+			out.from = Anchor{ true, net.pos_stop[ref_[id]] };
+			out.to = endpoint(trip_endpoint(id, true));
+			const uint32_t start = uint32_t((uint64_t(end) + moved_[id]) / 2);
+			out.along = along(end, end - start);
+			return out;
+		}
+		default:
+			out.from = out.to = anchor(id);
+			return out;
+	}
 }
 
 std::vector<ActiveRun> MobilitySim::active_runs() const {
