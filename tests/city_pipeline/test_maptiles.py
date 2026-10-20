@@ -529,8 +529,11 @@ class ExportTests(unittest.TestCase):
             {"source_id": "osm", "source_type": "external", "owner": "OSM", "license": "ODbL"},
             {"source_id": "ghs", "source_type": "external", "owner": "JRC (GHSL)", "license": "CC-BY-4.0"},
             {"source_id": "cfg", "source_type": "synthetic", "owner": "Moscow Epidemic Sim", "license": "MIT"},
+            # Несколько таблиц переписи одного владельца дают одну строку на своём первом месте.
+            {"source_id": "census_a", "source_type": "external", "owner": "Росстат", "license": "Общедоступна"},
+            {"source_id": "census_b", "source_type": "external", "owner": "Росстат", "license": "Общедоступна"},
         ]}
-        self.assertEqual(source_credits(manifest)[1:], ["JRC (GHSL) — CC-BY-4.0", "OSM — ODbL"])
+        self.assertEqual(source_credits(manifest)[1:], ["Росстат — Общедоступна", "JRC (GHSL) — CC-BY-4.0", "OSM — ODbL"])
 
     def test_buildings_keep_package_ids_without_duplicates(self):
         with gzip.open(self.package / "building_attributes.csv.gz", "rt", encoding="utf-8") as stream:

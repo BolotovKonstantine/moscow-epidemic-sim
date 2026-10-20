@@ -33,6 +33,7 @@ const char *status_code_name(StatusCode code) {
 		case StatusCode::limit_exceeded: return "limit_exceeded";
 		case StatusCode::invalid_argument: return "invalid_argument";
 		case StatusCode::invalid_state: return "invalid_state";
+		case StatusCode::cancelled: return "cancelled";
 	}
 	return "unknown";
 }

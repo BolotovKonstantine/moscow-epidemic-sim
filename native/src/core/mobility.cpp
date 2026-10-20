@@ -1042,6 +1042,58 @@ Location MobilitySim::location(uint32_t id) const {
 	return out;
 }
 
+uint32_t MobilitySim::trip_endpoint(uint32_t id, bool origin) const {
+	switch (kind(id)) {
+		case TripKind::outbound:
+			return origin ? pop_.home[id] : pop_.place[id];
+		case TripKind::back:
+			return origin ? pop_.place[id] : pop_.home[id];
+		case TripKind::visit:
+			return origin ? pop_.home[id] : ref_[id];  // посещения пешком: ref_ — здание
+		default:
+			return origin ? ref_[id] : pop_.home[id];
+	}
+}
+
+Anchor MobilitySim::anchor(uint32_t id) const {
+	Anchor out;
+	switch (Whereabouts(loc_[id])) {
+		case Whereabouts::home:
+			out.index = pop_.home[id];
+			break;
+		case Whereabouts::place:
+		case Whereabouts::outside:
+			out.index = pop_.place[id];
+			break;
+		case Whereabouts::visit:
+			out.index = ref_[id];
+			break;
+		case Whereabouts::wait:
+			out.stop = true;
+			out.index = net_->pos_stop[ref_[id]];
+			break;
+		case Whereabouts::ride: {
+			const Run &run = runs_[ref_[id]];
+			out.stop = true;
+			out.index = net_->pos_stop[net_->route_first[run.route] + run.pos];
+			break;
+		}
+		case Whereabouts::walk:
+			if (leg_[id] == kToStop && ride_ix_[id] > 0 && path_[id] != kRouteNone && ride_ix_[id] < cache_->ride_count(path_[id])) {
+				const TransitRide ride = cache_->rides(path_[id])[ride_ix_[id]];
+				out.stop = true;
+				out.index = net_->pos_stop[net_->route_first[ride.route] + ride.board];
+			} else {
+				out.index = trip_endpoint(id, !(leg_[id] == kToDest && path_[id] != kRouteNone));
+			}
+			break;
+		default:  // машина и возвращение после отмены
+			out.index = trip_endpoint(id, true);
+			break;
+	}
+	return out;
+}
+
 std::vector<ActiveRun> MobilitySim::active_runs() const {
 	std::vector<ActiveRun> out;
 	for (const Run &run : runs_) {

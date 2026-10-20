@@ -210,7 +210,8 @@ def validate_map_index(path: Path, manifest: dict, asset_id: str) -> int:
     if not isinstance(attribution, list) or not attribution or not all(isinstance(item, str) for item in attribution) \
             or attribution[0] != MAP_CREDIT:
         raise ManifestError(f"{asset_id}: attribution индекса карты — список строк, первая — «{MAP_CREDIT}»")
-    if attribution != source_credits(manifest):
+    # Пакеты до исправления повторов (0.8.0) писали строку на каждую таблицу переписи: повторы допустимы.
+    if list(dict.fromkeys(attribution)) != source_credits(manifest):
         raise ManifestError(f"{asset_id}: attribution индекса карты не перечисляет все внешние источники паспорта: {source_credits(manifest)}")
     # Таблицы слоёв данных (#16) появились в пакете 0.4.0 и необязательны: индексы прежних пакетов их не содержат.
     classes = index.get("classes")

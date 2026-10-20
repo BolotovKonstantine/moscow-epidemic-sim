@@ -5,6 +5,7 @@
 #include <godot_cpp/godot.hpp>
 
 #include "sim_core.h"
+#include "sim_session.h"
 
 using namespace godot;
 
@@ -13,6 +14,7 @@ static void initialize_mesim_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 	GDREGISTER_CLASS(SimCore);
+	GDREGISTER_CLASS(SimSession);
 }
 
 static void uninitialize_mesim_module(ModuleInitializationLevel p_level) {

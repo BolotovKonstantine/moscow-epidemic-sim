@@ -1,0 +1,11 @@
+{
+  "format": "mesim-scenario",
+  "schema_version": 1,
+  "name": "Тестовая неделя движения",
+  "package": {"id": "moscow-2021"},
+  "seed": 20261013,
+  "start_weekday": 0,
+  "interval_s": 300,
+  "days": 7,
+  "journal_ids": [0]
+}

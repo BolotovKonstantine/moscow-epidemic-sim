@@ -4,7 +4,8 @@ extends SceneTree
 # tests/fixtures/map_stream без них (как участки пакетов до 0.4.0). Слои переключаются без
 # перезагрузки участков: режим материала зданий, видимость классов линий, узлы маршрутов и слоёв
 # обзора; легенда показывает источник и пометку оценок. Если есть пакет с картой, слои
-# переключаются и на нём, печатается время переключения.
+# переключаются и на нём, печатается время переключения. Подпись атрибуции главной сцены — без
+# повторов строк (пакет 0.8.0 пишет строку Росстата на каждую таблицу переписи).
 # Запуск: godot --headless --path game --script ../tests/integration/map_layers.gd
 
 const FIXTURE := "../tests/fixtures/map_tile"
@@ -22,10 +23,14 @@ func _run() -> void:
 	var root_dir := ProjectSettings.globalize_path("res://")
 	_test_vertex_data(root_dir.path_join(FIXTURE).simplify_path())
 	_test_partial_classes()
+	_test_credit_text()
 	await _test_fixture(root_dir.path_join(FIXTURE).simplify_path())
 	await _test_without_data(root_dir.path_join(STREAM).simplify_path())
 	var package_map := preload("res://scripts/app/main.gd").latest_package_map(root_dir.path_join(PACKAGES).simplify_path())
 	if not package_map.is_empty():
+		var credits := preload("res://scripts/app/main.gd").credit_text(MapIndex.open(package_map).attribution).split("\n")
+		check(credits[0] == MapIndex.OSM_CREDIT and Array(credits).all(func(line): return credits.count(line) == 1),
+			"подпись атрибуции пакета без повторов: %s" % credits.size())
 		await _test_package(package_map)
 	print("FAIL: %d" % failures if failures else "OK: все проверки слоёв пройдены")
 	quit(1 if failures else 0)
@@ -35,6 +40,12 @@ func check(condition: bool, message: String) -> void:
 	if not condition:
 		failures += 1
 		printerr("FAIL: ", message)
+
+
+## Подпись главной сцены: одинаковые строки один раз, порядок первых вхождений.
+func _test_credit_text() -> void:
+	var text: String = preload("res://scripts/app/main.gd").credit_text(PackedStringArray(["OSM", "Росстат", "JRC", "Росстат", "OSM"]))
+	check(text == "OSM\nРосстат\nJRC", "атрибуция без повторов в исходном порядке: %s" % text.c_escape())
 
 
 func _map(map_dir: String) -> MapView:

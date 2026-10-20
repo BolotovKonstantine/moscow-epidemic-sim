@@ -142,6 +142,16 @@ struct Location {
 	uint32_t a = 0, b = 0, c = 0;
 };
 
+// Точка жителя для снимка (#45): конец поездки (здание или внешний вход) либо остановка. Дома, на
+// месте, на посещении и вне региона — сама точка; в очереди — остановка очереди; в рейсе — остановка
+// текущей позиции рейса. В пути — грубая привязка до интерполяции по маршруту (#46): пеший участок
+// к первой посадке, весь путь пешком или на машине и возвращение после отмены — начало поездки;
+// пересадка — остановка следующей посадки; последний участок после транспорта — цель поездки.
+struct Anchor {
+	bool stop = false;
+	uint32_t index = 0;
+};
+
 struct ActiveRun {
 	RunInfo run;
 	uint32_t next_pos = 0;
@@ -233,6 +243,7 @@ public:
 	size_t persons() const { return pop_.persons; }
 	Whereabouts where(uint32_t id) const { return Whereabouts(loc_[id]); }
 	Location location(uint32_t id) const;
+	Anchor anchor(uint32_t id) const;
 	const uint64_t *counts() const { return counts_; }
 	std::vector<ActiveRun> active_runs() const;   // рейсы с пассажирами по (сутки, номер)
 	std::vector<WaitingQueue> queues() const;     // непустые очереди по позиции
@@ -350,6 +361,7 @@ private:
 	Whereabouts origin_of(uint32_t id) const;
 	Whereabouts destination_of(uint32_t id) const;
 	Whereabouts place_kind(uint32_t id) const;
+	uint32_t trip_endpoint(uint32_t id, bool origin) const;  // начало или цель текущей поездки
 
 	Status generate_day(uint32_t day);
 	void push_run(uint32_t slot, uint32_t t);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <vector>
 
@@ -61,6 +62,9 @@ struct PlanOptions {
 	// этого периода проезжает перегон от позиции к следующей. nullptr — не считать. Прибавляется к
 	// переданным значениям; суммы целые, поэтому от числа потоков не зависят.
 	std::vector<uint32_t> *segment_load = nullptr;
+	// Флаг отмены: проверяется между порциями групп; поднятый — план прерывается с кодом cancelled,
+	// выход неполон. На результат неотменённого плана не влияет.
+	const std::atomic<bool> *cancel = nullptr;
 };
 
 struct PlanStats {
