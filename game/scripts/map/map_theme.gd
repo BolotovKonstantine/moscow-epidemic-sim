@@ -138,6 +138,10 @@ const PERSON_COLORS := {
 	"return": Color("#8c1a1a"),
 }
 const PERSON_RADIUS_PX := 1.8
+const PERSON_PICK_PX := 5.0             # клик выбирает жителя не дальше стольких пикселей от точки (#47)
+const PERSON_MARK_PX := 6.0             # кольцо выбранного жителя
+const ROUTE_WIDTH_PX := 3.0             # маршрут выбранного: участки по виду (пешком, машина, рейс)
+const ROUTE_COLORS := {"walk": Color("#1f9e6e"), "car": Color("#e0791f"), "ride": Color("#2a6fd6")}
 const PEOPLE_POINTS_MAX_MPP := 3.0      # точки — на уровне подробности 2, дальше — агрегаты участков
 const PEOPLE_MAX_POINTS := 1 << 20      # не больше стольких точек в снимке (ядро — до 2²¹)
 const PEOPLE_COLORS := [Color("#f1f3f8"), Color("#d4dcef"), Color("#a9bbe0"), Color("#7895cc"),

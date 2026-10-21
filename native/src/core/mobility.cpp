@@ -220,9 +220,10 @@ Status MobilitySim::init(const TripPlanner &planner, PathCache &cache, const Fle
 	std::sort(ids.begin(), ids.end());
 	ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
 	for (uint32_t id : ids) {
-		if (id < n && options.journal_capacity > 0) {
+		if (id < n && options.journal_capacity > 0 && journals_.size() < options.journal_limit) {
 			Journal j;
 			j.id = id;
+			j.pinned = true;
 			journals_.push_back(std::move(j));
 		}
 	}
@@ -290,6 +291,7 @@ void MobilitySim::reset() {
 	pending_.clear();
 	log_.clear();
 	journals_.clear();
+	journal_refused_ = 0;
 	intervals_.clear();
 	run_list_.clear();
 	stats_ = MobilityStats();
@@ -381,6 +383,39 @@ void MobilitySim::record(uint32_t id, LogEvent e, uint32_t a, uint32_t b, uint32
 			}
 		}
 	}
+}
+
+void MobilitySim::apply_command(const Command &command) {
+	const uint32_t id = command.target;
+	if ((command.kind != kCommandJournalOn && command.kind != kCommandJournalOff) || id >= pop_.persons) {
+		return;
+	}
+	auto it = std::lower_bound(journals_.begin(), journals_.end(), id,
+			[](const Journal &j, uint32_t v) { return j.id < v; });
+	const bool found = it != journals_.end() && it->id == id;
+	if (command.kind == kCommandJournalOff) {
+		if (found && !it->pinned) {
+			journals_.erase(it);
+		}
+		return;
+	}
+	if (found) {
+		return;
+	}
+	if (options_.journal_capacity == 0 || journals_.size() >= options_.journal_limit) {
+		++journal_refused_;
+		return;
+	}
+	Journal j;
+	j.id = id;
+	j.since = uint32_t(command.time);
+	journals_.insert(it, std::move(j));
+}
+
+uint32_t MobilitySim::journal_since(uint32_t id) const {
+	auto it = std::lower_bound(journals_.begin(), journals_.end(), id,
+			[](const Journal &j, uint32_t v) { return j.id < v; });
+	return it != journals_.end() && it->id == id ? it->since : kNoEvent;
 }
 
 std::vector<LogRecord> MobilitySim::journal(uint32_t id) const {
@@ -1177,6 +1212,90 @@ Placement MobilitySim::placement(uint32_t id) const {
 			out.from = out.to = anchor(id);
 			return out;
 	}
+}
+
+uint32_t MobilitySim::current_route(uint32_t id) const {
+	switch (Whereabouts(loc_[id])) {
+		case Whereabouts::wait:
+			return net_->pos_route[ref_[id]];
+		case Whereabouts::ride:
+			return runs_[ref_[id]].route;
+		default:
+			return kRouteNone;
+	}
+}
+
+Status MobilitySim::trip_route(uint32_t id, RouteWorkspace &ws, TripRoute &out) const {
+	out = TripRoute();
+	if (net_ == nullptr || id >= pop_.persons) {
+		return Status::error(StatusCode::invalid_argument, "маршрут: нет жителя");
+	}
+	const RouteNetwork &net = *net_;
+	const Whereabouts w = Whereabouts(loc_[id]);
+	out.current = !(w == Whereabouts::home || w == Whereabouts::place || w == Whereabouts::outside || w == Whereabouts::visit);
+	if (!out.current) {
+		out.depart = queue_.next_time(id);
+		if (out.depart == kNoEvent) {
+			return Status::success();  // поездок больше нет
+		}
+	}
+	TripPlan plan;
+	TripRequest request;
+	plan_for(id, plan, request);
+	out.kind = kind(id);
+	out.from = request.from;
+	out.to = request.to;
+	TripGeometry &g = out.geometry;
+	auto walk_leg = [&](const RoutePoint &a, const RoutePoint &b, uint32_t duration) {
+		TripLeg leg;
+		leg.kind = LegKind::walk;
+		leg.first = uint32_t(g.points.size());
+		leg.count = 2;
+		leg.duration_s = duration;
+		g.points.push_back(a);
+		g.points.push_back(b);
+		g.legs.push_back(leg);
+		g.time_s += duration;
+	};
+	auto walk_s = [&](const RoutePoint &a, const RoutePoint &b) { return route_walk_s(net.params, route_distance(a, b)); };
+	if (w == Whereabouts::back) {
+		// Как положение в снимке: от остановки ожидания к началу поездки, столько, сколько ехал без ожидания.
+		const uint32_t end = queue_.next_time(id);
+		const uint32_t start = uint32_t((uint64_t(end) + moved_[id]) / 2);
+		out.returning = true;
+		out.mode = TripMode::walk;
+		out.to = trip_endpoint(id, true);
+		walk_leg(net.stop_pos[net.pos_stop[ref_[id]]], net.endpoint_pos[out.to], end - start);
+		return Status::success();
+	}
+	if (out.current && (kind_[id] & kRerouted)) {
+		out.rerouted = true;
+		const RoutePoint &to = net.endpoint_pos[request.to];
+		if (path_[id] == kRouteNone) {
+			// Новый путь пешком: от остановки ожидания к цели (ref_ — позиция очереди), как и положение в
+			// снимке — и после уже проеханного рейса (ride_ix_ > 0 на пересадке).
+			out.mode = TripMode::walk;
+			const RoutePoint &a = net.stop_pos[net.pos_stop[ref_[id]]];
+			walk_leg(a, to, walk_s(a, to));
+			return Status::success();
+		}
+		// Остановка ожидания известна, пока житель идёт от неё к первой посадке нового пути (ref_ —
+		// позиция очереди); дальше путь — с начальной остановки нового пути.
+		const bool from_wait = w == Whereabouts::walk && ride_ix_[id] == 0;
+		const TransitPath path = cache_->path(path_[id]);
+		const RoutePoint &first = net.stop_pos[path.start_stop];
+		const RoutePoint &a = from_wait ? net.stop_pos[net.pos_stop[ref_[id]]] : first;
+		uint32_t egress = 0;
+		if (!path.rides.empty()) {
+			const TransitRide &last = path.rides.back();
+			egress = walk_s(net.stop_pos[net.pos_stop[net.route_first[last.route] + last.alight]], to);
+		}
+		out.mode = TripMode::transit;
+		planner_->expand_transit(a, to, path, walk_s(a, first), egress, uint8_t(route_period_at(net, now_)), g);
+		return Status::success();
+	}
+	out.mode = plan.mode;
+	return planner_->expand(ws, request, plan, *cache_, g);
 }
 
 std::vector<ActiveRun> MobilitySim::active_runs() const {

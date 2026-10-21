@@ -11,6 +11,8 @@
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_int32_array.hpp>
+#include <godot_cpp/variant/packed_vector2_array.hpp>
+#include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/string.hpp>
 
 #include "mesim/session.h"
@@ -50,6 +52,12 @@ public:
 	// Что класть в снимки: точки участков 2 км (пары ix, iy), их предел, выбранные ID, хеш состояния.
 	void request_snapshot(const PackedInt32Array &tiles, int max_points, const PackedInt32Array &selected,
 			bool with_hash = false);
+	// Журнал жителя (#47): включить или выключить на ближайшей границе интервала (команда ядра
+	// kCommandJournalOn/Off). На паузе команда ждёт продвижения; запись идёт с её границы.
+	void set_journal(int64_t id, bool on);
+	// Точки меша участка (point_tiles: четыре вершины на точку) не дальше radius от center: номера точек
+	// по возрастанию расстояния, при равном — по номеру (перекрывающиеся точки — по ID).
+	static PackedInt32Array points_near(const PackedVector2Array &vertices, const Vector2 &center, double radius);
 	// Не чаще одного снимка за столько миллисекунд при продвижении (изменение запроса — сразу).
 	void set_snapshot_period_ms(int period_ms);
 	// Новый опубликованный снимок (версия больше прочитанной) или пустой словарь; force — последний.
@@ -78,6 +86,7 @@ private:
 	int speed_ = 0;
 	int64_t run_until_ = -1;
 	mesim::SnapshotRequest request_;
+	std::vector<mesim::Command> commands_;  // ждут границы интервала (время ставит поток расчёта)
 	uint64_t request_version_ = 0;
 	uint32_t snapshot_period_ms_ = 100;
 	mesim::ScenarioConfig scenario_;

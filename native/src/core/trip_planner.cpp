@@ -649,35 +649,7 @@ Status TripPlanner::expand(RouteWorkspace &ws, const TripRequest &r, const TripP
 			}
 			const TransitPath path = cache.path(slot);
 			cache.unpin(slot);
-			leg(LegKind::walk, plan.access_s);
-			add(from);
-			add(net.stop_pos[path.start_stop]);
-			for (size_t i = 0; i < path.rides.size(); ++i) {
-				const TransitRide &ride = path.rides[i];
-				const uint32_t first = net.route_first[ride.route];
-				uint32_t duration = net.route_headway(ride.route, plan.period) / 2;
-				for (uint32_t k = first + ride.board; k < first + ride.alight; ++k) {
-					duration += net.pos_ride_s[k];
-				}
-				TripLeg *l = leg(LegKind::ride, duration);
-				l->route = ride.route;
-				l->board = ride.board;
-				l->alight = ride.alight;
-				for (uint32_t k = first + ride.board; k <= first + ride.alight; ++k) {
-					add(net.stop_pos[net.pos_stop[k]]);
-				}
-				const RoutePoint &off = net.stop_pos[net.pos_stop[first + ride.alight]];
-				if (i + 1 < path.rides.size()) {
-					const TransitRide &next = path.rides[i + 1];
-					leg(LegKind::walk, ride.walk_after_s);
-					add(off);
-					add(net.stop_pos[net.pos_stop[net.route_first[next.route] + next.board]]);
-				} else {
-					leg(LegKind::walk, plan.egress_s);
-					add(off);
-					add(to);
-				}
-			}
+			expand_transit(from, to, path, plan.access_s, plan.egress_s, plan.period, out);
 			break;
 		}
 	}
@@ -685,6 +657,53 @@ Status TripPlanner::expand(RouteWorkspace &ws, const TripRequest &r, const TripP
 		return Status::error(StatusCode::invalid_state, "раскрытый путь не совпадает со временем плана");
 	}
 	return Status::success();
+}
+
+void TripPlanner::expand_transit(const RoutePoint &from, const RoutePoint &to, const TransitPath &path, uint32_t access_s,
+		uint32_t egress_s, uint8_t period, TripGeometry &out) const {
+	const RouteNetwork &net = *net_;
+	auto leg = [&](LegKind kind, uint32_t duration) {
+		TripLeg l;
+		l.kind = kind;
+		l.first = uint32_t(out.points.size());
+		l.duration_s = duration;
+		out.legs.push_back(l);
+		out.time_s += duration;
+		return &out.legs.back();
+	};
+	auto add = [&](const RoutePoint &p) {
+		out.points.push_back(p);
+		++out.legs.back().count;
+	};
+	leg(LegKind::walk, access_s);
+	add(from);
+	add(net.stop_pos[path.start_stop]);
+	for (size_t i = 0; i < path.rides.size(); ++i) {
+		const TransitRide &ride = path.rides[i];
+		const uint32_t first = net.route_first[ride.route];
+		uint32_t duration = net.route_headway(ride.route, period) / 2;
+		for (uint32_t k = first + ride.board; k < first + ride.alight; ++k) {
+			duration += net.pos_ride_s[k];
+		}
+		TripLeg *l = leg(LegKind::ride, duration);
+		l->route = ride.route;
+		l->board = ride.board;
+		l->alight = ride.alight;
+		for (uint32_t k = first + ride.board; k <= first + ride.alight; ++k) {
+			add(net.stop_pos[net.pos_stop[k]]);
+		}
+		const RoutePoint &off = net.stop_pos[net.pos_stop[first + ride.alight]];
+		if (i + 1 < path.rides.size()) {
+			const TransitRide &next = path.rides[i + 1];
+			leg(LegKind::walk, ride.walk_after_s);
+			add(off);
+			add(net.stop_pos[net.pos_stop[net.route_first[next.route] + next.board]]);
+		} else {
+			leg(LegKind::walk, egress_s);
+			add(off);
+			add(to);
+		}
+	}
 }
 
 } // namespace mesim

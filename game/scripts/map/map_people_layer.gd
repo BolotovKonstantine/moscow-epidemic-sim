@@ -10,8 +10,12 @@ extends Node2D
 # а жители в ядре продолжают движение. На общем виде — жители каждого участка 2 км по положению на
 # время снимка (агрегаты ядра), отдельной холодной шкалой: это не ночное население пакета.
 # Камера и видимость меняют только запрос снимка, но не расчёт.
+# Выбор жителя (#47): клик ищет точки показанных мешей рядом (SimSession.points_near, без перебора
+# всего населения); выбранный — по ID, его кольцо и маршрут текущей или следующей поездки рисуются из
+# снимка (положение и геометрия ядра) на любом масштабе, в том числе на общем виде.
 
 signal status_changed
+signal selection_reset   # сессия остановлена или заменена: выбор жителя снят (#47)
 
 const PERSON_SHADER := preload("res://shaders/map_person.gdshader")
 
@@ -20,6 +24,7 @@ var enabled := true
 var tile_m := 2000.0
 var nodes := {}               # Vector2i участка → MeshInstance2D
 var tile_ids := {}            # Vector2i участка → ID точек в порядке квадратов меша (выбор жителя — #47)
+var tile_vertices := {}       # Vector2i участка → вершины меша (четыре на точку) для выбора кликом
 var shown_points := 0         # точек в узлах из последнего снимка
 var window_points := 0        # всех жителей в запрошенных участках (points_total)
 var snapshot_time := -1       # игровое время последнего показанного снимка
@@ -30,6 +35,7 @@ var requested := PackedInt32Array()
 
 var _material := ShaderMaterial.new()
 var _aggregates := Aggregates.new()
+var _selection := Selection.new()
 var _mpp := 1.0
 var _view := Rect2()
 
@@ -46,6 +52,9 @@ func _init() -> void:
 	_aggregates.name = "Aggregates"
 	_aggregates.visible = false
 	add_child(_aggregates)
+	_selection.name = "Selection"
+	_selection.z_index = 2
+	add_child(_selection)
 
 
 ## Привязать к клиенту сессии: снимки — сюда.
@@ -77,6 +86,7 @@ func update_view(view: Rect2, mpp: float) -> void:
 	_mpp = mpp
 	_material.set_shader_parameter("meters_per_pixel", mpp)
 	_aggregates.set_meters_per_pixel(mpp)
+	_selection.set_meters_per_pixel(mpp)
 	var mode := mpp <= MapTheme.PEOPLE_POINTS_MAX_MPP
 	if mode != points_mode:
 		points_mode = mode
@@ -132,6 +142,7 @@ func show_snapshot(snapshot: Dictionary) -> void:
 	window_points = int(snapshot.get("points_total", 0))
 	if enabled and points_mode:
 		_show_points(snapshot.get("point_tiles", {}))
+	_selection.show_person(client.selected_person() if client != null else {})
 	update_usec = Time.get_ticks_usec() - started
 	status_changed.emit()
 
@@ -160,6 +171,7 @@ func _show_points(tiles: Dictionary) -> void:
 			arrays[Mesh.ARRAY_INDEX] = tile.indices
 			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		tile_ids[key] = tile.ids
+		tile_vertices[key] = tile.vertices
 	for key: Vector2i in nodes.keys():
 		if not tiles.has(key):
 			_free_node(key)
@@ -185,6 +197,7 @@ func _free_node(key: Vector2i) -> void:
 	var node: MeshInstance2D = nodes[key]
 	nodes.erase(key)
 	tile_ids.erase(key)
+	tile_vertices.erase(key)
 	node.free()
 
 
@@ -194,13 +207,74 @@ func _clear_points() -> void:
 	shown_points = 0
 
 
+## Перерисовать выбранного по последнему снимку (после смены выбора — до нового снимка).
+func show_selected() -> void:
+	_selection.show_person(client.selected_person() if client != null else {})
+
+
+## Жители у точки плоскости карты среди показанных точек: ID по возрастанию расстояния, при равном —
+## по ID (у перекрывающихся точек — одно положение, например дом). Смотрит только участки 2 км,
+## задевающие круг радиуса, и только их меши — не всё население.
+func people_at(map_point: Vector2, radius_m: float) -> PackedInt32Array:
+	var hits: Array[Array] = []   # [квадрат расстояния, ID]: ID — целое (во float32 ID больше 2²⁴ округляются)
+	var tiles := tiles_in(Rect2(map_point - Vector2(radius_m, radius_m), Vector2(radius_m, radius_m) * 2.0))
+	for i in range(0, tiles.size(), 2):
+		var key := Vector2i(tiles[i], tiles[i + 1])
+		if not tile_vertices.has(key):
+			continue
+		var vertices: PackedVector2Array = tile_vertices[key]
+		var ids: PackedInt32Array = tile_ids[key]
+		for index in ClassDB.class_call_static("SimSession", "points_near", vertices, map_point, radius_m):
+			hits.append([vertices[index * 4].distance_squared_to(map_point), ids[index]])
+	hits.sort_custom(func(a: Array, b: Array): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
+	var out := PackedInt32Array()
+	for hit in hits:
+		out.append(hit[1])
+	return out
+
+
 func _on_status(status: Dictionary) -> void:
 	if not status.get("state", "") in ["ready", "finished"]:
 		_clear_points()
 		_aggregates.clear()
+		_selection.show_person({})
 		snapshot_time = -1
 		window_points = 0
+		selection_reset.emit()
 	status_changed.emit()
+
+
+## Выбранный житель: маршрут текущей или следующей поездки (участки по виду, ширина в пикселях) и
+## кольцо в его положении на время снимка.
+class Selection extends Node2D:
+	var person := {}
+	var _mpp := 1.0
+
+	func show_person(value: Dictionary) -> void:
+		person = value
+		queue_redraw()
+
+	func set_meters_per_pixel(mpp: float) -> void:
+		_mpp = mpp
+		if not person.is_empty():
+			queue_redraw()
+
+	func _draw() -> void:
+		if person.is_empty():
+			return
+		var trip: Dictionary = person.get("trip", {})
+		var points: PackedVector2Array = trip.get("points", PackedVector2Array())
+		var width := MapTheme.ROUTE_WIDTH_PX * _mpp
+		for leg: Dictionary in trip.get("legs", []):
+			var line := points.slice(int(leg.first), int(leg.first) + int(leg.count))
+			if line.size() < 2:
+				continue
+			draw_polyline(line, MapTheme.SELECTION_HALO, width + 2.0 * MapTheme.SELECTION_HALO_PX * _mpp)
+			draw_polyline(line, MapTheme.ROUTE_COLORS.get(leg.kind, MapTheme.SELECTION), width)
+		var at := Vector2(float(person.get("x", 0.0)), float(person.get("y", 0.0)))
+		var radius := MapTheme.PERSON_MARK_PX * _mpp
+		draw_arc(at, radius, 0.0, TAU, 32, MapTheme.SELECTION_HALO, (MapTheme.SELECTION_WIDTH_PX + 2.0 * MapTheme.SELECTION_HALO_PX) * _mpp)
+		draw_arc(at, radius, 0.0, TAU, 32, MapTheme.SELECTION, MapTheme.SELECTION_WIDTH_PX * _mpp)
 
 
 ## Агрегаты снимка на общем виде: участок 2 км закрашен по числу жителей с положением в нём на

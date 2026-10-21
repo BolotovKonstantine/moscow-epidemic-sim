@@ -11,6 +11,8 @@ extends Node
 # (по умолчанию res://scenarios/test_week.json), пакет — каталог карты без map/ или `--package=<каталог>`,
 # хранилище мест и планов — user://session-store или `--session-store=<каталог>`; пробел — пауза.
 # Жители идущей сессии — слой карты «Жители сейчас» (#46): точки вблизи, агрегаты участков на общем виде.
+# Клик по точке жителя (#47) открывает его карточку справа (профиль, место, положение, маршрут, журнал),
+# повторный клик по тому же месту — следующего из перекрывающихся; Esc снимает выбор.
 
 const PACKAGES_DIR := "../data/packages"
 const DEFAULT_MAP_DIR := "../data/processed/map-test"
@@ -25,6 +27,7 @@ const CREDIT_MAX_WIDTH := 420.0      # длинные строки атрибу�
 @onready var _debug: Label = $Hud/Debug
 
 var _card := BuildingCard.new()
+var _person_card := PersonCard.new()
 var _layers := MapLayerPanel.new()
 var _session := SimSessionClient.new()
 var _session_panel := SessionPanel.new()
@@ -90,6 +93,9 @@ func _ready() -> void:
 func _setup_session(args: PackedStringArray, map_dir: String) -> void:
 	add_child(_session)
 	_map.people.bind(_session)
+	$Hud.add_child(_person_card)
+	_person_card.bind(_session)
+	_map.person_changed.connect(_person_card.show_person)
 	$Hud.add_child(_session_panel)
 	var credit: Control = $Hud/Attribution
 	credit.resized.connect(func(): _session_panel.set_bottom(credit.size.y))
@@ -192,6 +198,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				_debug.visible = not _debug.visible
 			KEY_ESCAPE:
 				_map.set_selection({})
+				_map.set_person(-1)
 			KEY_SPACE:
 				if _session.status.get("state") == "ready":
 					_session.toggle_pause()
@@ -239,5 +246,5 @@ func _update_status() -> void:
 		var mpp := _map.meters_per_pixel
 		text += "\n1 пикс. = %s м · подробность %d · колесо/щипок — масштаб, перетаскивание — сдвиг, 0 — весь регион%s" % [
 			("%.2f" % mpp) if mpp < 10.0 else ("%.0f" % mpp), _map.level_for(mpp),
-			", клик — здание" if _map.level_for(mpp) == 2 else ", приблизьте, чтобы выбрать здание"]
+			", клик — здание или житель" if _map.level_for(mpp) == 2 else ", приблизьте, чтобы выбрать здание"]
 	_status.text = text

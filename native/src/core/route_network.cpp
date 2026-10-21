@@ -8,6 +8,7 @@
 #include <string>
 
 #include "mesim/city_data.h"
+#include "sim_schema.h"
 
 namespace mesim {
 
@@ -429,6 +430,11 @@ ColumnView<T> col(const CityData &city, TableId table, const char *name) {
 }
 
 } // namespace
+
+const char *transit_mode_name(uint8_t mode) {
+	const std::vector<std::string> &codes = schema::fixed_codes(schema::CodeSet::mode);
+	return mode < codes.size() ? codes[mode].c_str() : "?";
+}
 
 Status build_route_network(const CityData &city, RouteNetwork &out, uint32_t walk_fallback_max_s) {
 	out = RouteNetwork();
