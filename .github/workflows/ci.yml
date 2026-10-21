@@ -42,7 +42,32 @@ jobs:
       # Чистое ядро без godot-cpp: переносимый SHA256, GCC, AddressSanitizer и UBSan.
       - run: cmake -S native -B native/build/core-asan -DCMAKE_BUILD_TYPE=Debug -DMESIM_SANITIZE=ON
       - run: cmake --build native/build/core-asan -j4
-      - run: ctest --test-dir native/build/core-asan --output-on-failure
+      - run: ctest --test-dir native/build/core-asan --output-on-failure -j4
+  godot-tests:
+    name: Godot reference tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install verified Godot 4.7.2
+        env:
+          GODOT_URL: https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+        run: |
+          curl --fail --location --retry 3 "$GODOT_URL" -o "$RUNNER_TEMP/godot.zip"
+          echo '9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65  '"$RUNNER_TEMP/godot.zip" | sha512sum -c -
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
+          mv "$RUNNER_TEMP/godot/Godot_v4.7.2-stable_linux.x86_64" "$RUNNER_TEMP/godot/godot"
+          echo "$RUNNER_TEMP/godot" >> "$GITHUB_PATH"
+      # Без нативной библиотеки (её сборка для Linux не настроена): эталоны game/sim и карта на
+      # синтетических участках ядро не вызывают. Тесты с ядром — в ручном macOS-задании ниже.
+      - run: godot --headless --path game --import
+      - run: godot --headless --path game --script ../tests/model/mobility_reference.gd
+      - run: godot --headless --path game --script ../tests/model/event_reference.gd
+      - run: godot --headless --path game --script ../tests/integration/map_tile_loader.gd
+      - run: godot --headless --path game --script ../tests/integration/map_streaming.gd
+      - run: godot --headless --path game --script ../tests/integration/map_layers.gd
   native-smoke:
     name: macOS native smoke
     if: github.event_name == 'workflow_dispatch' && inputs.run_macos
@@ -74,6 +99,8 @@ jobs:
       - run: Godot --headless --path game --script ../tests/integration/smoke_native.gd
       - run: Godot --headless --path game --script ../tests/integration/sim_session.gd
       - run: Godot --headless --path game --script ../tests/integration/person_pick.gd -- --mini
+      - run: Godot --headless --path game --script ../tests/integration/display_independence.gd
+      - run: Godot --headless --path game --script ../tests/integration/map_people.gd -- --mini
       - run: Godot --headless --path game --script ../tests/integration/map_tile_loader.gd
       - run: Godot --headless --path game --script ../tests/integration/map_streaming.gd
       - run: Godot --headless --path game --script ../tests/integration/map_layers.gd
