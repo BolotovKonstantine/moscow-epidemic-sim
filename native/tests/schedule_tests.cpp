@@ -466,6 +466,58 @@ void test_week(World &w) {
 	}
 }
 
+// Случайный выбор вагона при посадке (#48) — равномерный: за 9 суток мини-города (у видов транспорта
+// здесь 5–8 вагонов вместо одного у автобусов пакета; планы от числа вагонов не зависят) посадки по
+// вагонам каждого числа вагонов проходят критерий хи-квадрат с уровнем 0,001 (порог задан заранее, а не
+// подобран по выходу). Seed фиксирован, поэтому тест не мигает: порог отсекает только перекос правила.
+void test_wagon_choice(World &w) {
+	// Критические значения хи-квадрат для уровня 0,001 при 1…15 степенях свободы.
+	const double kCritical[] = { 10.83, 13.82, 16.27, 18.47, 20.52, 22.46, 24.32, 26.12, 27.88, 29.59, 31.26, 32.91,
+		34.53, 36.12, 37.70 };
+	FleetParams fleet = w.fleet;
+	for (size_t m = 0; m < fleet.wagons.size(); ++m) {
+		fleet.wagons[m] = uint8_t(5 + m % 4);
+	}
+	PathCache cache;
+	MobilityOptions options;
+	options.horizon = 9 * kDay;
+	options.keep_intervals = true;
+	MobilitySim sim;
+	CHECK(sim.init(w.planner, cache, fleet, kSeed, w.trips.pop, w.schedule, options).ok());
+	CHECK(sim.advance_to(9 * kDay).ok());
+	std::vector<std::vector<uint64_t>> by_wagons(17);  // число вагонов → посадок в каждый вагон
+	for (const PresenceInterval &x : sim.intervals()) {
+		const uint8_t wagons = fleet.wagons[w.net.route_mode[x.route]];
+		std::vector<uint64_t> &c = by_wagons[wagons];
+		c.resize(wagons, 0);
+		CHECK(x.wagon < wagons);
+		if (x.wagon < wagons) {
+			++c[x.wagon];
+		}
+	}
+	int tested = 0;
+	for (size_t k = 2; k < by_wagons.size(); ++k) {
+		const std::vector<uint64_t> &c = by_wagons[k];
+		uint64_t total = 0;
+		for (uint64_t v : c) {
+			total += v;
+		}
+		if (total < 5 * k) {
+			continue;  // ожидаемое число в вагоне меньше 5 — критерий неприменим
+		}
+		const double expected = double(total) / double(k);
+		double chi2 = 0.0;
+		for (uint64_t v : c) {
+			chi2 += (double(v) - expected) * (double(v) - expected) / expected;
+		}
+		CHECK(chi2 < kCritical[k - 2]);
+		std::printf("  вагоны: %zu на рейс, посадок %llu, хи-квадрат %.2f (порог %.2f)\n", k, (unsigned long long)total,
+				chi2, kCritical[k - 2]);
+		++tested;
+	}
+	CHECK(tested > 0);
+}
+
 // Положение для снимка (#46) в утренний час пик понедельника по секундам: транспорт, очереди, новые
 // пути после предела ожидания и возвращения после отмены (PlacementCheck).
 void test_placement(World &w) {
@@ -508,6 +560,7 @@ int main(int argc, char **argv) {
 		test_empty_population(w);
 		test_crowding_and_store(w, argv[2]);
 		test_week(w);
+		test_wagon_choice(w);
 		test_placement(w);
 	}
 	std::printf("%s: %d проверок, %d ошибок\n", g_failures ? "FAIL" : "OK", g_checks, g_failures);

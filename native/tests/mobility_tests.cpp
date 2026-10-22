@@ -1,7 +1,10 @@
 // Тесты движения ядра (#43): на сценах эталона #39 (tests/scenarios/mobility_*) рейсы, контрольные
 // состояния, интервалы присутствия и журнал ядра совпадают с expected.json; нарезка продвижения,
 // обратный порядок регистрации, часы сессии с интервалами и маленький кеш путей не меняют результат;
-// численность сходится на каждом шаге, вместимость не превышена, никто не в двух местах сразу.
+// численность сходится на каждом шаге, вместимость не превышена, никто не в двух местах сразу;
+// часы сессии с интервалами 5, 10 и 15 минут дают тот же журнал, независимая вторая копия города в
+// том же прогоне не меняет событий первой, сцены покрывают переполнение, отмену, новый путь,
+// пересадку, возвращение и внешнее состояние (#48).
 // Шаблоны расписаний и посещения — schedule_tests.cpp.
 // Запуск: mesim_mobility_tests <каталог tests/scenarios>
 
@@ -9,6 +12,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -406,8 +410,12 @@ void test_scene(const std::string &dir, const std::string &name) {
 		CHECK(other.conserved);
 	}
 
-	// Часы сессии: продвижение интервалами по 300 с даёт тот же журнал (события и их порядок).
-	if (p.scene.duration % kDefaultIntervalS == 0) {
+	// Часы сессии: продвижение интервалами по 5, 10 и 15 минут (#48) даёт тот же журнал (события и
+	// их порядок) и то же игровое время.
+	for (uint32_t interval : { 300u, 600u, 900u }) {
+		if (p.scene.duration % interval != 0) {
+			continue;
+		}
 		PathCache cache;
 		FixedSchedule schedule(p.pop, p.arrive_by.data(), p.leave_at.data(), p.scene.duration);
 		MobilityOptions options;
@@ -416,8 +424,11 @@ void test_scene(const std::string &dir, const std::string &name) {
 		MobilitySim sim;
 		CHECK(sim.init(p.planner, cache, p.scene.fleet, p.scene.seed, p.pop, schedule, options).ok());
 		SimClock clock;
-		CHECK(clock.init(ClockConfig(), 0).ok());
+		ClockConfig config;
+		config.interval_s = interval;
+		CHECK(clock.init(config, 0).ok());
 		CHECK(clock.advance_to(p.scene.duration, sim.queue(), sim).ok());
+		CHECK(sim.now() == p.scene.duration && sim.conserved());
 		std::vector<std::string> log;
 		for (const LogRecord &r : sim.log()) {
 			log.push_back(log_json(p.scene, r));
@@ -706,6 +717,275 @@ void test_placement(const std::string &dir, const std::string &name) {
 
 } // namespace
 
+// ---------- Независимые группы (#48) ----------
+
+json::Value *member(json::Value &object, const char *key) {
+	for (auto &kv : object.members) {
+		if (kv.first == key) {
+			return &kv.second;
+		}
+	}
+	return nullptr;
+}
+
+void add_int(json::Value &v, int64_t delta) {
+	const int64_t x = inum(&v) + delta;
+	v.negative = x < 0;
+	v.magnitude = uint64_t(x < 0 ? -x : x);
+	v.real = double(x);
+}
+
+void add_num(json::Value &v, int64_t delta) {
+	if (v.kind == json::Kind::integer) {
+		add_int(v, delta);
+	} else {
+		v.real += double(delta);
+	}
+}
+
+// Сцена из двух копий: вторая сдвинута на 1000 км по x и не связана с первой ни дорогами, ни
+// остановками, ни входами. Её ID зданий, узлов, остановок, маршрутов, входов и жителей идут после первой.
+std::string doubled_scene(const json::Value &scene) {
+	json::Value out = scene;
+	json::Value b = scene;
+	const int64_t shift = 1000000;
+	auto count = [&](const char *key) { return int64_t(scene.get(key)->items.size()); };
+	const int64_t nodes = count("road_nodes"), buildings = count("buildings"), stops = count("stops"),
+				  gateways = count("gateways");
+	for (json::Value &p : member(b, "road_nodes")->items) {
+		add_num(p.items[0], shift);
+	}
+	for (json::Value &e : member(b, "road_edges")->items) {
+		add_int(*member(e, "from"), nodes);
+		add_int(*member(e, "to"), nodes);
+	}
+	for (json::Value &p : member(b, "buildings")->items) {
+		add_num(p.items[0], shift);
+	}
+	for (json::Value &s : member(b, "stops")->items) {
+		add_num(*member(s, "x"), shift);
+	}
+	for (json::Value &area : member(b, "stop_areas")->items) {
+		for (json::Value &s : area.items) {
+			add_int(s, stops);
+		}
+	}
+	for (json::Value &r : member(b, "routes")->items) {
+		for (json::Value &s : member(r, "stops")->items) {
+			add_int(s, stops);
+		}
+	}
+	for (json::Value &g : member(b, "gateways")->items) {
+		json::Value *node = member(g, "node");
+		add_int(node != nullptr ? *node : *member(g, "stop"), node != nullptr ? nodes : stops);
+	}
+	for (json::Value &r : member(b, "residents")->items) {
+		add_int(*member(r, "home"), buildings);
+		json::Value *place = member(r, "place");
+		if (place->kind == json::Kind::object) {
+			json::Value *building = member(*place, "building");
+			add_int(building != nullptr ? *building : *member(*place, "gateway"), building != nullptr ? buildings : gateways);
+		}
+	}
+	for (const char *key :
+			{ "road_nodes", "road_edges", "buildings", "stops", "stop_areas", "routes", "gateways", "residents" }) {
+		std::vector<json::Value> &items = member(out, key)->items;
+		const std::vector<json::Value> &more = member(b, key)->items;
+		items.insert(items.end(), more.begin(), more.end());
+	}
+	member(out, "name")->string += "-doubled";
+	std::string text;
+	canonical(out, text);
+	return text;
+}
+
+// Прогон с журналом, рейсами и интервалами; рейс в записях — (сутки, маршрут, отправление) вместо номера
+// в суточном расписании: вторая копия вставляет свои рейсы в общую нумерацию суток.
+struct GroupRun {
+	std::vector<std::string> log, intervals, runs, locations;  // только жители и маршруты первой копии
+	uint64_t violations = 0;
+	bool conserved = true;
+};
+
+GroupRun run_first_copy(const Prepared &p, uint32_t persons, uint32_t routes, uint32_t step) {
+	GroupRun out;
+	PathCache cache;
+	FixedSchedule schedule(p.pop, p.arrive_by.data(), p.leave_at.data(), p.scene.duration);
+	MobilityOptions options;
+	options.horizon = p.scene.duration;
+	options.log_all = true;
+	options.keep_intervals = true;
+	options.keep_runs = true;
+	MobilitySim sim;
+	CHECK(sim.init(p.planner, cache, p.scene.fleet, p.scene.seed, p.pop, schedule, options).ok());
+	auto run_key = [&](uint32_t day, uint32_t number) {
+		for (const RunInfo &r : sim.runs()) {
+			if (r.day == day && r.number == number) {
+				return num(r.day) + "/" + num(r.route) + "/" + num(r.depart);
+			}
+		}
+		return std::string("?");
+	};
+	std::vector<uint32_t> targets = p.scene.checkpoints;
+	targets.push_back(p.scene.duration);
+	for (uint32_t target : targets) {
+		while (sim.now() < target) {
+			CHECK(sim.advance_to(step == 0 ? target : std::min(target, sim.now() + step)).ok());
+			out.conserved = out.conserved && sim.conserved();
+		}
+		std::string s = num(target) + ":";
+		for (uint32_t id = 0; id < persons; ++id) {
+			const Location l = sim.location(id);
+			s += std::string(" ") + whereabouts_name(l.where) + "," +
+					(l.where == Whereabouts::ride ? run_key(l.a, l.b) + "," + num(l.c)
+												  : num(l.a) + "," + num(l.b) + "," + num(l.c));
+		}
+		out.locations.push_back(s);
+	}
+	for (const LogRecord &r : sim.log()) {
+		if (r.id >= persons) {
+			continue;
+		}
+		const bool ride = r.event == LogEvent::board || r.event == LogEvent::alight;
+		out.log.push_back(num(r.time) + " " + num(r.id) + " " + num(uint32_t(r.event)) + " " +
+				(ride ? run_key(r.a, r.b) + " " + num(r.c) : num(r.a) + " " + num(r.b) + " " + num(r.c)));
+	}
+	for (const PresenceInterval &x : sim.intervals()) {
+		if (x.id < persons) {
+			out.intervals.push_back(run_key(x.day, x.number) + " " + num(x.wagon) + " " + num(x.id) + " " +
+					num(x.board_pos) + " " + num(x.alight_pos) + " " + num(x.board_t) + " " + num(x.alight_t));
+		}
+	}
+	std::sort(out.intervals.begin(), out.intervals.end());
+	for (const RunInfo &r : sim.runs()) {
+		if (r.route < routes) {
+			out.runs.push_back(num(r.day) + "/" + num(r.route) + "/" + num(r.depart));
+		}
+	}
+	std::sort(out.runs.begin(), out.runs.end());
+	out.violations = sim.violation_count();
+	return out;
+}
+
+// Независимая вторая копия города в том же прогоне не меняет ни одного события первой: её жители,
+// рейсы и очереди обрабатываются вперемешку с первой (одно время — в порядке ID), но ни групп, ни
+// розыгрышей общих нет. Сравнение — по порциям 1 с и до контрольных времён.
+void test_independent_groups(const std::string &dir, const std::string &name) {
+	Prepared single, both;
+	json::Value scene;
+	CHECK(read_json(dir + "/" + name + "/scene.json", scene));
+	const std::string path = (std::filesystem::temp_directory_path() / ("mesim-" + name + "-doubled.json")).string();
+	{
+		std::FILE *f = std::fopen(path.c_str(), "wb");
+		CHECK(f != nullptr);
+		if (f == nullptr) {
+			return;
+		}
+		const std::string text = doubled_scene(scene);
+		std::fwrite(text.data(), 1, text.size(), f);
+		std::fclose(f);
+	}
+	CHECK(prepare(dir + "/" + name + "/scene.json", single));
+	CHECK(prepare(path, both));
+	std::filesystem::remove(path);
+	if (g_failures > 0) {
+		return;
+	}
+	const uint32_t persons = uint32_t(single.scene.residents.size());
+	const uint32_t routes = uint32_t(scene.get("routes")->items.size());
+	CHECK(both.scene.residents.size() == 2 * size_t(persons));
+	const GroupRun a = run_first_copy(single, persons, routes, 0);
+	for (uint32_t step : { 0u, 1u }) {
+		const GroupRun b = run_first_copy(both, persons, routes, step);
+		CHECK(same_items((name + " doubled log").c_str(), b.log, a.log));
+		CHECK(same_items((name + " doubled locations").c_str(), b.locations, a.locations));
+		CHECK(b.intervals == a.intervals);
+		CHECK(b.runs == a.runs);
+		CHECK(b.violations == 0 && b.conserved);
+	}
+	CHECK(!a.log.empty() && !a.intervals.empty());
+}
+
+// Сцены покрывают крайние случаи, на которых проверяются суммы (#48): переполнение (рейс забрал
+// пассажиров с позиции, а житель, пришедший туда раньше, остался ждать), отмена, возвращение, новый
+// путь, пересадка (посадка после выхода в одной поездке) и прибытие во внешнее состояние.
+void test_edge_coverage(const std::string &dir) {
+	struct Wait {
+		uint32_t id, route, pos, from, to;
+	};
+	bool overflow = false, cancel = false, returned = false, reroute = false, transfer = false, outside = false;
+	for (const char *name : { "mobility_edge", "mobility_mini", "mobility_reroute" }) {
+		Prepared p;
+		CHECK(prepare(dir + "/" + std::string(name) + "/scene.json", p));
+		if (g_failures > 0) {
+			return;
+		}
+		PathCache cache;
+		FixedSchedule schedule(p.pop, p.arrive_by.data(), p.leave_at.data(), p.scene.duration);
+		MobilityOptions options;
+		options.horizon = p.scene.duration;
+		options.log_all = true;
+		MobilitySim sim;
+		CHECK(sim.init(p.planner, cache, p.scene.fleet, p.scene.seed, p.pop, schedule, options).ok());
+		CHECK(sim.advance_to(p.scene.duration).ok() && sim.conserved() && sim.violation_count() == 0);
+		const size_t n = p.scene.residents.size();
+		std::vector<int> alighted(n, 0);
+		std::vector<Wait> waits, open(n, Wait{ 0, kRouteNone, 0, 0, 0 });
+		std::vector<Wait> boardings;  // (житель, маршрут, позиция, время посадки)
+		for (const LogRecord &r : sim.log()) {
+			Wait &w = open[r.id];
+			switch (r.event) {
+				case LogEvent::depart:
+					alighted[r.id] = 0;
+					break;
+				case LogEvent::queue:
+					w = Wait{ r.id, r.a, r.b, r.time, UINT32_MAX };
+					break;
+				case LogEvent::board:
+					transfer = transfer || alighted[r.id] > 0;
+					boardings.push_back(Wait{ r.id, w.route, w.pos, r.time, r.time });
+					[[fallthrough]];
+				case LogEvent::cancel:
+				case LogEvent::reroute:
+					if (w.route != kRouteNone) {
+						w.to = r.time;
+						waits.push_back(w);
+						w.route = kRouteNone;
+					}
+					cancel = cancel || r.event == LogEvent::cancel;
+					reroute = reroute || r.event == LogEvent::reroute;
+					break;
+				case LogEvent::alight:
+					++alighted[r.id];
+					break;
+				case LogEvent::arrive:
+					outside = outside || Whereabouts(r.a) == Whereabouts::outside;
+					break;
+				case LogEvent::returned:
+					returned = true;
+					break;
+			}
+		}
+		for (const Wait &w : open) {
+			if (w.route != kRouteNone) {
+				waits.push_back(w);
+			}
+		}
+		for (const Wait &b : boardings) {
+			for (const Wait &w : waits) {
+				overflow = overflow ||
+						(w.id != b.id && w.route == b.route && w.pos == b.pos && w.from < b.from && w.to > b.from);
+			}
+		}
+	}
+	CHECK(overflow);
+	CHECK(cancel);
+	CHECK(returned);
+	CHECK(reroute);
+	CHECK(transfer);
+	CHECK(outside);
+}
+
 int main(int argc, char **argv) {
 	if (argc < 2) {
 		std::fprintf(stderr, "использование: mesim_mobility_tests <tests/scenarios>\n");
@@ -723,6 +1003,10 @@ int main(int argc, char **argv) {
 	test_journal_commands(dir);
 	test_route_after_transfer(dir, "mobility_mini");
 	test_route_after_transfer(dir, "mobility_edge");
+	test_independent_groups(dir, "mobility_edge");
+	test_independent_groups(dir, "mobility_mini");
+	test_independent_groups(dir, "mobility_reroute");
+	test_edge_coverage(dir);
 	std::printf("%s: %d проверок, %d ошибок\n", g_failures ? "FAIL" : "OK", g_checks, g_failures);
 	return g_failures ? 1 : 0;
 }

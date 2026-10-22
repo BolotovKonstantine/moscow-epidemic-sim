@@ -1,7 +1,7 @@
 // Тесты сессии ядра (#45): разбор сценария и отказы, подготовка мини-города пакета, хранилище мест и
 // планов, продвижение по интервалам и порциями с одинаковым состоянием, снимок не меняет состояние,
 // итоги снимка равны населению, предел точек, выбранные жители и журнал, команды на границах,
-// конец сценария, отмена подготовки и повторный старт.
+// конец сценария, отмена подготовки и повторный старт; интервалы 5, 10 и 15 минут дают одно состояние (#48).
 // Аргументы: каталог tests/fixtures/sim_mini и временный каталог.
 
 #include <algorithm>
@@ -337,6 +337,56 @@ void test_session(const std::string &fixture, const std::string &tmp) {
 	CHECK(!b.ready() && b.persons() == 0);
 }
 
+// Порции продвижения 5, 10 и 15 минут (#48): интервал сессии меняет только границы, на которых можно
+// остановиться и подать команду, а не события. На общих границах (каждые 30 мин) за трое суток —
+// одинаковые хеш, итоги и журнал жителей сценария; численность сходится, нарушений нет.
+void test_interval_portions(const std::string &fixture, const std::string &tmp) {
+	SessionOptions opt;
+	opt.store_dir = tmp + "/store";
+	Session s[3];
+	const uint32_t intervals[3] = { 300, 600, 900 };
+	for (int i = 0; i < 3; ++i) {
+		ScenarioConfig sc = mini_scenario();
+		sc.clock.interval_s = intervals[i];
+		const Status st = s[i].create(fixture, sc, opt);
+		CHECK(st.ok() && s[i].interval_s() == intervals[i]);
+		if (!st.ok()) {
+			return;
+		}
+	}
+	bool same = true, conserved = true;
+	uint64_t moving = 0;
+	for (int64_t t = 1800; t <= 3 * kDay; t += 1800) {
+		Snapshot snap[3];
+		for (int i = 0; i < 3; ++i) {
+			CHECK(s[i].advance_to(t).ok() && s[i].now() == t);
+			SnapshotRequest r;
+			r.selected = { 0, 5 };
+			r.with_hash = true;
+			s[i].fill_snapshot(r, snap[i]);
+			conserved = conserved && s[i].conserved() && s[i].violation_count() == 0;
+		}
+		for (int i = 1; i < 3; ++i) {
+			same = same && snap[i].state_hash == snap[0].state_hash &&
+					std::equal(std::begin(snap[i].counts), std::end(snap[i].counts), std::begin(snap[0].counts)) &&
+					snap[i].selected.size() == 2;
+			for (size_t k = 0; same && k < snap[i].selected.size(); ++k) {
+				const std::vector<LogRecord> &x = snap[i].selected[k].journal, &y = snap[0].selected[k].journal;
+				same = x.size() == y.size() &&
+						std::equal(x.begin(), x.end(), y.begin(), [](const LogRecord &p, const LogRecord &q) {
+							return p.time == q.time && p.id == q.id && p.event == q.event && p.a == q.a && p.b == q.b &&
+									p.c == q.c;
+						});
+			}
+		}
+		moving = std::max(moving, snap[0].counts[size_t(Whereabouts::walk)] + snap[0].counts[size_t(Whereabouts::car)] +
+						snap[0].counts[size_t(Whereabouts::ride)]);
+	}
+	CHECK(same);
+	CHECK(conserved);
+	CHECK(moving > 0);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -347,6 +397,7 @@ int main(int argc, char **argv) {
 	test_parse();
 	test_failures(argv[1], argv[2]);
 	test_session(argv[1], argv[2]);
+	test_interval_portions(argv[1], argv[2]);
 	std::printf("session_tests: %d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
 }

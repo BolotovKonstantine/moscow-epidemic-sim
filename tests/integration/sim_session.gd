@@ -155,8 +155,9 @@ func _test_same_state() -> void:
 	var a := new_session()
 	var b := new_session()
 	var c := new_session()
+	# Сценарий кончается на 2-х сутках: b на максимуме не проскочит их между опросами медленного раннера.
 	for s in [a, b, c]:
-		check(s.start(fixture, scenario(), store).ok, "старт")
+		check(s.start(fixture, scenario(2), store).ok, "старт")
 	for s in [a, b, c]:
 		check(wait_state(s, ["ready"]), "готовность")
 	var ha := hash_at(a, 2 * DAY)  # одним продвижением на максимуме
