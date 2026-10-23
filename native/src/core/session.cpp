@@ -655,16 +655,32 @@ uint64_t Session::state_hash() const {
 }
 
 uint64_t Session::memory_bytes() const {
+	return memory_parts().total;
+}
+
+SessionMemory Session::memory_parts() const {
+	SessionMemory m;
 	if (!s_) {
-		return 0;
+		return m;
 	}
 	const State &s = *s_;
-	return s.population.memory_bytes() + s.net.memory_bytes() + s.places.memory_bytes() + s.visits.memory_bytes() +
-			s.trips.memory_bytes() + s.sim.memory_bytes() + (s.cache ? s.cache->allocated_bytes() : 0) +
-			(s.endpoint_xy.capacity() + s.stop_xy.capacity()) * sizeof(float) +
+	m.population = s.population.memory_bytes();
+	m.network = s.net.memory_bytes();
+	m.car_ch = s.planner.car().memory_bytes();
+	m.places = s.places.memory_bytes();
+	m.visits = s.visits.memory_bytes();
+	m.trips = s.trips.memory_bytes();
+	m.residents = uint64_t(s.sim.persons()) * (4 * sizeof(uint8_t) + 3 * sizeof(uint32_t));  // как MobilitySim::memory_bytes
+	m.event_queue = s.sim.queue().memory_bytes();
+	m.runs_queues = s.sim.memory_bytes() - m.residents - m.event_queue;
+	m.path_cache = s.cache ? s.cache->allocated_bytes() : 0;
+	m.snapshot_index = (s.endpoint_xy.capacity() + s.stop_xy.capacity()) * sizeof(float) +
 			(s.endpoint_tile.capacity() + s.stop_tile.capacity()) * sizeof(uint32_t) +
 			(s.building_osm.capacity() + s.stop_osm.capacity() + s.route_osm.capacity()) * sizeof(uint64_t) +
 			s.route_piece.capacity() * sizeof(uint16_t);
+	m.total = m.population + m.network + m.car_ch + m.places + m.visits + m.trips + m.residents + m.event_queue +
+			m.runs_queues + m.path_cache + m.snapshot_index;
+	return m;
 }
 
 // ---------- Снимок ----------
