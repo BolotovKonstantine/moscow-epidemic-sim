@@ -6,7 +6,8 @@ extends Node
 # Лимит памяти кеша участков — `--map-cache-mb=<МБ>`. F3 — отладочный оверлей. Клик по зданию
 # вблизи открывает его карточку справа (#15), Esc снимает выбор. Слева — переключатель слоёв
 # с легендой (#16); клавиши 1–8 переключают слои по порядку. `--bench-map=<маршрут> --bench-out=<файл>` —
-# замер просмотра карты (#17, MapBench): сценарии по маршруту, результат в файл, затем выход.
+# замер просмотра карты (#17, MapBench): сценарии по маршруту, результат в файл, затем выход; маршрут
+# с сессией (#49) сам запускает город с `--package` и `--session-store`.
 # Городская сессия (#45) — панель внизу: запуск по кнопке или флагом `--session[=<сценарий.json>]`
 # (по умолчанию res://scenarios/test_week.json), пакет — каталог карты без map/ или `--package=<каталог>`,
 # хранилище мест и планов — user://session-store или `--session-store=<каталог>`; пробел — пауза.
@@ -84,7 +85,7 @@ func _ready() -> void:
 	_update_status()
 	var bench := MapBench.from_args(args)
 	if not bench.is_empty():
-		_start_bench(bench, problem)
+		_start_bench(bench, problem, args, map_dir)
 		return
 	_setup_session(args, map_dir)
 
@@ -131,12 +132,21 @@ static func arg_value(args: PackedStringArray, prefix: String) -> String:
 	return ""
 
 
-## Замер карты (#17): оверлей скрыт, чтобы не входить в кадр; ошибка — выход с кодом 1.
-func _start_bench(bench: Dictionary, problem: String) -> void:
+## Замер карты (#17): оверлей скрыт, чтобы не входить в кадр; ошибка — выход с кодом 1. Сессию (#49)
+## замер запускает сам, если она есть в маршруте: пакет и хранилище — как у `--session`, без панели.
+func _start_bench(bench: Dictionary, problem: String, args: PackedStringArray, map_dir: String) -> void:
 	var runner := MapBench.new()
 	runner.name = "Bench"
+	add_child(_session)
+	_map.people.bind(_session)
+	var package := project_path(arg_value(args, "--package="))
+	if package.is_empty():
+		package = SimSessionClient.package_dir_for_map(map_dir)
+	var store := project_path(arg_value(args, "--session-store="))
+	if store.is_empty():
+		store = ProjectSettings.globalize_path(SimSessionClient.DEFAULT_STORE)
 	if problem.is_empty():
-		runner.setup(_map, bench.get("route", ""), bench.get("out", ""), bench.get("window", ""))
+		runner.setup(_map, bench.get("route", ""), bench.get("out", ""), bench.get("window", ""), _session, package, store)
 	else:
 		runner.error = problem
 	if not runner.error.is_empty():

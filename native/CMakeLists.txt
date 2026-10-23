@@ -92,6 +92,10 @@ add_executable(mesim_session_bench ../benchmarks/session/session_bench.cpp)
 target_compile_options(mesim_session_bench PRIVATE ${MESIM_FLAGS})
 target_link_libraries(mesim_session_bench PRIVATE mesim_core)
 
+add_executable(mesim_full_bench ../benchmarks/full_region/full_bench.cpp)
+target_compile_options(mesim_full_bench PRIVATE ${MESIM_FLAGS})
+target_link_libraries(mesim_full_bench PRIVATE mesim_core)
+
 enable_testing()
 add_test(NAME core_tests COMMAND mesim_core_tests ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/sim_mini)
 add_test(NAME clock_tests COMMAND mesim_clock_tests ${CMAKE_CURRENT_SOURCE_DIR}/../tests/scenarios)

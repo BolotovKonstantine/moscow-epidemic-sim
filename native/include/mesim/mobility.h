@@ -274,6 +274,7 @@ public:
 	void prepare_reroutes(uint32_t begin, uint32_t end);
 	void end_interval(int64_t end) { now_ = uint32_t(end); }
 	EventQueue &queue() { return queue_; }
+	const EventQueue &queue() const { return queue_; }
 
 	size_t persons() const { return pop_.persons; }
 	Whereabouts where(uint32_t id) const { return Whereabouts(loc_[id]); }

@@ -141,6 +141,22 @@ struct Snapshot {
 	uint64_t memory_bytes() const;
 };
 
+// Память сессии по частям (замер #49), байты по ёмкости массивов. total — их сумма, как memory_bytes().
+struct SessionMemory {
+	uint64_t population = 0;       // жители (SoA), семьи и здания
+	uint64_t network = 0;          // сеть маршрутов
+	uint64_t car_ch = 0;           // CH машины
+	uint64_t places = 0;           // места и коллективы #41
+	uint64_t visits = 0;           // кандидаты посещений
+	uint64_t trips = 0;            // регулярные поездки сессии (планы)
+	uint64_t residents = 0;        // состояние движения жителей (SoA MobilitySim)
+	uint64_t event_queue = 0;      // очередь событий
+	uint64_t runs_queues = 0;      // рейсы, очереди на остановках, журналы
+	uint64_t path_cache = 0;       // общий кеш путей
+	uint64_t snapshot_index = 0;   // точки привязки и внешние ID для снимков
+	uint64_t total = 0;
+};
+
 class Session {
 public:
 	Session();
@@ -174,6 +190,7 @@ public:
 	uint64_t violation_count() const;
 	const MobilitySim &mobility() const;
 	uint64_t memory_bytes() const;
+	SessionMemory memory_parts() const;
 
 private:
 	struct State;
