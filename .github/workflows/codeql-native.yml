@@ -29,6 +29,6 @@ jobs:
         run: |
           python -m pip install scons==4.11.1
           scons platform=macos target=template_debug -j3
-      - uses: github/codeql-action/analyze@1190a975f95ce23525efb6a3fc21ea29567c1b52 # v3
+      - uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v3
         with:
           category: /language:c-cpp
